@@ -9,6 +9,11 @@ if (config.tokens.size === 0) {
     "warning: SLOPWATCH_TOKENS is empty — every POST /events will be rejected",
   );
 }
+if (config.adminToken === undefined) {
+  console.warn(
+    "warning: SLOPWATCH_ADMIN_TOKEN is unset — the admin plane is disabled",
+  );
+}
 
 const store = createPgStore(config.databaseUrl);
 await store.migrate();
@@ -25,7 +30,12 @@ setInterval(prune, 24 * 60 * 60 * 1000);
 // Decision 12: serve the built SPA same-origin from the single process.
 const staticRoot = fileURLToPath(new URL("../../web/dist", import.meta.url));
 
-const app = createApp({ tokens: config.tokens, store, staticRoot });
+const app = createApp({
+  tokens: config.tokens,
+  store,
+  staticRoot,
+  adminToken: config.adminToken,
+});
 
 Bun.serve({ port: config.port, fetch: (req) => app.fetch(req) });
 console.log(`slopwatch server listening on http://localhost:${config.port}`);

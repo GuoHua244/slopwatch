@@ -5,7 +5,7 @@ import {
 } from "@slopwatch/events";
 import { existsSync, statSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
-import type { Store } from "./store";
+import { UserExistsError, type Store } from "./store";
 
 export type App = { fetch: (req: Request) => Promise<Response> };
 
@@ -91,10 +91,32 @@ const staticResponse = (
     },
   });
 
-const identify = (req: Request, tokens: Map<string, string>): string | null => {
+const bearerToken = (req: Request): string | null => {
   const header = req.headers.get("authorization");
   if (!header?.startsWith("Bearer ")) return null;
-  return tokens.get(header.slice("Bearer ".length).trim()) ?? null;
+  const token = header.slice("Bearer ".length).trim();
+  return token.length > 0 ? token : null;
+};
+
+/** Parse a JSON body, or null when it is not an object-shaped JSON payload. */
+const readJson = async (
+  req: Request,
+): Promise<Record<string, unknown> | null> => {
+  try {
+    const body: unknown = await req.json();
+    return typeof body === "object" && body !== null && !Array.isArray(body)
+      ? (body as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+/** A trimmed string field within maxLen, or null when absent/oversized. */
+const trimField = (value: unknown, maxLen: number): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= maxLen ? trimmed : null;
 };
 
 export const createApp = ({
@@ -122,7 +144,12 @@ export const createApp = ({
     }
 
     if (url.pathname === "/events" && req.method === "POST") {
-      const user = identify(req, tokens);
+      // Env tokens first (v0 bootstrap), then admin-minted tokens (decision 6).
+      const bearer = bearerToken(req);
+      let user: string | null = null;
+      if (bearer !== null) {
+        user = tokens.get(bearer) ?? (await store.resolveTokenUser(bearer));
+      }
       if (user === null) return json(401, { error: "unauthorized" });
 
       let body: { schema_version?: number; events?: unknown[] };
@@ -164,6 +191,81 @@ export const createApp = ({
 
     if (url.pathname === "/sessions" && req.method === "GET") {
       return json(200, { sessions: await store.listSessions() });
+    }
+
+    // --- Admin plane (decision 13). Disabled unless SLOPWATCH_ADMIN_TOKEN is set.
+    if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) {
+      if (adminToken === undefined)
+        return json(404, { error: "admin plane disabled" });
+      if (bearerToken(req) !== adminToken)
+        return json(401, { error: "unauthorized" });
+
+      if (url.pathname === "/admin/health" && req.method === "GET")
+        return json(200, { ok: true, ...(await store.health()) });
+
+      if (url.pathname === "/admin/users") {
+        if (req.method === "GET")
+          return json(200, { users: await store.listUsers() });
+        if (req.method === "POST") {
+          const body = await readJson(req);
+          if (body === null) return json(400, { error: "invalid json" });
+          const name = trimField(body.name, 100);
+          const email = trimField(body.email, 200);
+          if (name === null)
+            return json(400, { error: "name must be a non-empty string" });
+          try {
+            return json(201, { user: await store.createUser(name, email) });
+          } catch (e) {
+            if (e instanceof UserExistsError)
+              return json(409, { error: e.message });
+            throw e;
+          }
+        }
+      }
+
+      const userMatch = url.pathname.match(/^\/admin\/users\/([^/]+)$/);
+      if (userMatch) {
+        const name = decodeURIComponent(userMatch[1]!);
+        if (req.method === "PATCH") {
+          const body = await readJson(req);
+          if (body === null || typeof body.disabled !== "boolean")
+            return json(400, { error: "disabled must be a boolean" });
+          const user = await store.setUserDisabled(name, body.disabled);
+          return user === null
+            ? json(404, { error: "no such user" })
+            : json(200, { user });
+        }
+        if (req.method === "DELETE") {
+          return (await store.deleteUser(name))
+            ? json(200, { ok: true })
+            : json(404, { error: "no such user" });
+        }
+      }
+
+      const tokensMatch = url.pathname.match(
+        /^\/admin\/users\/([^/]+)\/tokens$/,
+      );
+      if (tokensMatch) {
+        const name = decodeURIComponent(tokensMatch[1]!);
+        if ((await store.getUser(name)) === null)
+          return json(404, { error: "no such user" });
+        if (req.method === "POST")
+          return json(201, await store.mintToken(name));
+        if (req.method === "GET")
+          return json(200, { tokens: await store.listTokens(name) });
+      }
+
+      const tokenMatch = url.pathname.match(/^\/admin\/tokens\/([^/]+)$/);
+      if (tokenMatch && req.method === "DELETE") {
+        // Malformed (non-UUID) ids must 404, not surface a Postgres cast error.
+        try {
+          return (await store.revokeToken(decodeURIComponent(tokenMatch[1]!)))
+            ? json(200, { ok: true })
+            : json(404, { error: "no such token" });
+        } catch {
+          return json(404, { error: "no such token" });
+        }
+      }
     }
 
     // Exact-name static assets after the API routes — unknown paths still 404.

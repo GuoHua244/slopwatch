@@ -26,6 +26,34 @@ const refusingStore = (): Store => ({
   backfillTokenTotals: () => {
     throw new Error("store must not be touched");
   },
+  createUser: () => {
+    throw new Error("store must not be touched");
+  },
+  getUser: () => {
+    throw new Error("store must not be touched");
+  },
+  listUsers: () => {
+    throw new Error("store must not be touched");
+  },
+  setUserDisabled: () => {
+    throw new Error("store must not be touched");
+  },
+  deleteUser: () => {
+    throw new Error("store must not be touched");
+  },
+  mintToken: () => {
+    throw new Error("store must not be touched");
+  },
+  listTokens: () => {
+    throw new Error("store must not be touched");
+  },
+  revokeToken: () => {
+    throw new Error("store must not be touched");
+  },
+  resolveTokenUser: async () => null,
+  health: () => {
+    throw new Error("store must not be touched");
+  },
   close: async () => {},
 });
 

@@ -3,6 +3,8 @@ export type Config = {
   databaseUrl: string;
   /** "name:token,name:token" → bearer token → user name. */
   tokens: Map<string, string>;
+  /** Decision 13: admin plane bearer token; unset disables /admin/*. */
+  adminToken: string | undefined;
   /** Decision 11: raw payload TTL in days. */
   rawTtlDays: number;
 };
@@ -24,6 +26,7 @@ export const loadConfig = (
     port: Number(env.PORT ?? 8787),
     databaseUrl,
     tokens,
+    adminToken: env.SLOPWATCH_ADMIN_TOKEN,
     rawTtlDays: Number(env.RAW_TTL_DAYS ?? 90),
   };
 };

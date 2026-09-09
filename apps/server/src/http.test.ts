@@ -8,8 +8,9 @@ import { createApp, type App } from "./http";
 import type { Store } from "./store";
 
 // Auth tests run everywhere with a throwing stub store — authentication must
-// be checked before any storage access. The DB-backed tests below are skipped
-// unless DATABASE_URL is set (CI has no Postgres yet).
+// be checked before any storage access (resolveTokenUser participates in auth,
+// so it answers null instead of throwing). The DB-backed tests below are
+// skipped unless DATABASE_URL is set (CI has no Postgres yet).
 const refusingStore = (): Store => ({
   migrate: () => {
     throw new Error("store must not be touched");
@@ -27,6 +28,34 @@ const refusingStore = (): Store => ({
     throw new Error("store must not be touched");
   },
   backfillTokenTotals: () => {
+    throw new Error("store must not be touched");
+  },
+  createUser: () => {
+    throw new Error("store must not be touched");
+  },
+  getUser: () => {
+    throw new Error("store must not be touched");
+  },
+  listUsers: () => {
+    throw new Error("store must not be touched");
+  },
+  setUserDisabled: () => {
+    throw new Error("store must not be touched");
+  },
+  deleteUser: () => {
+    throw new Error("store must not be touched");
+  },
+  mintToken: () => {
+    throw new Error("store must not be touched");
+  },
+  listTokens: () => {
+    throw new Error("store must not be touched");
+  },
+  revokeToken: () => {
+    throw new Error("store must not be touched");
+  },
+  resolveTokenUser: async () => null,
+  health: () => {
     throw new Error("store must not be touched");
   },
   close: async () => {},
