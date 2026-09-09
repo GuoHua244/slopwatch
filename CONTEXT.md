@@ -5,7 +5,7 @@ Self-hosted, on-prem observability platform for coding agents. See [`research/v1
 ## Language
 
 **Coding agent**:
-An AI coding tool that runs on a developer's machine (Claude Code, Codex CLI, Pi, OpenCode, Copilot CLI).
+An AI coding tool that runs on a developer's machine (Claude Code, Codex CLI, Pi, OpenCode, Copilot CLI, ZCode).
 _Avoid_: assistant, bot, AI tool.
 
 **Session**:
@@ -36,6 +36,10 @@ _Avoid_: backend, hub, daemon, collector.
 A person with an identity in one Slopwatch organization — may run coding agents, review sessions, administer the Server, or any combination.
 _Avoid_: developer, member, account. ("Developer" is a role a **User** plays when running a coding agent; not every **User** is a developer.)
 
+**DRI (Directly Responsible Individual)**:
+A role a **User** plays: reviews other users' **Sessions** by pulling from a filterable firehose; the only DRI-exclusive action is marking a session as reviewed.
+_Avoid_: reviewer, assignee, approver, inbox owner.
+
 **Event**:
 A normalized record a **Listener** produces and ships to the **Server** — the unit of communication between them. Sessions, Turns, and Model requests are all carried as Events. The shared package that defines the Event schema and the typed Listener→Server client is `@slopwatch/events`; the TypeScript type is `NormalEvent` (to avoid colliding with the global DOM `Event`).
 _Avoid_: message, payload, wire format, record.
@@ -45,7 +49,7 @@ _Avoid_: message, payload, wire format, record.
 - A **Session** contains a DAG of **Turns**; most agents produce a linear DAG, Pi can branch.
 - A **Turn** contains zero or more **Model requests**.
 - A **Subagent** is a **Session** whose `parent_session_id` points to the spawning **Session** and whose `spawned_by_turn_id` points to the **Turn** that launched it.
-- A **Listener** produces **Sessions**, **Turns**, and **Model requests** for exactly one **Coding agent**; it runs either as a subprocess (Claude Code, Codex, Copilot) or as an in-process extension (Pi, OpenCode).
+- A **Listener** produces **Sessions**, **Turns**, and **Model requests** for exactly one **Coding agent**; it runs either as a subprocess (Claude Code, Codex, Copilot, ZCode) or as an in-process extension (Pi, OpenCode).
 - Many **Listeners** POST to one **Server**; the **Server** is the only component that talks to Postgres.
 - **Listeners** and the **Server** communicate by exchanging **Events** defined in `@slopwatch/events`.
 

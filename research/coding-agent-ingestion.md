@@ -1,16 +1,16 @@
 # Coding Agent Ingestion: Capture Surfaces Across Agents
 
 Research notes for Slopwatch — a self-hosted, open-source observability platform
-for coding agents. This document captures what we learned about the five target
+for coding agents. This document captures what we learned about the six target
 agents and why a per-agent ingestion strategy is unavoidable.
 
-**Target agents (v1):** Claude Code, OpenAI Codex CLI, Pi (`@mariozechner/pi-coding-agent`), OpenCode, GitHub Copilot CLI.
+**Target agents (v1):** Claude Code, OpenAI Codex CLI, Pi (`@mariozechner/pi-coding-agent`), OpenCode, GitHub Copilot CLI, ZCode.
 
 ---
 
 ## The headline finding
 
-There is no single capture mechanism that works well across all five agents.
+There is no single capture mechanism that works well across all six agents.
 
 - Hooks alone are insufficient for most of them (payloads lack message content, or the hook system is flag-gated, or coverage is thin).
 - JSONL-on-disk tailing alone is insufficient for some (OpenCode is migrating to SQLite; Pi's schema is versioned and has bumped 3x recently; Claude Code and Copilot JSONL schemas are undocumented).
@@ -83,6 +83,21 @@ The right strategy is **per-agent adapters, each using that agent's most stable 
 
 **Takeaway.** Hooks + JSONL tail combined. Hooks for real-time low-latency signals (session start/end, tool calls); JSONL tail for full event fidelity. Include `--share` Markdown export on session end as a fallback. Accept schema instability and pin to tested CLI versions.
 
+### ZCode
+
+Observed on a Windows machine (2026-09-08). Target users run ZCode on Windows, so this adapter is Windows-first.
+
+| Surface            | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hooks              | Hook configuration in `~/.zcode/cli/config.json` (event names, tool matchers, template variables); **Surveyed (2026-09-08).** Exactly **seven events**: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PostToolUseFailure`, `Stop` — **no `SessionEnd`, no `SubagentStop`**. Matcher is a case-sensitive regex over the tool name (aliases `Task` ↔ `Agent`); `SessionStart` matcher values expose `startup/resume/clear/compact`. `type: "process"` runs an argv without a shell (`timeoutMs` in ms — the `command` type's `timeout` is seconds) — the portable choice on Windows; hooks run **inline** (`async` is a no-op), so a spawning hook must detach and return immediately. `${ZCODE_SESSION_ID}` is expanded in args; stdout must be strict JSON or exit codes (`2` blocks). Config-file hooks are **disabled by default** (`hooks.enabled: true`); workspace config (`<repo>/.zcode/config.json` / `zcode.json`) also works. |
+| On-disk transcript | `~/.zcode/cli/rollout/model-io-sess_<session-uuid>.jsonl` — one JSON line per completed **Model request**: `completedAt`, `durationMs`, `requestId`, `attempt`, `model.{modelId, providerId, role, source, variant}`, plus the full raw provider request body. **Subagents get their own files** (`model-io-sess_subagent_agent_<id>.jsonl`), mapping directly onto the child-Session model. Confirmed in M2 (2026-09-09): records also carry `startedAt`, `sessionId` (authoritative), `turnId` (turn linkage per record), `querySource` (`main_turn` / `session_title`), and a `response` with `usage` (camelCase token counts) and `toolCalls` (`{id, name, input}`) — turn linkage, tool calls, and token usage ARE derivable (turn-event synthesis stays server-side). Schema still undocumented — pin defensively.                                                                                                                                                         |
+| SQLite store       | `~/.zcode/cli/db/db.sqlite` (+ WAL) — likely the authoritative session store; schema undocumented. Same caveat as OpenCode: do not build on undocumented formats without version pinning.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| OpenTelemetry      | None observed at the CLI level.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Live streaming     | No spectate API observed. fs-watch the rollout JSONL (~100ms) is the practical channel.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Proxy              | Unknown — whether the model-provider base URL is configurable has not been verified.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+
+**Takeaway.** Hooks as triggers + rollout JSONL tail for model requests. The load-bearing fact from the survey: **ZCode has no `SessionEnd` hook**, so the "sidecar exits on SessionEnd" lifecycle does not transfer from Claude Code — candidate: exit on `Stop` + idle timeout, decided in the adapter. Hooks run inline, so the `SessionStart` hook must spawn the sidecar detached (a `process`-type argv hook, no shell) and return immediately. `slopwatch install` must set `hooks.enabled: true`; a per-repo install via workspace config is possible. Bun-on-Windows feasibility of the sidecar primitives (fs-watch tail, named-pipe IPC, DPAPI token storage) is validated in [`bun-windows-validation.md`](bun-windows-validation.md).
+
 ---
 
 ## Cross-cutting patterns
@@ -141,9 +156,10 @@ For an open-source self-install tool, the install ceremony is the UX. The ceilin
    - Pi → TS extension subscribing to lifecycle/turn/tool/provider events.
    - OpenCode → plugin subscribing to session/message/tool events (never touch disk).
    - Copilot → hooks + JSONL tail combined.
+   - ZCode → rollout JSONL tail (model IO) + hooks as triggers; hooks surveyed (seven events, no `SessionEnd` — sidecar exits on `Stop` + idle timeout instead).
 3. **Internal `NormalEvent` schema** is a v1 deliverable, not a v2 refactor.
 4. **`npx slopwatch install`** detects installed agents and wires each correctly; per-agent weirdness never surfaces to the user.
-5. **Version pinning and schema-drift handling** must be built in from the start for Claude Code, Copilot, and Pi JSONLs.
+5. **Version pinning and schema-drift handling** must be built in from the start for Claude Code, Copilot, Pi, and ZCode JSONLs.
 6. **No proxy path in v1.** Revisit for Codex/Pi/OpenCode if granular wire-level model traffic becomes valuable.
 
 ---
@@ -194,3 +210,7 @@ For an open-source self-install tool, the install ceremony is the UX. The ceilin
 - [CLI command reference](https://docs.github.com/en/copilot/reference/cli-command-reference)
 - [Copilot SDK OpenTelemetry](https://github.com/github/copilot-sdk/blob/main/docs/observability/opentelemetry.md)
 - [MCP servers](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers) · [Issue #2283: base URL override](https://github.com/github/copilot-cli/issues/2283)
+
+**ZCode**
+
+- Local filesystem survey on a Windows machine (2026-09-08): `~/.zcode/cli/config.json` (hook configuration keys), `~/.zcode/hooks/`, `~/.zcode/cli/rollout/model-io-*.jsonl`, `~/.zcode/cli/db/db.sqlite`.

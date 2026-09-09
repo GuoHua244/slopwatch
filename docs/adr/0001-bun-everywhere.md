@@ -17,3 +17,7 @@ Bun is the runtime and toolchain for the Listener, the Server, development, and 
 ## Consequence
 
 We are on the hook for Bun's compatibility quirks on the four surfaces we rely on: the Postgres client (`pg`), file-watching, local IPC (Unix sockets / Windows named pipes), and OS keychain access. Validate these before significant code is written against them; if any is broken on Bun, revisit this decision rather than working around it.
+
+**Windows is the primary platform, not a port target.** The shipped product — Server and Listeners alike — is expected to run mainly on Windows, and ZCode (a v1 target agent) runs there. All four surfaces above must be validated on Windows first: `pg` and `fs.watch` behavior on Windows, named-pipe IPC, and Windows Credential Manager (DPAPI) keychain access. The `bun build --compile` Windows target is a first-class artifact from day one.
+
+**Validation status (2026-09-08, Bun 1.4.2 on Windows 10):** see [`research/bun-windows-validation.md`](../../research/bun-windows-validation.md). File-watching, named-pipe IPC, DPAPI/credential-manager access, `--compile`, and the `pg` query round-trip (closed 2026-09-09 against native PostgreSQL 18) all pass. One repo-level fix landed from the validation: `.gitattributes` forcing LF, without which the quality gate fails on Windows checkouts. The decision stands.

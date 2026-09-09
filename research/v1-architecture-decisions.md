@@ -34,7 +34,7 @@ A manager or DRI can watch a running session. Originally scoped to ~100ms via fs
 
 The on-machine capture component is **not** a pre-existing background daemon. It is a per-session subprocess whose lifecycle is driven by the agent's own hook/extension system.
 
-- **Claude Code / Codex / Copilot**: `SessionStart` hook launches `slopwatch-capture --session-id=... --agent=...` as a detached subprocess. That subprocess tails the agent's JSONL, receives subsequent hook fires on a local socket, POSTs normalized events to the backend, exits on `SessionEnd`.
+- **Claude Code / Codex / Copilot / ZCode**: `SessionStart` hook launches `slopwatch-capture --session-id=... --agent=...` as a detached subprocess. That subprocess tails the agent's JSONL, receives subsequent hook fires on a local socket (named pipe on Windows), POSTs normalized events to the backend, exits on `SessionEnd`. (ZCode's hook catalog is now surveyed: it has `SessionStart` but **no `SessionEnd`**, so its sidecar's exit signal must come from elsewhere — e.g. the `Stop` hook plus an idle timeout; see the ingestion research. Its hooks also run inline, so the spawn must detach immediately.)
 - **Pi / OpenCode**: in-process extension/plugin loaded into the agent itself. Posts directly to the backend. No subprocess at all.
 
 **Why.** A pure "hook fires curl" model is insufficient — hooks don't carry full message content (Claude Code / Codex / Copilot) and nothing streams between hook fires while the model is generating. A pre-existing daemon solves that, but introduces a "dev forgot to start it" failure mode and a non-trivial install ceremony (launchd/systemd/Windows service). The per-session sidecar threads the needle: the hook _is_ the trigger that starts the process, so forgetting is impossible, and the process lives only during sessions — no always-on footprint.
@@ -87,43 +87,57 @@ A **Session** is the logical run of one coding agent for one developer in one cw
 
 ---
 
-## Tentative / proposed but not confirmed
+## Resolved 2026-09-09 (pre-implementation design review)
 
-### Review model (proposed, not accepted)
+### 10. Review model: DRI is a queryer, not a recipient
 
-Interview exited before this was resolved. The proposal on the table:
+The inbox starts empty. A DRI pulls from a filterable firehose (cost threshold, repo, user, unreviewed-first) and marks sessions reviewed. Accepted shape carried over from the earlier proposal: review state lives on an entity separate from session lifecycle, the review unit is turn-level comments (`review_comments(session_id, turn_seq, author_id, body, created_at)` plus `session_reviews(session_id, reviewer_id, reviewed_at)`), and notifications stay pull-only in v1.
 
-- **Session lifecycle**: `active → ended`. Nothing more on the session itself.
-- **Review state lives on a separate `ReviewItem` entity**, orthogonal to session state.
-- **DRI is a queryer, not a recipient**: inbox starts empty; DRI pulls from a firehose filtered by configurable heuristics (cost, team, unreviewed-first).
-- **Review unit is turn-level comments**, not session-level verdicts. Schema: `review_comments(session_id, turn_seq, author_id, body, created_at)` plus `session_reviews(session_id, reviewer_id, reviewed_at)`.
-- **Notifications are pull-only in v1**. Email/Slack push is v2.
+- **Scoping in v1 is org-wide** — no `Team` entity yet; filters group by the session's dimension fields (repo, machine, user).
+- **DRI is a role attribute of a User**, not a separate identity; one person can be DRI and a reviewed developer at the same time.
+- **The only DRI-exclusive power is the accountability marker** ("mark reviewed"). Viewing and commenting are org-wide powers, following from decision 2.
+- **Why not recipient**: routing rules plus an assignment state machine contradict the org-visibility philosophy and the minimal-infra thread (decisions 4 and 7). Pull → push is additive later; the reverse is not.
 
-The open question that blocked this: **is DRI a queryer (as proposed) or a recipient (sessions get assigned/routed to a DRI on end)?** The data model differs materially between the two.
+### 11. Data retention: two global defaults, raw expires
+
+Normalized events and review records are kept forever. Raw agent payloads (stored as JSONB — see open question 2) expire on a 90-day default TTL, enforced by a daily prune job inside the Server, configurable via environment variable only — no UI. Per-team policies and cold-archive-to-S3 are v2. This also caps the growth risk of JSONB-first raw storage.
+
+### 12. Frontend: React SPA (Vite), statically embedded
+
+The v1 dashboard is a React SPA built with Vite; its output is embedded into the single binary as static assets, so the single-binary + stateless shape holds (decision 7). The leaderboard prototype was already React — prior art exists. The tracer bullet ships a hand-written polling page first; the API is identical, so the swap is free. Server-side frameworks (Next/Remix) are rejected: they require a running server process.
+
+### 13. Admin UI: minimal set plus session deletion
+
+Users (add/disable/delete), token mint/revoke, and a system-health page — plus a per-session delete/anonymize action. In an org-visible product, "someone pasted a secret into a prompt" is an inevitable incident and visibility amplifies its radius; the remediation tool ships with the visibility. "Pause reporting" is not built separately — disabling a user kills its token immediately. Retention-policy and team-configuration UIs are v2.
+
+### 14. Identity beyond the token: environment facts only
+
+Session events carry `hostname`, `cwd`, and `git remote URL` — dimension fields for DRI filters and the leaderboard ("cost per repo"). Explicitly not carried: git email and OS username — anything that reads as an identity claim. The bearer token is the only identity (decision 6's reasoning, applied).
 
 ---
 
 ## Open questions — pick up here
 
-Roughly in priority order for continuing the design:
+Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13 (2026-09-09 decisions) and 8/9 (ADR 0001). Still open: 2, 5, 6, 10, 12, plus the buffering half of 4:
 
 1. **DRI shape** (blocks the review schema). Four edges surfaced mid-grill but unresolved:
    - **Queryer vs recipient**: DRI pulls from a filterable firehose, or sessions get auto-routed to a DRI's inbox on end?
    - **Scoping**: DRI per team (requires a `Team` entity) or per org?
    - **Attribute vs identity**: can one user be DRI for multiple teams and a reviewed dev on the same team?
    - **Permission boundary vs accountability marker**: given org-wide visibility, is the only DRI-specific power "mark session as reviewed," or do DRIs also gate who can view/comment/spectate?
-2. **Raw agent-specific payload storage.** NormalEvent keeps the original raw event for fidelity. Store as JSONB alongside normalized events in Postgres, or offload to an S3-compatible blob store with a pointer in Postgres? Depends on expected payload sizes and how often raw is actually read.
-3. **Data retention and pruning.** Keep everything forever? TTL-based deletion? Per-team retention policy? Archival to cold storage?
-4. **Sidecar buffering when backend is unreachable.** Local append-only log on disk? How much? What happens when it fills?
+   - **RESOLVED 2026-09-09** — queryer · org-wide in v1 · role attribute · mark-reviewed is the only DRI-exclusive power. See decision 10.
+2. **Raw agent-specific payload storage.** NormalEvent keeps the original raw event for fidelity. Store as JSONB alongside normalized events in Postgres, or offload to an S3-compatible blob store with a pointer in Postgres? Depends on expected payload sizes and how often raw is actually read. Direction set with decision 11: start with JSONB; revisit with real payload-size data.
+3. **Data retention and pruning.** Keep everything forever? TTL-based deletion? Per-team retention policy? Archival to cold storage? **RESOLVED 2026-09-09 — decision 11.**
+4. **Sidecar buffering when backend is unreachable.** Local append-only log on disk? How much? What happens when it fills? v0 behavior: drop events while unreachable; design buffering with real failure data.
 5. **NormalEvent schema specifics.** The research enumerates the categories (Session, Turn, Message, Tool event, Model request, raw payload) but the exact fields, especially for tricky cases (Pi's DAG, Codex resumes, Claude Code compaction, subagent transcripts), are not drawn.
 6. **Schema-drift handling per agent.** Claude Code JSONL is undocumented; Copilot JSONL is undocumented; Pi has bumped schema v1→v2→v3. Adapters need a version detection + pin strategy. What does "adapter doesn't recognize this version" do — fail closed, fail open with warning, partial capture?
-7. **Frontend stack.** Bundled into the binary as static assets — but React SPA? Server-rendered? HTMX? Affects dev velocity and the "single binary" build pipeline.
-8. **Backend language/runtime.** Go, Rust, Node? Affects sidecar consistency (same language across sidecar + backend?) and the in-process TypeScript extensions for Pi/OpenCode (those _must_ be JS/TS).
-9. **Sidecar language.** Must run on dev machines across macOS/Linux/Windows with minimal install friction. Node (available wherever the agents are installed)? Go (single static binary per OS)? Rust (same)?
+7. **Frontend stack.** Bundled into the binary as static assets — but React SPA? Server-rendered? HTMX? Affects dev velocity and the "single binary" build pipeline. **RESOLVED 2026-09-09 — decision 12.**
+8. **Backend language/runtime.** Go, Rust, Node? Affects sidecar consistency (same language across sidecar + backend?) and the in-process TypeScript extensions for Pi/OpenCode (those _must_ be JS/TS). _(Resolved by ADR 0001 — Bun/TS everywhere.)_
+9. **Sidecar language.** Must run on dev machines across macOS/Linux/Windows with minimal install friction. Node (available wherever the agents are installed)? Go (single static binary per OS)? Rust (same)? _(Resolved by ADR 0001 — Bun/TS everywhere.)_
 10. **`npx slopwatch install` flow.** Detect installed agents, wire up per-agent hooks/extensions idempotently, store backend URL + token. Exact UX not drawn.
-11. **Identity binding beyond the token.** Does the sidecar send extra context (git email, OS user, hostname, cwd, repo)? Which of those are useful for the DRI view vs. noise?
+11. **Identity binding beyond the token.** Does the sidecar send extra context (git email, OS user, hostname, cwd, repo)? Which of those are useful for the DRI view vs. noise? **RESOLVED 2026-09-09 — decision 14.**
 12. **Cost/token tracking.** Codex and Claude Code emit token usage; Copilot JSONL probably does too. Normalizing across providers (OpenAI vs Anthropic pricing, cached tokens, reasoning tokens) is its own small project.
-13. **Admin UI scope.** Minimally: add/revoke users, view system health, configure retention. What else needs to be in v1?
+13. **Admin UI scope.** Minimally: add/revoke users, view system health, configure retention. What else needs to be in v1? **RESOLVED 2026-09-09 — decision 13.**
 
 ---
 

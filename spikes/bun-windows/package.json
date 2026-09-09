@@ -1,0 +1,8 @@
+{
+  "name": "@slopwatch/spike-bun-windows",
+  "private": true,
+  "description": "Throwaway validation spikes for ADR 0001 (Bun on Windows). Results are recorded in research/bun-windows-validation.md; this code is not a product surface.",
+  "dependencies": {
+    "pg": "^8.23.0"
+  }
+}

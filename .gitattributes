@@ -1,0 +1,4 @@
+# Normalize line endings to LF on all platforms — the repo's Prettier config
+# (default endOfLine: "lf") fails on CRLF working trees, which Git's autocrlf
+# produces on Windows. Windows is the primary platform (ADR 0001).
+* text=auto eol=lf
