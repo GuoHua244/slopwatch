@@ -69,6 +69,7 @@ export type AdminApi = {
   mintToken(name: string): Promise<MintedToken>;
   tokens(name: string): Promise<AdminTokenRow[]>;
   revokeToken(tokenId: string): Promise<void>;
+  deleteSession(sessionId: string): Promise<void>;
   health(): Promise<AdminHealth>;
 };
 
@@ -176,6 +177,12 @@ export const createAdminApi = (
     revokeToken: async (tokenId) => {
       await unwrap(
         `/admin/tokens/${encodeURIComponent(tokenId)}`,
+        auth({ method: "DELETE" }),
+      );
+    },
+    deleteSession: async (sessionId) => {
+      await unwrap(
+        `/admin/sessions/${encodeURIComponent(sessionId)}`,
         auth({ method: "DELETE" }),
       );
     },

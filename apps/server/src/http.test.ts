@@ -24,6 +24,9 @@ const refusingStore = (): Store => ({
   eventsSince: () => {
     throw new Error("store must not be touched");
   },
+  deleteSession: () => {
+    throw new Error("store must not be touched");
+  },
   pruneRawOlderThan: () => {
     throw new Error("store must not be touched");
   },

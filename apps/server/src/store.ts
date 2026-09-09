@@ -68,6 +68,11 @@ export type Store = {
   ): Promise<{ accepted: number }>;
   listSessions(): Promise<SessionRow[]>;
   eventsSince(sessionId: string, sinceSeq: number): Promise<StoredEvent[]>;
+  /**
+   * Decision 13: remove a whole session — normalized events, raw payloads,
+   * and the row itself. The leak-remediation action. False when absent.
+   */
+  deleteSession(sessionId: string): Promise<boolean>;
   /** Decision 11: null out raw payloads older than the TTL. Returns rows touched. */
   pruneRawOlderThan(days: number): Promise<number>;
   /**
@@ -288,6 +293,27 @@ export const createPgStore = (databaseUrl: string): Store => {
         WHERE s.session_id = a.session_id
       `);
       return rowCount ?? 0;
+    },
+
+    async deleteSession(sessionId) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("DELETE FROM events WHERE session_id = $1", [
+          sessionId,
+        ]);
+        const session = await client.query(
+          "DELETE FROM sessions WHERE session_id = $1",
+          [sessionId],
+        );
+        await client.query("COMMIT");
+        return (session.rowCount ?? 0) > 0;
+      } catch (e) {
+        await client.query("ROLLBACK");
+        throw e;
+      } finally {
+        client.release();
+      }
     },
 
     async createUser(name, email) {

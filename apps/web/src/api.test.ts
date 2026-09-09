@@ -163,6 +163,13 @@ describe("createAdminApi", () => {
     expect(calls[1]!.init?.method).toBe("DELETE");
   });
 
+  test("deleteSession DELETEs the encoded admin session path", async () => {
+    const { api, calls } = recordingApi(200, { ok: true });
+    await api.deleteSession("sess_leak 1");
+    expect(calls[0]!.path).toBe("/admin/sessions/sess_leak%201");
+    expect(calls[0]!.init?.method).toBe("DELETE");
+  });
+
   test("mintToken POSTs and returns the plaintext exactly once", async () => {
     const { api, calls } = recordingApi(201, {
       token_id: "tid-1",

@@ -266,6 +266,13 @@ export const createApp = ({
           return json(404, { error: "no such token" });
         }
       }
+
+      const sessionMatch = url.pathname.match(/^\/admin\/sessions\/([^/]+)$/);
+      if (sessionMatch && req.method === "DELETE") {
+        return (await store.deleteSession(decodeURIComponent(sessionMatch[1]!)))
+          ? json(200, { ok: true })
+          : json(404, { error: "no such session" });
+      }
     }
 
     // Exact-name static assets after the API routes — unknown paths still 404.

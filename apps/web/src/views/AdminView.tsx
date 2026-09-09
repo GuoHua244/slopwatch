@@ -7,6 +7,7 @@ import {
 } from "../api";
 import { clock } from "../lib/format";
 import { createPoller } from "../lib/poller";
+import { AdminSessionsPanel } from "./AdminSessionsPanel";
 import { AdminUsersPanel } from "./AdminUsersPanel";
 
 const TOKEN_KEY = "slopwatch.admin-token";
@@ -115,7 +116,7 @@ const HealthPanel = ({
   </>
 );
 
-type AdminTab = "users" | "health";
+type AdminTab = "users" | "sessions" | "health";
 
 const AdminHome = ({
   api,
@@ -138,6 +139,12 @@ const AdminHome = ({
           users
         </button>
         <button
+          className={tab === "sessions" ? "active" : ""}
+          onClick={() => setTab("sessions")}
+        >
+          sessions
+        </button>
+        <button
           className={tab === "health" ? "active" : ""}
           onClick={() => setTab("health")}
         >
@@ -149,6 +156,12 @@ const AdminHome = ({
       </nav>
       {tab === "users" ? (
         <AdminUsersPanel api={api} refreshKey={refreshKey} refresh={refresh} />
+      ) : tab === "sessions" ? (
+        <AdminSessionsPanel
+          api={api}
+          refreshKey={refreshKey}
+          refresh={refresh}
+        />
       ) : (
         <HealthPanel health={health} />
       )}

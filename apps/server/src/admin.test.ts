@@ -33,6 +33,7 @@ const memStore = () => {
   let sessions = 0;
   let events = 0;
   const seenSessions = new Set<string>();
+  const sessionEvents = new Map<string, number>();
   const row = (name: string): AdminUserRow => ({
     name,
     email: users.get(name)!.email,
@@ -51,8 +52,20 @@ const memStore = () => {
           sessions += 1;
         }
         events += 1;
+        sessionEvents.set(
+          e.session_id,
+          (sessionEvents.get(e.session_id) ?? 0) + 1,
+        );
       }
       return { accepted: (events_ as unknown[]).length };
+    },
+    deleteSession: async (sessionId) => {
+      if (!seenSessions.has(sessionId)) return false;
+      seenSessions.delete(sessionId);
+      events -= sessionEvents.get(sessionId) ?? 0;
+      sessionEvents.delete(sessionId);
+      sessions -= 1;
+      return true;
     },
     listSessions: async () => [],
     eventsSince: async (): Promise<StoredEvent[]> => [],
@@ -347,6 +360,57 @@ describe("admin endpoints integrate with ingestion", () => {
   });
 });
 
+describe("admin session deletion (decision 13)", () => {
+  test("DELETE /admin/sessions/:id removes session and its events", async () => {
+    const { store } = memStore();
+    const app = createApp({
+      tokens: new Map([["env-tok", "alice"]]),
+      store,
+      adminToken: "admin-tok",
+    });
+    const { SCHEMA_VERSION } = await import("@slopwatch/events");
+    const post = (sessionId: string) =>
+      app.fetch(
+        new Request("http://x/events", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer env-tok",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            schema_version: SCHEMA_VERSION,
+            events: [
+              {
+                schema_version: SCHEMA_VERSION,
+                agent: "zcode",
+                session_id: sessionId,
+                occurred_at: new Date().toISOString(),
+                kind: "session",
+                event: "start",
+                cwd: "D:\\demo",
+                hostname: "DEV-01",
+              },
+            ],
+          }),
+        }),
+      );
+    // one keeper session and one leak session
+    expect((await post("sess_keeper")).status).toBe(202);
+    expect((await post("sess_leak")).status).toBe(202);
+    expect((await store.health()).sessions).toBe(2);
+    expect((await store.health()).events).toBe(2);
+
+    expect(
+      (await admin(app, "DELETE", "/admin/sessions/sess_leak")).status,
+    ).toBe(200);
+    expect((await store.health()).sessions).toBe(1);
+    expect((await store.health()).events).toBe(1);
+    expect(
+      (await admin(app, "DELETE", "/admin/sessions/sess_leak")).status,
+    ).toBe(404);
+  });
+});
+
 // --- DB-backed tests (require DATABASE_URL_TEST / DATABASE_URL) ---
 
 const dbTests = () =>
@@ -404,6 +468,47 @@ describe.skipIf(!dbTests())("admin store semantics against Postgres", () => {
     const health = await store!.health();
     expect(Number.isInteger(health.sessions)).toBe(true);
     expect(Number.isInteger(health.events)).toBe(true);
+  });
+
+  test("deleteSession removes the session row and its events", async () => {
+    await ensure();
+    const { SCHEMA_VERSION } = await import("@slopwatch/events");
+    const sessionId = `sess_admin-del-${crypto.randomUUID().slice(0, 8)}`;
+    await store!.appendEvents(
+      [
+        {
+          schema_version: SCHEMA_VERSION,
+          agent: "zcode",
+          session_id: sessionId,
+          occurred_at: new Date().toISOString(),
+          kind: "session",
+          event: "start",
+          cwd: "D:\\demo",
+          hostname: "DEV-01",
+        },
+        {
+          schema_version: SCHEMA_VERSION,
+          agent: "zcode",
+          session_id: sessionId,
+          occurred_at: new Date().toISOString(),
+          kind: "turn",
+          event: "start",
+          turn_id: "t1",
+        },
+      ] as never,
+      "alice",
+    );
+    expect(
+      (await store!.listSessions()).some((s) => s.session_id === sessionId),
+    ).toBe(true);
+    expect((await store!.eventsSince(sessionId, 0)).length).toBe(2);
+
+    expect(await store!.deleteSession(sessionId)).toBe(true);
+    expect(await store!.deleteSession(sessionId)).toBe(false);
+    expect(
+      (await store!.listSessions()).some((s) => s.session_id === sessionId),
+    ).toBe(false);
+    expect((await store!.eventsSince(sessionId, 0)).length).toBe(0);
   });
 
   test("cleanup", async () => {
