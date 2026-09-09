@@ -26,6 +26,9 @@ const refusingStore = (): Store => ({
   pruneRawOlderThan: () => {
     throw new Error("store must not be touched");
   },
+  backfillTokenTotals: () => {
+    throw new Error("store must not be touched");
+  },
   close: async () => {},
 });
 

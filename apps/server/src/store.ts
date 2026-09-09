@@ -29,6 +29,12 @@ export type Store = {
   eventsSince(sessionId: string, sinceSeq: number): Promise<StoredEvent[]>;
   /** Decision 11: null out raw payloads older than the TTL. Returns rows touched. */
   pruneRawOlderThan(days: number): Promise<number>;
+  /**
+   * Rewrite each session's token columns with the full sum over its events.
+   * The columns only accumulated events appended after they shipped, so
+   * sessions captured before that undercount; idempotent, safe on a live DB.
+   */
+  backfillTokenTotals(): Promise<number>;
   close(): Promise<void>;
 };
 
@@ -178,6 +184,28 @@ export const createPgStore = (databaseUrl: string): Store => {
         "UPDATE events SET raw = NULL WHERE raw IS NOT NULL AND received_at < now() - ($1 || ' days')::interval",
         [days],
       );
+      return rowCount ?? 0;
+    },
+
+    async backfillTokenTotals() {
+      const { rowCount } = await pool.query(`
+        UPDATE sessions s SET
+          total_input_tokens = COALESCE(a.i, 0),
+          total_output_tokens = COALESCE(a.o, 0),
+          total_cache_read_tokens = COALESCE(a.cr, 0),
+          total_cache_write_tokens = COALESCE(a.cw, 0)
+        FROM (
+          SELECT session_id,
+                 SUM((payload->'usage'->>'input_tokens')::bigint)      AS i,
+                 SUM((payload->'usage'->>'output_tokens')::bigint)     AS o,
+                 SUM((payload->'usage'->>'cache_read_tokens')::bigint)  AS cr,
+                 SUM((payload->'usage'->>'cache_write_tokens')::bigint) AS cw
+          FROM events
+          WHERE kind = 'model_request'
+          GROUP BY session_id
+        ) a
+        WHERE s.session_id = a.session_id
+      `);
       return rowCount ?? 0;
     },
 
