@@ -115,6 +115,31 @@ describe("NormalEvent v0 schema", () => {
     ).toBe(true);
   });
 
+  test("accepts session meta events (title / task preview), rejects empty ones", () => {
+    expect(
+      isNormalEvent({
+        ...base,
+        kind: "session",
+        event: "meta",
+        title: "介绍一下 slopwatch",
+      }),
+    ).toBe(true);
+    expect(
+      isNormalEvent({
+        ...base,
+        kind: "session",
+        event: "meta",
+        task_preview: "fix the flaky test",
+      }),
+    ).toBe(true);
+    expect(
+      isNormalEvent({ ...base, kind: "session", event: "meta", title: "" }),
+    ).toBe(false);
+    expect(isNormalEvent({ ...base, kind: "session", event: "meta" })).toBe(
+      false,
+    );
+  });
+
   test("rejects envelope violations", () => {
     const bad = (
       patch: (e: SessionStartEvent) => Partial<SessionStartEvent>,

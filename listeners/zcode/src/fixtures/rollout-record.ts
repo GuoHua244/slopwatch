@@ -20,6 +20,10 @@ export const mainTurnRecord = {
     variant: "max",
   },
   request: {
+    messages: [
+      { role: "user", content: "Hi ZCode，给我介绍一下 slopwatch 吧" },
+      { role: "assistant", content: "I'll take a look." },
+    ],
     body: {
       model: "GLM-5.3-Flash",
       max_tokens: 128000,
@@ -48,7 +52,16 @@ export const titleRecord: Record<string, unknown> = {
   requestId: "req_demo-0002",
   turnId: undefined,
   querySource: "session_title",
-  response: { ...mainTurnRecord.response, toolCalls: undefined },
+  request: {
+    messages: [
+      { role: "user", content: "Hi ZCode，给我介绍一下 slopwatch 吧" },
+    ],
+  },
+  response: {
+    ...mainTurnRecord.response,
+    toolCalls: undefined,
+    text: '{"title":"介绍一下 slopwatch"}',
+  },
 };
 
 export const noResponseRecord: Record<string, unknown> = {

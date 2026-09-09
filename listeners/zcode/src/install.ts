@@ -56,9 +56,17 @@ const isOurMatcherEntry = (entry: unknown, spawnerPath: string): boolean => {
 };
 
 /**
- * Merge our SessionStart hook into an existing workspace config (or create
- * one). Preserves unrelated keys and hooks; replaces any previous slopwatch
- * entry. Config-file hooks must set `hooks.enabled: true` to run at all.
+ * Our hook events: SessionStart spawns the sidecar; UserPromptSubmit re-spawns
+ * it if an idle timeout killed it mid-session (messages in an already-open
+ * session fire no SessionStart — the spawner's liveness check makes this a
+ * cheap no-op when the sidecar is alive).
+ */
+export const HOOK_EVENTS = ["SessionStart", "UserPromptSubmit"] as const;
+
+/**
+ * Merge our hooks into an existing workspace config (or create one).
+ * Preserves unrelated keys and hooks; replaces any previous slopwatch entry
+ * in each of our events. Config-file hooks must set `hooks.enabled: true`.
  */
 export const mergeHookConfig = (
   existing: unknown,
@@ -80,16 +88,18 @@ export const mergeHookConfig = (
       ? { ...(hooks.events as Record<string, unknown>) }
       : {}
   ) as Record<string, unknown>;
-  const sessionStart = Array.isArray(events.SessionStart)
-    ? [...events.SessionStart]
-    : [];
 
-  const kept = sessionStart.filter(
-    (e) => !isOurMatcherEntry(e, entry.args[0]!),
-  );
-  kept.push({ hooks: [entry] });
+  for (const eventName of HOOK_EVENTS) {
+    const existingEntries = Array.isArray(events[eventName])
+      ? [...(events[eventName] as unknown[])]
+      : [];
+    const kept = existingEntries.filter(
+      (e) => !isOurMatcherEntry(e, entry.args[0]!),
+    );
+    kept.push({ hooks: [entry] });
+    events[eventName] = kept;
+  }
 
-  events.SessionStart = kept;
   hooks.events = events;
   hooks.enabled = true;
   base.hooks = hooks;

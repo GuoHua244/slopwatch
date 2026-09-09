@@ -13,6 +13,7 @@ import { execSync } from "node:child_process";
 import {
   closeSync,
   existsSync,
+  mkdirSync,
   openSync,
   readSync,
   statSync,
@@ -27,7 +28,13 @@ import {
   type NormalEvent,
   type SessionEndEvent,
 } from "@slopwatch/events";
-import { eventsFromRecord, sessionIdFromFilename } from "./normalizer";
+import { readCursor, writeCursor } from "./cursor";
+import {
+  eventsFromRecord,
+  metaFromRecord,
+  sessionIdFromFilename,
+  taskPreviewFromRecord,
+} from "./normalizer";
 
 const args = process.argv.slice(2);
 const arg = (name: string): string | undefined => {
@@ -66,23 +73,34 @@ if (!file) {
 const sessionId =
   sessionIdArg ?? sessionIdFromFilename(basename(file)) ?? "unknown-session";
 
-const emit = (event: NormalEvent): void => {
-  if (!isNormalEvent(event)) {
-    console.error(
-      "live: skipping invalid event:",
-      JSON.stringify(event).slice(0, 200),
-    );
-    return;
+/**
+ * Send a batch. In server mode a failed POST exits the process WITHOUT
+ * advancing the cursor: the UserPromptSubmit re-spawn resumes from the last
+ * committed offset and re-sends the backlog — read progress always equals
+ * send progress, so nothing is lost and nothing is sent twice.
+ */
+const flush = async (batch: NormalEvent[]): Promise<void> => {
+  if (batch.length === 0) return;
+  const valid = batch.filter(isNormalEvent);
+  for (const event of batch) {
+    if (!isNormalEvent(event)) {
+      console.error(
+        "live: skipping invalid event:",
+        JSON.stringify(event).slice(0, 200),
+      );
+    }
   }
   if (serverUrl && token) {
-    sendEvents([event], { serverUrl, token }).catch((e: unknown) => {
-      // v0 behavior (open question 4): drop on failure, keep tailing
+    try {
+      await sendEvents(valid, { serverUrl, token });
+    } catch (e) {
       console.error(
-        `live: dropped batch (${e instanceof Error ? e.message : String(e)})`,
+        `live: server unreachable (${e instanceof Error ? e.message : String(e)}) — exiting; re-spawn resumes from cursor`,
       );
-    });
+      process.exit(1);
+    }
   } else {
-    console.log(JSON.stringify(event));
+    for (const event of valid) console.log(JSON.stringify(event));
   }
 };
 
@@ -99,7 +117,7 @@ const finish = (reason: string): void => {
     event: "end",
     reason,
   };
-  emit(end);
+  void flush([end]);
   // grace period so in-flight POSTs can complete before exiting
   setTimeout(() => process.exit(0), serverUrl ? 1500 : 50);
 };
@@ -110,42 +128,78 @@ const resetIdle = () => {
   idleTimer = setTimeout(() => finish("idle-timeout"), idleMs);
 };
 
-let size = 0;
+const cursorFile = join(
+  homedir(),
+  ".slopwatch",
+  "listeners",
+  `zcode-${sessionId}.cursor`,
+);
+mkdirSync(join(homedir(), ".slopwatch", "listeners"), { recursive: true });
+// resume from the previous sidecar generation's offset (0 on first capture)
+let size = readCursor(cursorFile);
+const firstCapture = size === 0;
 let partial = "";
-const drain = (): void => {
-  let current: number;
+let taskPreviewSent = false;
+let draining = false;
+const drain = async (): Promise<void> => {
+  if (draining) return; // previous flush still in flight
+  draining = true;
   try {
-    current = statSync(file).size;
-  } catch {
-    return; // file vanished (rotated?) — keep waiting
-  }
-  if (current <= size) return;
-  const fd = openSync(file, "r");
-  const buf = Buffer.alloc(current - size);
-  readSync(fd, buf, 0, buf.length, size);
-  closeSync(fd);
-  size = current;
-  partial += buf.toString("utf8");
-  const lines = partial.split("\n");
-  partial = lines.pop() ?? "";
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    let record: unknown;
+    let current: number;
     try {
-      record = JSON.parse(line);
+      current = statSync(file).size;
     } catch {
-      console.error("live: skipping unparsable line");
-      continue;
+      return; // file vanished (rotated?) — keep waiting
     }
-    for (const event of eventsFromRecord(record, sessionId)) emit(event);
-    resetIdle();
+    if (current < size) {
+      size = 0; // file truncated/rotated — start over
+      partial = "";
+    }
+    if (current === size) return;
+    const fd = openSync(file, "r");
+    const buf = Buffer.alloc(current - size);
+    readSync(fd, buf, 0, buf.length, size);
+    closeSync(fd);
+    size = current;
+    partial += buf.toString("utf8");
+    const lines = partial.split("\n");
+    partial = lines.pop() ?? "";
+    const batch: NormalEvent[] = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let record: unknown;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        console.error("live: skipping unparsable line");
+        continue;
+      }
+      const meta = metaFromRecord(record, sessionId);
+      if (meta) batch.push(meta);
+      if (!taskPreviewSent) {
+        const preview = taskPreviewFromRecord(record, sessionId);
+        if (preview) {
+          batch.push(preview);
+          taskPreviewSent = true;
+        }
+      }
+      batch.push(...eventsFromRecord(record, sessionId));
+      resetIdle();
+    }
+    await flush(batch);
+    // committed only AFTER a successful send, and only up to the end of the
+    // last COMPLETE line — a partially-written trailing line is re-read next
+    // time so it can be stitched back together
+    writeCursor(cursorFile, size - Buffer.byteLength(partial));
+  } finally {
+    draining = false;
   }
 };
 
 const start = () => {
-  drain(); // backfill everything written before we attached
-  watch(file, () => drain());
-  setInterval(drain, 2000); // belt-and-braces alongside fs.watch
+  void drain(); // backfill everything written before we attached
+  watch(file, () => void drain());
+  setInterval(() => void drain(), 2000); // belt-and-braces alongside fs.watch
   setTimeout(() => finish("max-lifetime"), maxLifetimeMs);
 };
 
@@ -160,17 +214,21 @@ try {
   // optional
 }
 
-emit({
-  schema_version: SCHEMA_VERSION,
-  agent: "zcode",
-  session_id: sessionId,
-  occurred_at: new Date().toISOString(),
-  kind: "session",
-  event: "start",
-  cwd: arg("cwd") ?? process.cwd(),
-  hostname: hostname(),
-  git_remote: gitRemote,
-});
+if (firstCapture) {
+  void flush([
+    {
+      schema_version: SCHEMA_VERSION,
+      agent: "zcode",
+      session_id: sessionId,
+      occurred_at: new Date().toISOString(),
+      kind: "session",
+      event: "start",
+      cwd: arg("cwd") ?? process.cwd(),
+      hostname: hostname(),
+      git_remote: gitRemote,
+    },
+  ]);
+}
 resetIdle();
 
 if (existsSync(file)) {

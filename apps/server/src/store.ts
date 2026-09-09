@@ -7,6 +7,12 @@ export type SessionRow = {
   user_id: string | null;
   first_seen_at: string;
   last_seq: number;
+  title: string | null;
+  task_preview: string | null;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_tokens: number;
+  total_cache_write_tokens: number;
 };
 
 export type StoredEvent = { event_seq: number; event: NormalEvent };
@@ -32,7 +38,13 @@ CREATE TABLE IF NOT EXISTS sessions (
   agent         TEXT NOT NULL,
   user_id       TEXT,
   first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_seq      BIGINT NOT NULL DEFAULT 0
+  last_seq      BIGINT NOT NULL DEFAULT 0,
+  title         TEXT,
+  task_preview  TEXT,
+  total_input_tokens       BIGINT NOT NULL DEFAULT 0,
+  total_output_tokens      BIGINT NOT NULL DEFAULT 0,
+  total_cache_read_tokens  BIGINT NOT NULL DEFAULT 0,
+  total_cache_write_tokens BIGINT NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS events (
   session_id  TEXT NOT NULL REFERENCES sessions (session_id),
@@ -45,6 +57,12 @@ CREATE TABLE IF NOT EXISTS events (
   PRIMARY KEY (session_id, event_seq)
 );
 CREATE INDEX IF NOT EXISTS events_received_at ON events (received_at);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS task_preview TEXT;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_input_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_output_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_cache_read_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_cache_write_tokens BIGINT NOT NULL DEFAULT 0;
 `;
 
 export const createPgStore = (databaseUrl: string): Store => {
@@ -77,6 +95,10 @@ export const createPgStore = (databaseUrl: string): Store => {
             [sessionId, group.length],
           );
           let seq = Number(rows[0]!.last_seq) - group.length;
+          let dIn = 0;
+          let dOut = 0;
+          let dCacheRead = 0;
+          let dCacheWrite = 0;
           for (const event of group) {
             seq += 1;
             const { raw, ...payload } = event;
@@ -90,6 +112,24 @@ export const createPgStore = (databaseUrl: string): Store => {
                 JSON.stringify(payload),
                 raw === undefined ? null : JSON.stringify(raw),
               ],
+            );
+            if (event.kind === "session" && event.event === "meta") {
+              await client.query(
+                "UPDATE sessions SET title = COALESCE($2, title), task_preview = COALESCE($3, task_preview) WHERE session_id = $1",
+                [sessionId, event.title ?? null, event.task_preview ?? null],
+              );
+            }
+            if (event.kind === "model_request" && event.usage) {
+              dIn += event.usage.input_tokens ?? 0;
+              dOut += event.usage.output_tokens ?? 0;
+              dCacheRead += event.usage.cache_read_tokens ?? 0;
+              dCacheWrite += event.usage.cache_write_tokens ?? 0;
+            }
+          }
+          if (dIn || dOut || dCacheRead || dCacheWrite) {
+            await client.query(
+              "UPDATE sessions SET total_input_tokens = total_input_tokens + $2, total_output_tokens = total_output_tokens + $3, total_cache_read_tokens = total_cache_read_tokens + $4, total_cache_write_tokens = total_cache_write_tokens + $5 WHERE session_id = $1",
+              [sessionId, dIn, dOut, dCacheRead, dCacheWrite],
             );
           }
         }
@@ -105,7 +145,7 @@ export const createPgStore = (databaseUrl: string): Store => {
 
     async listSessions() {
       const { rows } = await pool.query(
-        "SELECT session_id, agent, user_id, first_seen_at, last_seq FROM sessions ORDER BY first_seen_at DESC",
+        "SELECT session_id, agent, user_id, first_seen_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions ORDER BY first_seen_at DESC",
       );
       return rows.map((r) => ({
         session_id: r.session_id as string,
@@ -113,6 +153,12 @@ export const createPgStore = (databaseUrl: string): Store => {
         user_id: r.user_id as string | null,
         first_seen_at: new Date(r.first_seen_at as string).toISOString(),
         last_seq: Number(r.last_seq),
+        title: (r.title as string | null) ?? null,
+        task_preview: (r.task_preview as string | null) ?? null,
+        total_input_tokens: Number(r.total_input_tokens),
+        total_output_tokens: Number(r.total_output_tokens),
+        total_cache_read_tokens: Number(r.total_cache_read_tokens),
+        total_cache_write_tokens: Number(r.total_cache_write_tokens),
       }));
     },
 

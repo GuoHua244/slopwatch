@@ -142,11 +142,20 @@ describe.skipIf(!dbTests())("events endpoint against Postgres", () => {
       provider: "p",
       model: "m",
       duration_ms: 5,
+      usage: { input_tokens: 100, output_tokens: 50, cache_read_tokens: 10 },
+      occurred_at: new Date().toISOString(),
+    };
+    const meta: NormalEvent = {
+      ...s1,
+      kind: "session",
+      event: "meta",
+      title: "介绍一下 slopwatch",
+      task_preview: "Hi ZCode，给我介绍一下 slopwatch 吧",
       occurred_at: new Date().toISOString(),
     };
     const res2 = await post(
       dbApp!,
-      { schema_version: SCHEMA_VERSION, events: [second] },
+      { schema_version: SCHEMA_VERSION, events: [second, meta] },
       "tok-alice",
     );
     expect(res2.status).toBe(202);
@@ -160,7 +169,7 @@ describe.skipIf(!dbTests())("events endpoint against Postgres", () => {
       events: { event_seq: number; event: NormalEvent }[];
     };
     expect(page0.session_id).toBe(sessionId);
-    expect(page0.events.map((e) => e.event_seq)).toEqual([1, 2]);
+    expect(page0.events.map((e) => e.event_seq)).toEqual([1, 2, 3]);
     expect(page0.events[0]!.event.kind).toBe("session");
     expect(page0.events[1]!.event.kind).toBe("model_request");
 
@@ -168,15 +177,27 @@ describe.skipIf(!dbTests())("events endpoint against Postgres", () => {
       new Request(`http://x/sessions/${sessionId}/events?since_seq=1`),
     );
     const page1 = (await since2.json()) as { events: { event_seq: number }[] };
-    expect(page1.events.map((e) => e.event_seq)).toEqual([2]);
+    expect(page1.events.map((e) => e.event_seq)).toEqual([2, 3]);
 
     const sessions = await dbApp!.fetch(new Request("http://x/sessions"));
     const list = (await sessions.json()) as {
-      sessions: { session_id: string; last_seq: number }[];
+      sessions: {
+        session_id: string;
+        last_seq: number;
+        title: string | null;
+        task_preview: string | null;
+        total_input_tokens: number;
+        total_output_tokens: number;
+        total_cache_read_tokens: number;
+      }[];
     };
-    expect(
-      list.sessions.find((s) => s.session_id === sessionId)?.last_seq,
-    ).toBe(2);
+    const row = list.sessions.find((s) => s.session_id === sessionId);
+    expect(row?.last_seq).toBe(3);
+    expect(row?.title).toBe("介绍一下 slopwatch");
+    expect(row?.task_preview).toContain("介绍一下 slopwatch 吧");
+    expect(row?.total_input_tokens).toBe(100);
+    expect(row?.total_output_tokens).toBe(50);
+    expect(row?.total_cache_read_tokens).toBe(10);
   });
 
   test("healthz", async () => {

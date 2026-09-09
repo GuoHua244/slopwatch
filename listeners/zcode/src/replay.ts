@@ -15,7 +15,12 @@ import {
   type SessionEndEvent,
   type SessionStartEvent,
 } from "@slopwatch/events";
-import { eventsFromRecord, resolveSessionId } from "./normalizer";
+import {
+  eventsFromRecord,
+  metaFromRecord,
+  resolveSessionId,
+  taskPreviewFromRecord,
+} from "./normalizer";
 
 const file = process.argv[2];
 if (!file) {
@@ -67,9 +72,19 @@ const sessionEnd: SessionEndEvent = {
   reason: "replay",
 };
 
-const events: NormalEvent[] = [
-  sessionStart,
-  ...records.flatMap((record) => eventsFromRecord(record, sessionId!)),
-  sessionEnd,
-];
+const events: NormalEvent[] = [sessionStart];
+let taskPreviewSent = false;
+for (const record of records) {
+  const meta = metaFromRecord(record, sessionId);
+  if (meta) events.push(meta);
+  if (!taskPreviewSent) {
+    const preview = taskPreviewFromRecord(record, sessionId);
+    if (preview) {
+      events.push(preview);
+      taskPreviewSent = true;
+    }
+  }
+  events.push(...eventsFromRecord(record, sessionId));
+}
+events.push(sessionEnd);
 console.log(JSON.stringify(events, null, 2));

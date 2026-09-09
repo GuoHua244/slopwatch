@@ -24,12 +24,14 @@ describe("slopwatchHookEntry", () => {
 });
 
 describe("mergeHookConfig", () => {
-  test("creates the structure from nothing", () => {
+  test("creates the structure from nothing, on both hook events", () => {
     const merged = mergeHookConfig(undefined, entry);
     expect(merged.hooks.enabled).toBe(true);
-    const entries = merged.hooks.events.SessionStart;
-    expect(entries).toHaveLength(1);
-    expect(entries[0].hooks).toContainEqual(entry);
+    for (const name of ["SessionStart", "UserPromptSubmit"]) {
+      const entries = merged.hooks.events[name];
+      expect(entries).toHaveLength(1);
+      expect(entries[0].hooks).toContainEqual(entry);
+    }
   });
 
   test("preserves existing unrelated hooks and config keys", () => {
@@ -67,6 +69,7 @@ describe("mergeHookConfig", () => {
     const once = mergeHookConfig(undefined, entry);
     const twice = mergeHookConfig(once, entry);
     expect(twice.hooks.events.SessionStart).toHaveLength(1);
+    expect(twice.hooks.events.UserPromptSubmit).toHaveLength(1);
     // and with changed settings the entry is updated, not appended
     const entry2 = slopwatchHookEntry({
       bunPath,
@@ -76,6 +79,7 @@ describe("mergeHookConfig", () => {
     });
     const updated = mergeHookConfig(once, entry2);
     expect(updated.hooks.events.SessionStart).toHaveLength(1);
+    expect(updated.hooks.events.UserPromptSubmit).toHaveLength(1);
     expect(JSON.stringify(updated)).toContain("tok-2");
     expect(JSON.stringify(updated)).not.toContain("tok-1");
   });

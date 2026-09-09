@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { isNormalEvent } from "@slopwatch/events";
 import {
   eventsFromRecord,
+  metaFromRecord,
   resolveSessionId,
   sessionIdFromFilename,
+  taskPreviewFromRecord,
 } from "./normalizer";
 import {
   mainTurnRecord,
@@ -106,5 +108,132 @@ describe("eventsFromRecord", () => {
     expect(
       eventsFromRecord({ ...mainTurnRecord, model: undefined }, "s"),
     ).toEqual([]);
+  });
+});
+
+describe("metaFromRecord (session title)", () => {
+  test("extracts the title from a session_title record's JSON response text", () => {
+    const meta = metaFromRecord(titleRecord, "sess_demo");
+    expect(meta?.kind).toBe("session");
+    expect(meta?.event).toBe("meta");
+    expect(meta?.title).toBe("介绍一下 slopwatch");
+    expect(isNormalEvent(meta!)).toBe(true);
+  });
+
+  test("falls back to the raw text when it is not JSON", () => {
+    const rec = {
+      ...titleRecord,
+      response: { ...(titleRecord.response as object), text: "plain title" },
+    };
+    expect(metaFromRecord(rec, "s")?.title).toBe("plain title");
+  });
+
+  test("returns null for non-title records and garbage", () => {
+    expect(metaFromRecord(mainTurnRecord, "s")).toBeNull();
+    expect(metaFromRecord(null, "s")).toBeNull();
+    expect(
+      metaFromRecord({ ...titleRecord, response: undefined }, "s"),
+    ).toBeNull();
+  });
+});
+
+describe("taskPreviewFromRecord (first-turn task preview)", () => {
+  test("takes the first real user message of a main_turn record", () => {
+    const meta = taskPreviewFromRecord(mainTurnRecord, "sess_demo");
+    expect(meta?.event).toBe("meta");
+    expect(meta?.task_preview).toContain("介绍一下 slopwatch");
+    expect(isNormalEvent(meta!)).toBe(true);
+  });
+
+  test("strips injected context blocks from block-array user messages", () => {
+    const rec = {
+      ...mainTurnRecord,
+      request: {
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: '<in-app-browser-context source="ambient">noise</in-app-browser-context>',
+              },
+              { type: "text", text: "8787我已经停掉了，你先把8788也停掉吧" },
+            ],
+          },
+        ],
+      },
+    };
+    expect(taskPreviewFromRecord(rec, "s")?.task_preview).toBe(
+      "8787我已经停掉了，你先把8788也停掉吧",
+    );
+  });
+
+  test("string content with a leading system block keeps the text after it", () => {
+    const rec = {
+      ...mainTurnRecord,
+      request: {
+        messages: [
+          {
+            role: "user",
+            content:
+              "<system-reminder>meta noise</system-reminder>\n\n## My request for ZCode:\n继续 M5 吧",
+          },
+        ],
+      },
+    };
+    const preview = taskPreviewFromRecord(rec, "s")?.task_preview;
+    expect(preview).toContain("继续 M5 吧");
+    expect(preview).not.toContain("##");
+  });
+
+  test("skips user messages that are pure injection blocks", () => {
+    const rec = {
+      ...mainTurnRecord,
+      request: {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "<tool-result>noise</tool-result>" },
+            ],
+          },
+          { role: "user", content: "真实的第二句任务" },
+        ],
+      },
+    };
+    expect(taskPreviewFromRecord(rec, "s")?.task_preview).toBe(
+      "真实的第二句任务",
+    );
+  });
+
+  test("joins array-block content", () => {
+    const rec = {
+      ...mainTurnRecord,
+      request: {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "fix " },
+              { type: "text", text: "the bug" },
+            ],
+          },
+        ],
+      },
+    };
+    expect(taskPreviewFromRecord(rec, "s")?.task_preview).toBe("fix the bug");
+  });
+
+  test("returns null without a user message or outside main_turn", () => {
+    expect(
+      taskPreviewFromRecord(
+        {
+          ...mainTurnRecord,
+          request: { messages: [{ role: "assistant", content: "hi" }] },
+        },
+        "s",
+      ),
+    ).toBeNull();
+    expect(taskPreviewFromRecord(titleRecord, "s")).toBeNull();
   });
 });

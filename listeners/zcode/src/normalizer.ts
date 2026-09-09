@@ -3,6 +3,7 @@ import {
   SCHEMA_VERSION,
   type ModelRequestEvent,
   type NormalEvent,
+  type SessionMetaEvent,
   type TokenUsage,
   type ToolCallEvent,
 } from "@slopwatch/events";
@@ -37,6 +38,122 @@ const mapUsage = (usage: Record<string, unknown>): TokenUsage => {
   if (typeof usage.cacheWriteTokens === "number")
     out.cache_write_tokens = usage.cacheWriteTokens;
   return out;
+};
+
+const recordTime = (record: Record<string, unknown>): string =>
+  isNonEmptyString(record.completedAt)
+    ? record.completedAt
+    : new Date().toISOString();
+
+const contentToText = (content: unknown): string => {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter(isObject)
+      .filter((block) => block.type === "text")
+      .map((block) => String(block.text ?? ""))
+      .join(" ")
+      .replace(/\s+/g, " ");
+  }
+  return "";
+};
+
+/**
+ * User-message text with injected context blocks removed: the client stuffs
+ * ambient-state / system blocks (`<in-app-browser-context>…`, tool results)
+ * into user messages ahead of (or instead of) the human's words. For block
+ * arrays keep only non-injection text blocks; for strings, keep everything
+ * after the last closing tag of a leading block run.
+ */
+const userSpeech = (content: unknown): string => {
+  if (Array.isArray(content)) {
+    const kept = content
+      .filter(isObject)
+      .filter((block) => block.type === "text")
+      .map((block) => String(block.text ?? "").trim())
+      .filter((text) => text.length > 0 && !text.startsWith("<"));
+    return kept.join(" ").replace(/\s+/g, " ").trim();
+  }
+  const text = contentToText(content).trim();
+  if (text.startsWith("<")) {
+    const afterBlocks = text
+      .slice(text.lastIndexOf(">") + 1)
+      .trim()
+      // the client prefixes real speech with a markdown heading line
+      .replace(/^(#{1,6}\s*[^\n]*\n)+/, "")
+      .trim();
+    return afterBlocks.replace(/\s+/g, " ");
+  }
+  return text.replace(/\s+/g, " ");
+};
+
+/**
+ * A session_title record's response.text carries the client-generated title —
+ * as a JSON string (`{"title":"…"}`) or plain text. Emits a session:meta event.
+ */
+export const metaFromRecord = (
+  record: unknown,
+  sessionId: string,
+): SessionMetaEvent | null => {
+  if (!isObject(record) || record.querySource !== "session_title") return null;
+  const text =
+    isObject(record.response) && isNonEmptyString(record.response.text)
+      ? record.response.text
+      : null;
+  if (!text) return null;
+  let title = text.trim();
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (isObject(parsed) && isNonEmptyString(parsed.title)) {
+      title = parsed.title.trim();
+    }
+  } catch {
+    // plain text title
+  }
+  if (!title) return null;
+  return {
+    schema_version: SCHEMA_VERSION,
+    agent: "zcode",
+    session_id: sessionId,
+    occurred_at: recordTime(record),
+    kind: "session",
+    event: "meta",
+    title: title.slice(0, 200),
+    raw: record,
+  };
+};
+
+/**
+ * The first main_turn record's first real user message is the session's task
+ * statement — emit it once per session (caller dedupes). Messages live on
+ * request.messages (not request.body); injected context blocks are stripped
+ * (see userSpeech).
+ */
+export const taskPreviewFromRecord = (
+  record: unknown,
+  sessionId: string,
+): SessionMetaEvent | null => {
+  if (!isObject(record) || record.querySource !== "main_turn") return null;
+  const messages =
+    isObject(record.request) && Array.isArray(record.request.messages)
+      ? record.request.messages
+      : [];
+  for (const message of messages) {
+    if (!isObject(message) || message.role !== "user") continue;
+    const text = userSpeech(message.content);
+    if (!text) continue;
+    return {
+      schema_version: SCHEMA_VERSION,
+      agent: "zcode",
+      session_id: sessionId,
+      occurred_at: recordTime(record),
+      kind: "session",
+      event: "meta",
+      task_preview: text.slice(0, 160),
+      raw: record,
+    };
+  }
+  return null;
 };
 
 /**

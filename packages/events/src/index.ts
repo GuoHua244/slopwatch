@@ -75,6 +75,14 @@ export type ToolCallEvent = Envelope & {
   args?: unknown;
 };
 
+/** Session-level metadata discovered while capturing (title, task preview). */
+export type SessionMetaEvent = Envelope & {
+  kind: "session";
+  event: "meta";
+  title?: string;
+  task_preview?: string;
+};
+
 export type ToolResultEvent = Envelope & {
   kind: "tool";
   event: "result";
@@ -88,6 +96,7 @@ export type ToolResultEvent = Envelope & {
 export type NormalEvent =
   | SessionStartEvent
   | SessionEndEvent
+  | SessionMetaEvent
   | TurnStartEvent
   | TurnEndEvent
   | ModelRequestEvent
@@ -144,6 +153,11 @@ export const isNormalEvent = (value: unknown): value is NormalEvent => {
   }
   switch (value.kind) {
     case "session": {
+      if (value.event === "meta") {
+        if (!isOptional(value.title, isNonEmptyString)) return false;
+        if (!isOptional(value.task_preview, isNonEmptyString)) return false;
+        return value.title !== undefined || value.task_preview !== undefined;
+      }
       if (!isLifecycleEvent(value.event)) return false;
       if (value.event === "start") {
         if (!isNonEmptyString(value.cwd) || !isNonEmptyString(value.hostname))
