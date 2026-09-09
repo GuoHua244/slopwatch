@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { SessionSummary } from "../api";
 import { useEventStream } from "../hooks/useEventStream";
+import { sessionTotals } from "../lib/aggregate";
 import { clock, fmtTokens } from "../lib/format";
 import { buildTimeline, isEnded } from "../lib/timeline";
 import { RawEventsView } from "./RawEventsView";
@@ -17,6 +18,9 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
   const start = timeline.starts.at(-1);
   const lastEnd = timeline.ends.at(-1);
   const ended = isEnded(timeline);
+  // Event sums are the ground truth once loaded; the Server's token columns
+  // undercount sessions that predate that migration.
+  const totals = stream.events.length > 0 ? sessionTotals(stream.events) : null;
 
   return (
     <div>
@@ -45,9 +49,9 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
         <div>
           <dt>tokens</dt>
           <dd className="mono">
-            {fmtTokens(summary.total_input_tokens)}in ·{" "}
-            {fmtTokens(summary.total_output_tokens)}out ·{" "}
-            {fmtTokens(summary.total_cache_read_tokens)}cache-read
+            {totals
+              ? `${fmtTokens(totals.inputTokens)}in · ${fmtTokens(totals.outputTokens)}out · ${fmtTokens(totals.cacheReadTokens)}cache-read`
+              : `${fmtTokens(summary.total_input_tokens)}in · ${fmtTokens(summary.total_output_tokens)}out · ${fmtTokens(summary.total_cache_read_tokens)}cache-read`}
           </dd>
         </div>
         {start && (
