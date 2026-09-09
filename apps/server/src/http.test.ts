@@ -77,16 +77,6 @@ describe("auth", () => {
   });
 });
 
-describe("dashboard page", () => {
-  test("GET / serves HTML without touching the store", async () => {
-    const res = await app().fetch(new Request("http://x/"));
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/html");
-    const body = await res.text();
-    expect(body).toContain("slopwatch");
-  });
-});
-
 describe("POST /events validation", () => {
   test("400 on wrong schema_version", async () => {
     const res = await post(

@@ -1,6 +1,7 @@
 import { loadConfig } from "./config";
 import { createApp } from "./http";
 import { createPgStore } from "./store";
+import { fileURLToPath } from "node:url";
 
 const config = loadConfig();
 if (config.tokens.size === 0) {
@@ -21,7 +22,10 @@ const prune = () =>
 void prune();
 setInterval(prune, 24 * 60 * 60 * 1000);
 
-const app = createApp({ tokens: config.tokens, store });
+// Decision 12: serve the built SPA same-origin from the single process.
+const staticRoot = fileURLToPath(new URL("../../web/dist", import.meta.url));
+
+const app = createApp({ tokens: config.tokens, store, staticRoot });
 
 Bun.serve({ port: config.port, fetch: (req) => app.fetch(req) });
 console.log(`slopwatch server listening on http://localhost:${config.port}`);
