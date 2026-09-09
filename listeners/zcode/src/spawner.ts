@@ -41,14 +41,14 @@ if (args.includes("--stop")) {
   try {
     pid = Number(readFileSync(pidFile, "utf8").trim());
   } catch {
-    console.log("spawner: no pid file — not running");
+    console.error("spawner: no pid file — not running");
     process.exit(0);
   }
   try {
     process.kill(pid);
-    console.log(`spawner: stopped pid ${pid}`);
+    console.error(`spawner: stopped pid ${pid}`);
   } catch (e) {
-    console.log(
+    console.error(
       `spawner: pid ${pid} not running (${e instanceof Error ? e.message : e})`,
     );
   }
@@ -64,6 +64,19 @@ const rolloutFile = join(
   `model-io-${sessionId}.jsonl`,
 );
 const liveTs = fileURLToPath(new URL("./live.ts", import.meta.url));
+
+// SessionStart also fires on resume/clear/compact — skip if a sidecar for this
+// session is already alive (signal 0 is the existence check).
+try {
+  const pid = Number(readFileSync(pidFile, "utf8").trim());
+  if (Number.isFinite(pid) && pid > 0) {
+    process.kill(pid, 0);
+    console.error(`slopwatch listener already running: pid=${pid}`);
+    process.exit(0);
+  }
+} catch {
+  // no pid file or stale pid — spawn a fresh sidecar
+}
 
 mkdirSync(logDir, { recursive: true });
 const logFd = openSync(logFile, "a");
@@ -82,7 +95,7 @@ const child = Bun.spawn([process.execPath, ...childArgs], {
 child.unref?.();
 
 writeFileSync(pidFile, String(child.pid));
-console.log(
+console.error(
   `slopwatch listener spawned: pid=${child.pid} log=${logFile} rollout=${rolloutFile}`,
 );
 process.exit(0);
