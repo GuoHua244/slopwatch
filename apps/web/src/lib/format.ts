@@ -28,3 +28,20 @@ export const fmtDuration = (ms: number): string => {
 /** "sess_ec0623ae-…" → "ec0623ae"; ids without a kind prefix pass through. */
 export const shortId = (id: string): string =>
   id.replace(/^[a-z]+_/, "").slice(0, 8);
+
+const truncate = (s: string, max = 40): string =>
+  s.length > max ? `${s.slice(0, max - 1)}…` : s;
+
+/** First three entries of a tool-args object as "k=v" pairs. */
+export const summarizeArgs = (args: unknown): string => {
+  if (args === null || args === undefined) return "";
+  if (typeof args !== "object") return truncate(String(args));
+  const entries = Object.entries(args as Record<string, unknown>).slice(0, 3);
+  return entries
+    .map(([key, value]) => {
+      const raw =
+        typeof value === "string" ? value : (JSON.stringify(value) ?? "");
+      return `${key}=${truncate(raw)}`;
+    })
+    .join(" ");
+};

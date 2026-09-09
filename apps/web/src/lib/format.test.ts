@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { clock, fmtCost, fmtDuration, fmtTokens, shortId } from "./format";
+import {
+  clock,
+  fmtCost,
+  fmtDuration,
+  fmtTokens,
+  shortId,
+  summarizeArgs,
+} from "./format";
 
 describe("fmtTokens", () => {
   test("small numbers stay bare", () => {
@@ -63,5 +70,28 @@ describe("shortId", () => {
     );
     expect(shortId("turn_613df76b-7b4d")).toBe("613df76b");
     expect(shortId("plainid")).toBe("plainid");
+  });
+});
+
+describe("summarizeArgs", () => {
+  test("renders the first three entries as key=value pairs", () => {
+    expect(summarizeArgs({ file_path: "a.ts", limit: 5 })).toBe(
+      "file_path=a.ts limit=5",
+    );
+    expect(summarizeArgs({ a: "1", b: "2", c: "3", d: "4" })).toBe(
+      "a=1 b=2 c=3",
+    );
+  });
+
+  test("truncates long values", () => {
+    const long = "x".repeat(60);
+    expect(summarizeArgs({ command: long })).toBe(`command=${"x".repeat(39)}…`);
+  });
+
+  test("handles empty, primitive, and stringified values", () => {
+    expect(summarizeArgs(undefined)).toBe("");
+    expect(summarizeArgs({})).toBe("");
+    expect(summarizeArgs("raw string")).toBe("raw string");
+    expect(summarizeArgs({ nested: { a: 1 } })).toBe('nested={"a":1}');
   });
 });

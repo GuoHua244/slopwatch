@@ -141,3 +141,115 @@ h2 {
   color: var(--dim);
   padding: 24px;
 }
+.state {
+  margin: 2px 0;
+  font-size: 11px;
+  color: var(--dim);
+}
+.state.live {
+  color: var(--accent);
+}
+.state.down {
+  color: var(--down);
+}
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 8px;
+  border-bottom: 1px solid var(--line);
+}
+.tabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.tabs button:hover {
+  color: var(--text);
+}
+.tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.turn {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  padding: 8px 12px;
+  margin: 10px 0;
+}
+.turn-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.kind {
+  color: var(--dim);
+}
+.kind.accent {
+  color: var(--accent);
+}
+.kind.session {
+  color: var(--accent);
+}
+.user-msg {
+  margin: 8px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--line);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.row {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+  border-top: 1px dotted var(--line);
+  font-size: 12px;
+}
+.row .kind {
+  min-width: 58px;
+  flex: none;
+}
+.row .detail {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row .meta {
+  flex: none;
+}
+.event {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px dotted var(--line);
+  font-size: 12px;
+}
+.seq {
+  color: var(--dim);
+  min-width: 42px;
+  text-align: right;
+  flex: none;
+}
+.event .kind {
+  min-width: 130px;
+  flex: none;
+}
+.detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.event .detail {
+  flex: 1;
+}
+.event .meta {
+  flex: none;
+}
