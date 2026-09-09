@@ -31,6 +31,18 @@ export const createApp = ({ tokens, store }: AppOptions): App => ({
 
     if (url.pathname === "/healthz") return json(200, { ok: true });
 
+    if (
+      url.pathname === "/" &&
+      (req.method === "GET" || req.method === "HEAD")
+    ) {
+      return new Response(
+        Bun.file(new URL("../public/index.html", import.meta.url)),
+        {
+          headers: { "content-type": "text/html; charset=utf-8" },
+        },
+      );
+    }
+
     if (url.pathname === "/events" && req.method === "POST") {
       const user = identify(req, tokens);
       if (user === null) return json(401, { error: "unauthorized" });

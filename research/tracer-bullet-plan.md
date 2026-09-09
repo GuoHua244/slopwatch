@@ -1,5 +1,7 @@
 # Tracer Bullet Plan (v1 vertical slice)
 
+**Status: COMPLETE (2026-09-09).** All five milestones shipped and verified end-to-end on Windows: 34 tests green, real client sessions auto-captured via the workspace hook, dashboard rendering live at `/`. Next up (in rough order): React SPA dashboard (decision 12), admin plane — token mint/revoke + session delete (decision 13), a second listener (claude-code), cost aggregation across providers, windows-latest in CI.
+
 Goal: one end-to-end path — **ZCode session → Listener → Server → Postgres → polling page** — built in five milestones, each independently runnable and observable.
 
 ## Testing strategy
