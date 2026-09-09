@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { NormalEvent } from "@slopwatch/events";
-import { ApiError, createApi, type SessionSummary } from "./api";
+import {
+  ApiError,
+  createAdminApi,
+  createApi,
+  type SessionSummary,
+} from "./api";
 
 const jsonResponse = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -72,6 +77,138 @@ describe("createApi", () => {
     } catch (e) {
       expect(e instanceof ApiError).toBe(true);
       expect((e as ApiError).status).toBe(503);
+    }
+  });
+});
+
+describe("createAdminApi", () => {
+  type Call = { path: string; init?: RequestInit };
+  const recordingApi = (
+    status: number,
+    body: unknown,
+  ): { api: ReturnType<typeof createAdminApi>; calls: Call[] } => {
+    const calls: Call[] = [];
+    const api = createAdminApi(
+      () => "sec",
+      (input, init) => {
+        calls.push({ path: String(input), init });
+        return Promise.resolve(jsonResponse(status, body));
+      },
+    );
+    return { api, calls };
+  };
+
+  test("every request carries the admin bearer header", async () => {
+    const { api, calls } = recordingApi(200, {
+      users: [
+        {
+          name: "bob",
+          email: null,
+          disabled: false,
+          created_at: "t",
+          active_tokens: 2,
+        },
+      ],
+    });
+    const users = await api.users();
+    expect(calls[0]!.path).toBe("/admin/users");
+    expect(
+      (calls[0]!.init?.headers as Record<string, string>).authorization,
+    ).toBe("Bearer sec");
+    expect(users[0]!.name).toBe("bob");
+    expect(users[0]!.active_tokens).toBe(2);
+  });
+
+  test("createUser POSTs a JSON body and unwraps the user", async () => {
+    const { api, calls } = recordingApi(201, {
+      user: {
+        name: "bob",
+        email: null,
+        disabled: false,
+        created_at: "t",
+        active_tokens: 0,
+      },
+    });
+    const user = await api.createUser("bob", null);
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect(calls[0]!.init?.body).toBe(
+      JSON.stringify({ name: "bob", email: null }),
+    );
+    expect(user.name).toBe("bob");
+  });
+
+  test("setUserDisabled PATCHes the disabled flag", async () => {
+    const { api, calls } = recordingApi(200, {
+      user: {
+        name: "bob",
+        email: null,
+        disabled: true,
+        created_at: "t",
+        active_tokens: 0,
+      },
+    });
+    await api.setUserDisabled("bob", true);
+    expect(calls[0]!.path).toBe("/admin/users/bob");
+    expect(calls[0]!.init?.method).toBe("PATCH");
+    expect(calls[0]!.init?.body).toBe(JSON.stringify({ disabled: true }));
+  });
+
+  test("deleteUser and revokeToken issue DELETEs", async () => {
+    const { api, calls } = recordingApi(200, { ok: true });
+    await api.deleteUser("bob");
+    await api.revokeToken("tid-1");
+    expect(calls[0]!.path).toBe("/admin/users/bob");
+    expect(calls[0]!.init?.method).toBe("DELETE");
+    expect(calls[1]!.path).toBe("/admin/tokens/tid-1");
+    expect(calls[1]!.init?.method).toBe("DELETE");
+  });
+
+  test("mintToken POSTs and returns the plaintext exactly once", async () => {
+    const { api, calls } = recordingApi(201, {
+      token_id: "tid-1",
+      hint: "sw_71a0d6d",
+      token: "sw_fullsecret",
+    });
+    const minted = await api.mintToken("bob");
+    expect(calls[0]!.path).toBe("/admin/users/bob/tokens");
+    expect(calls[0]!.init?.method).toBe("POST");
+    expect(minted.token).toBe("sw_fullsecret");
+  });
+
+  test("tokens and health unwrap their payloads", async () => {
+    const { api, calls } = recordingApi(200, {
+      tokens: [
+        {
+          token_id: "tid-1",
+          hint: "sw_71a0d6d",
+          created_at: "t",
+          revoked_at: null,
+        },
+      ],
+    });
+    const tokens = await api.tokens("bob");
+    expect(calls[0]!.path).toBe("/admin/users/bob/tokens");
+    expect(tokens[0]!.token_id).toBe("tid-1");
+
+    const healthApi = recordingApi(200, {
+      ok: true,
+      sessions: 9,
+      events: 1257,
+      last_event_at: null,
+    });
+    const health = await healthApi.api.health();
+    expect(healthApi.calls[0]!.path).toBe("/admin/health");
+    expect(health.sessions).toBe(9);
+  });
+
+  test("401 raises ApiError carrying the status", async () => {
+    const { api } = recordingApi(401, { error: "unauthorized" });
+    try {
+      await api.users();
+      throw new Error("expected users() to reject");
+    } catch (e) {
+      expect(e instanceof ApiError).toBe(true);
+      expect((e as ApiError).status).toBe(401);
     }
   });
 });

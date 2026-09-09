@@ -2,13 +2,18 @@ import { useEffect, useState } from "react";
 import { useSessions } from "./hooks/useSessions";
 import { clock } from "./lib/format";
 import { LeaderboardView } from "./views/LeaderboardView";
+import { AdminView } from "./views/AdminView";
 import { SessionDetail } from "./views/SessionDetail";
 import { SessionList } from "./views/SessionList";
 
-type Route = "sessions" | "leaderboard";
+type Route = "sessions" | "leaderboard" | "admin";
 
-const parseRoute = (hash: string): Route =>
-  hash.replace(/^#\/?/, "") === "leaderboard" ? "leaderboard" : "sessions";
+const parseRoute = (hash: string): Route => {
+  const path = hash.replace(/^#\/?/, "");
+  if (path === "leaderboard") return "leaderboard";
+  if (path === "admin") return "admin";
+  return "sessions";
+};
 
 const useHashRoute = (): Route => {
   const [route, setRoute] = useState<Route>(parseRoute(window.location.hash));
@@ -48,6 +53,9 @@ export const App = () => {
           >
             leaderboard
           </a>
+          <a href="#/admin" className={route === "admin" ? "active" : ""}>
+            admin
+          </a>
         </nav>
         <span className={`status ${feed.status}`}>
           {feed.status === "live"
@@ -63,6 +71,10 @@ export const App = () => {
             <h2>developer leaderboard</h2>
             <LeaderboardView sessions={feed.sessions} />
           </section>
+        </main>
+      ) : route === "admin" ? (
+        <main className="full">
+          <AdminView />
         </main>
       ) : (
         <main>
