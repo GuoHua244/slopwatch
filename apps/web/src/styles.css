@@ -253,3 +253,35 @@ h2 {
 .event .meta {
   flex: none;
 }
+.usage {
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 12px;
+  min-width: 560px;
+}
+.usage th {
+  color: var(--dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: normal;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  padding: 3px 12px 3px 0;
+}
+.usage td {
+  border-bottom: 1px dotted var(--line);
+  padding: 3px 12px 3px 0;
+}
+.usage th:not(:first-child),
+.usage td:not(:first-child) {
+  text-align: right;
+}
+.usage td.num {
+  font-variant-numeric: tabular-nums;
+}
+.usage tfoot td {
+  border-bottom: none;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+}

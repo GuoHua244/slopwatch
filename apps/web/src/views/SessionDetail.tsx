@@ -5,6 +5,7 @@ import { clock, fmtTokens } from "../lib/format";
 import { buildTimeline, isEnded } from "../lib/timeline";
 import { RawEventsView } from "./RawEventsView";
 import { TurnsView } from "./TurnsView";
+import { UsageView } from "./UsageView";
 
 type Tab = "turns" | "raw";
 
@@ -65,6 +66,7 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
           </div>
         )}
       </dl>
+      <UsageView events={stream.events} />
       <nav className="tabs">
         <button
           type="button"
