@@ -5,10 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "bun run src/index.ts",
+    "setup-db": "bun run src/setup-db.ts",
     "typecheck": "tsgo --noEmit",
     "test": "bun test"
   },
   "dependencies": {
-    "@slopwatch/events": "workspace:*"
+    "@slopwatch/events": "workspace:*",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.0"
   }
 }

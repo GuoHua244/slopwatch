@@ -1,0 +1,14 @@
+{
+  "name": "@slopwatch/listener-zcode",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/live.ts",
+    "typecheck": "tsgo --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@slopwatch/events": "workspace:*"
+  }
+}

@@ -1,0 +1,180 @@
+import { describe, expect, test } from "bun:test";
+import {
+  SCHEMA_VERSION,
+  type NormalEvent,
+  type SessionStartEvent,
+} from "@slopwatch/events";
+import { createApp, type App } from "./http";
+import type { Store } from "./store";
+
+// Auth tests run everywhere with a throwing stub store — authentication must
+// be checked before any storage access. The DB-backed tests below are skipped
+// unless DATABASE_URL is set (CI has no Postgres yet).
+const refusingStore = (): Store => ({
+  migrate: () => {
+    throw new Error("store must not be touched");
+  },
+  appendEvents: () => {
+    throw new Error("store must not be touched");
+  },
+  listSessions: () => {
+    throw new Error("store must not be touched");
+  },
+  eventsSince: () => {
+    throw new Error("store must not be touched");
+  },
+  pruneRawOlderThan: () => {
+    throw new Error("store must not be touched");
+  },
+  close: async () => {},
+});
+
+const app = (): App =>
+  createApp({
+    tokens: new Map([["tok-alice", "alice"]]),
+    store: refusingStore(),
+  });
+
+const post = (a: App, body: unknown, token?: string) =>
+  a.fetch(
+    new Request("http://x/events", {
+      method: "POST",
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      body: JSON.stringify(body),
+    }),
+  );
+
+const sessionStart = (): SessionStartEvent => ({
+  schema_version: SCHEMA_VERSION,
+  agent: "zcode",
+  session_id: "sess_test-1",
+  occurred_at: new Date().toISOString(),
+  kind: "session",
+  event: "start",
+  cwd: "D:\\demo",
+  hostname: "DEV-01",
+});
+
+describe("auth", () => {
+  test("401 without a token", async () => {
+    const res = await post(app(), {
+      schema_version: SCHEMA_VERSION,
+      events: [sessionStart()],
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("401 with an unknown token", async () => {
+    const res = await post(
+      app(),
+      { schema_version: SCHEMA_VERSION, events: [sessionStart()] },
+      "tok-wrong",
+    );
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("POST /events validation", () => {
+  test("400 on wrong schema_version", async () => {
+    const res = await post(
+      app(),
+      { schema_version: 99, events: [sessionStart()] },
+      "tok-alice",
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("400 when any event fails isNormalEvent", async () => {
+    const bad: NormalEvent = { ...sessionStart(), hostname: "" };
+    const res = await post(
+      app(),
+      { schema_version: SCHEMA_VERSION, events: [sessionStart(), bad] },
+      "tok-alice",
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
+// --- DB-backed integration tests (require DATABASE_URL) ---
+
+const dbTests = () =>
+  (process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL) !== undefined;
+const testDsn = () =>
+  process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL!;
+
+describe.skipIf(!dbTests())("events endpoint against Postgres", () => {
+  // created lazily in beforeAll so a missing DB surfaces as skipped, not crash
+  let dbApp: App | undefined;
+  let store: Store | undefined;
+
+  test("append is monotonic per session and since_seq paginates", async () => {
+    const { createPgStore } = await import("./store");
+    store = createPgStore(testDsn());
+    await store.migrate();
+    dbApp = createApp({ tokens: new Map([["tok-alice", "alice"]]), store });
+
+    // unique per run — the test database persists between runs
+    const sessionId = `sess_httptest-${crypto.randomUUID().slice(0, 8)}`;
+    const s1 = sessionStart();
+    s1.session_id = sessionId;
+    const res1 = await post(
+      dbApp!,
+      { schema_version: SCHEMA_VERSION, events: [s1] },
+      "tok-alice",
+    );
+    expect(res1.status).toBe(202);
+    const body1 = (await res1.json()) as { accepted: number };
+    expect(body1.accepted).toBe(1);
+
+    const second: NormalEvent = {
+      ...s1,
+      kind: "model_request",
+      provider: "p",
+      model: "m",
+      duration_ms: 5,
+      occurred_at: new Date().toISOString(),
+    };
+    const res2 = await post(
+      dbApp!,
+      { schema_version: SCHEMA_VERSION, events: [second] },
+      "tok-alice",
+    );
+    expect(res2.status).toBe(202);
+
+    const since0 = await dbApp!.fetch(
+      new Request(`http://x/sessions/${sessionId}/events`),
+    );
+    expect(since0.status).toBe(200);
+    const page0 = (await since0.json()) as {
+      session_id: string;
+      events: { event_seq: number; event: NormalEvent }[];
+    };
+    expect(page0.session_id).toBe(sessionId);
+    expect(page0.events.map((e) => e.event_seq)).toEqual([1, 2]);
+    expect(page0.events[0]!.event.kind).toBe("session");
+    expect(page0.events[1]!.event.kind).toBe("model_request");
+
+    const since2 = await dbApp!.fetch(
+      new Request(`http://x/sessions/${sessionId}/events?since_seq=1`),
+    );
+    const page1 = (await since2.json()) as { events: { event_seq: number }[] };
+    expect(page1.events.map((e) => e.event_seq)).toEqual([2]);
+
+    const sessions = await dbApp!.fetch(new Request("http://x/sessions"));
+    const list = (await sessions.json()) as {
+      sessions: { session_id: string; last_seq: number }[];
+    };
+    expect(
+      list.sessions.find((s) => s.session_id === sessionId)?.last_seq,
+    ).toBe(2);
+  });
+
+  test("healthz", async () => {
+    const res = await app().fetch(new Request("http://x/healthz"));
+    expect(res.status).toBe(200);
+  });
+
+  test("cleanup", async () => {
+    if (store) await store.close();
+  });
+});
