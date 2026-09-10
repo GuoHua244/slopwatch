@@ -129,11 +129,20 @@ Session events carry `hostname`, `cwd`, and `git remote URL` — dimension field
 - **npm distribution is a non-goal while the repo is private**: installed hooks reference the repo checkout's listener scripts, so re-running install after moving the checkout refreshes them. `npx slopwatch` polish (bundled scripts, publish) comes with public packaging.
 - **Spike (pending)**: wire user-scope zcode hooks, restart the client, start a session outside a wired workspace, confirm the Server saw it and no trust prompt appeared. If user-scope hooks turn out to be gated too, fall back to workspace scope as the default.
 
+### 17. Session summaries: client-side rolling fold at every end
+
+Open question 15's direction confirmed and shipped. Each listener keeps a rolling summary cache (`<state-base>.summary.json`: last body, model, folded count) plus a JSONL log of not-yet-folded turn digests beside its cursor; one digest line accumulates per turn (user words, model-request count, token totals, tools). At every session end the listener folds the new lines into the previous summary with a single OpenAI-compatible chat call to the developer's configured endpoint and ships the result as a `session`/`summary` event (body + model) immediately before `session:end` in the same batch.
+
+- **Ends with no new turns skip the LLM entirely.** A missing summary block, an unreachable endpoint, or a failed/timed-out call never blocks capture — the digests stay pending and the next end retries them; the end event always goes out.
+- **The endpoint is the developer's own** (install flow's summary block, decision 16) so no new data-egress boundary appears; the provider can be an internal gateway.
+- **Turn ordinals stay cumulative across sidecar generations** (folded count + pending log length), so the LLM sees a stable history even though the process restarts at every idle timeout.
+- **The dashboard renders the latest summary as a banner** on the session page, labeled machine-generated with the producing model: a reading aid, never evidence — the event stream remains the record.
+
 ---
 
 ## Open questions — pick up here
 
-Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13 (2026-09-09 decisions), 8/9 (ADR 0001), 5 (resolved for v0 by the M1 code — see the note there), and 10 (2026-09-10 — decision 16). Still open: 2, 6, 12 (deferred 2026-09-10 — see the note there), 15, plus the buffering half of 4 (numbered past 14 to avoid colliding with decision 14):
+Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13 (2026-09-09 decisions), 8/9 (ADR 0001), 5 (resolved for v0 by the M1 code — see the note there), 10 (2026-09-10 — decision 16), and 15 (2026-09-10 — decision 17). Still open: 2, 6, 12 (deferred 2026-09-10 — see the note there), plus the buffering half of 4 (numbered past 14 to avoid colliding with decision 14):
 
 1. **DRI shape** (blocks the review schema). Four edges surfaced mid-grill but unresolved:
    - **Queryer vs recipient**: DRI pulls from a filterable firehose, or sessions get auto-routed to a DRI's inbox on end?
@@ -160,6 +169,7 @@ _(Numbering skips 14 (taken by decision 14) and 15 (taken by open question 15).)
 15. **LLM session summaries (raised 2026-09-10).** A machine-generated "what happened in this session / did it finish" summary shown on the session page, to make review scalable — a DRI reads summaries first and drills into turns only when one smells. Two placements considered: a server-side batch job summarizing at session end with a management LLM key, or the sidecar summarizing locally right before it emits session end. **Direction (2026-09-10, pending final call): client-side preferred.** The sidecar is the authority on when a session truly ended (Stop + idle timeout; the Server cannot tell an end from a pre-resume end), the developer's own provider key means no new data-egress boundary (the agent already sends this conversation to the same provider — a management key on the Server would widen it), cost attribution stays per-developer, and the Server stays a stateless store with no job scheduler. Cost of this choice: the sidecar needs a key (natural home: the install flow, open question 10 — wire the two together), listeners without a configured key skip summaries silently (capture is never blocked), each listener implements the same summarize-and-report step (shared package), and summaries come from the observed machine — so they are a reading aid, never evidence; the raw events remain the record. Schema impact is one new NormalEvent kind (`session`/`summary`: body + model), backward compatible.
 
 - **Summaries must roll incrementally, not re-run per end (2026-09-10).** A rollout session accumulates many start/end cycles (every idle-timeout ends the sidecar; resuming re-attaches with a fresh start), so "summarize at end" must never mean "re-read the whole transcript at every end". Design: the sidecar keeps a summary cache next to its cursor (last summary text + how far it has folded in); at each end it folds in only the turns added since — old summary plus a small digest of new turns — and skips the LLM entirely when nothing new arrived. Every meaningful end leaves the summary current and the last one wins, which also removes the need to identify "the real end". Cost per update is ~1-3k tokens against sessions that burn millions per day — noise.
+- **RESOLVED 2026-09-10 — decision 17.** Client-side confirmed; shipped as `packages/summary` plus the `session`/`summary` event, wired into both listeners' end paths and rendered on the session page as a labeled reading aid.
 
 ---
 
