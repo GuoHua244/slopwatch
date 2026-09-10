@@ -34,6 +34,7 @@ import {
   metaFromRecord,
   sessionIdFromFilename,
   taskPreviewFromRecord,
+  turnStartFromRecord,
 } from "./normalizer";
 
 const args = process.argv.slice(2);
@@ -140,6 +141,7 @@ let size = readCursor(cursorFile);
 const firstCapture = size === 0;
 let partial = "";
 let taskPreviewSent = false;
+const seenTurns = new Set<string>();
 let draining = false;
 const drain = async (): Promise<void> => {
   if (draining) return; // previous flush still in flight
@@ -183,6 +185,8 @@ const drain = async (): Promise<void> => {
           taskPreviewSent = true;
         }
       }
+      const turnStart = turnStartFromRecord(record, sessionId, seenTurns);
+      if (turnStart) batch.push(turnStart);
       batch.push(...eventsFromRecord(record, sessionId));
       resetIdle();
     }

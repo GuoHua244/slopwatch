@@ -20,6 +20,7 @@ import {
   metaFromRecord,
   resolveSessionId,
   taskPreviewFromRecord,
+  turnStartFromRecord,
 } from "./normalizer";
 
 const file = process.argv[2];
@@ -74,6 +75,7 @@ const sessionEnd: SessionEndEvent = {
 
 const events: NormalEvent[] = [sessionStart];
 let taskPreviewSent = false;
+const seenTurns = new Set<string>();
 for (const record of records) {
   const meta = metaFromRecord(record, sessionId);
   if (meta) events.push(meta);
@@ -84,6 +86,8 @@ for (const record of records) {
       taskPreviewSent = true;
     }
   }
+  const turnStart = turnStartFromRecord(record, sessionId, seenTurns);
+  if (turnStart) events.push(turnStart);
   events.push(...eventsFromRecord(record, sessionId));
 }
 events.push(sessionEnd);

@@ -6,6 +6,7 @@ import {
   resolveSessionId,
   sessionIdFromFilename,
   taskPreviewFromRecord,
+  turnStartFromRecord,
 } from "./normalizer";
 import {
   mainTurnRecord,
@@ -235,5 +236,60 @@ describe("taskPreviewFromRecord (first-turn task preview)", () => {
       ),
     ).toBeNull();
     expect(taskPreviewFromRecord(titleRecord, "s")).toBeNull();
+  });
+});
+
+describe("turnStartFromRecord (per-turn user message)", () => {
+  test("emits one turn:start with the turn's last real user message", () => {
+    const seen = new Set<string>();
+    const event = turnStartFromRecord(mainTurnRecord, "sess_demo", seen);
+    expect(event?.kind).toBe("turn");
+    expect(event?.event).toBe("start");
+    expect(event?.turn_id).toBe("turn_demo-1");
+    expect(event?.user_message).toContain("介绍一下 slopwatch");
+    expect(event?.occurred_at).toBe(mainTurnRecord.startedAt);
+    expect(isNormalEvent(event!)).toBe(true);
+  });
+
+  test("dedupes by turn_id via the caller-owned set", () => {
+    const seen = new Set<string>();
+    expect(turnStartFromRecord(mainTurnRecord, "s", seen)).not.toBeNull();
+    expect(turnStartFromRecord(mainTurnRecord, "s", seen)).toBeNull();
+    // a fresh set (new file generation) emits again
+    expect(turnStartFromRecord(mainTurnRecord, "s", new Set())).not.toBeNull();
+  });
+
+  test("takes the LAST real user message so later turns carry their own words", () => {
+    const rec = {
+      ...mainTurnRecord,
+      turnId: "turn_demo-2",
+      request: {
+        messages: [
+          { role: "user", content: "first task" },
+          { role: "assistant", content: "done" },
+          { role: "user", content: "now fix the bug" },
+        ],
+      },
+    };
+    expect(turnStartFromRecord(rec, "s", new Set())?.user_message).toBe(
+      "now fix the bug",
+    );
+  });
+
+  test("emits without user_message when the turn has none, and ignores non-model_io records", () => {
+    const seen = new Set<string>();
+    expect(
+      turnStartFromRecord(
+        {
+          ...mainTurnRecord,
+          turnId: "turn_demo-3",
+          request: { messages: [{ role: "assistant", content: "hi" }] },
+        },
+        "s",
+        seen,
+      )?.user_message,
+    ).toBeUndefined();
+    expect(turnStartFromRecord(titleRecord, "s", seen)).toBeNull();
+    expect(turnStartFromRecord(null, "s", seen)).toBeNull();
   });
 });

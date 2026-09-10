@@ -6,6 +6,7 @@ import {
   type SessionMetaEvent,
   type TokenUsage,
   type ToolCallEvent,
+  type TurnStartEvent,
 } from "@slopwatch/events";
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -157,9 +158,52 @@ export const taskPreviewFromRecord = (
 };
 
 /**
+ * A turn's human input, extracted on the turn's FIRST model_io record only
+ * (callers dedupe via seenTurns). Later turns' request.messages repeat earlier
+ * history, so the last real user message is the new input; injected context
+ * blocks are stripped (see userSpeech). ZCode has no turn-end record, so no
+ * turn:end is emitted — the dashboard pairs this with the turn_id already
+ * riding on model_request events.
+ */
+export const turnStartFromRecord = (
+  record: unknown,
+  sessionId: string,
+  seenTurns: Set<string>,
+): TurnStartEvent | null => {
+  if (!isObject(record) || record.type !== "model_io") return null;
+  if (!isNonEmptyString(record.turnId) || seenTurns.has(record.turnId))
+    return null;
+  seenTurns.add(record.turnId);
+  const messages =
+    isObject(record.request) && Array.isArray(record.request.messages)
+      ? record.request.messages
+      : [];
+  let userMessage: string | null = null;
+  for (const message of messages) {
+    if (!isObject(message) || message.role !== "user") continue;
+    const text = userSpeech(message.content);
+    if (text) userMessage = text.slice(0, 2000);
+  }
+  const event: TurnStartEvent = {
+    schema_version: SCHEMA_VERSION,
+    agent: "zcode",
+    session_id: sessionId,
+    occurred_at: isNonEmptyString(record.startedAt)
+      ? record.startedAt
+      : recordTime(record),
+    kind: "turn",
+    event: "start",
+    turn_id: record.turnId,
+  };
+  if (userMessage) event.user_message = userMessage;
+  return event;
+};
+
+/**
  * One ZCode rollout record → normalized events: always a model_request, plus a
  * tool call event per response.toolCalls entry. Turn boundaries ride along as
- * `turn_id` (ZCode exposes turnId per record; turn synthesis is server-side).
+ * `turn_id` (ZCode exposes turnId per record; the turn's start event with the
+ * user's words comes from turnStartFromRecord).
  */
 export const eventsFromRecord = (
   record: unknown,
