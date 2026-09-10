@@ -7,6 +7,7 @@ import {
   type NormalEvent,
   type SessionEndEvent,
   type SessionStartEvent,
+  type SessionSummaryEvent,
   type ToolCallEvent,
   type ToolResultEvent,
   type TurnEndEvent,
@@ -82,11 +83,20 @@ const toolResult: ToolResultEvent = {
   ok: true,
 };
 
+const sessionSummary: SessionSummaryEvent = {
+  ...base,
+  kind: "session",
+  event: "summary",
+  body: "Implemented the slopwatch install flow; all tests green.",
+  model: "glm-4",
+};
+
 describe("NormalEvent v0 schema", () => {
   test("accepts every event variant", () => {
     const events: NormalEvent[] = [
       sessionStart,
       sessionEnd,
+      sessionSummary,
       turnStart,
       turnEnd,
       modelRequest,
@@ -138,6 +148,15 @@ describe("NormalEvent v0 schema", () => {
     expect(isNormalEvent({ ...base, kind: "session", event: "meta" })).toBe(
       false,
     );
+  });
+
+  test("accepts session summary events (body + model), rejects empty ones", () => {
+    expect(isNormalEvent(sessionSummary)).toBe(true);
+    expect(isNormalEvent({ ...sessionSummary, body: "" })).toBe(false);
+    expect(isNormalEvent({ ...sessionSummary, model: "" })).toBe(false);
+    expect(
+      isNormalEvent({ ...sessionSummary, model: undefined as never }),
+    ).toBe(false);
   });
 
   test("rejects envelope violations", () => {

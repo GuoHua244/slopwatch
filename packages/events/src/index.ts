@@ -83,6 +83,20 @@ export type SessionMetaEvent = Envelope & {
   task_preview?: string;
 };
 
+/**
+ * Machine-generated rolling session summary. Produced by the observed
+ * machine with the developer's own LLM key — a reading aid, never evidence;
+ * the event stream remains the record.
+ */
+export type SessionSummaryEvent = Envelope & {
+  kind: "session";
+  event: "summary";
+  /** Rolling summary text covering the whole session so far. */
+  body: string;
+  /** The model that produced it, e.g. "glm-4". */
+  model: string;
+};
+
 export type ToolResultEvent = Envelope & {
   kind: "tool";
   event: "result";
@@ -97,6 +111,7 @@ export type NormalEvent =
   | SessionStartEvent
   | SessionEndEvent
   | SessionMetaEvent
+  | SessionSummaryEvent
   | TurnStartEvent
   | TurnEndEvent
   | ModelRequestEvent
@@ -157,6 +172,9 @@ export const isNormalEvent = (value: unknown): value is NormalEvent => {
         if (!isOptional(value.title, isNonEmptyString)) return false;
         if (!isOptional(value.task_preview, isNonEmptyString)) return false;
         return value.title !== undefined || value.task_preview !== undefined;
+      }
+      if (value.event === "summary") {
+        return isNonEmptyString(value.body) && isNonEmptyString(value.model);
       }
       if (!isLifecycleEvent(value.event)) return false;
       if (value.event === "start") {

@@ -180,6 +180,32 @@ describe("buildTimeline", () => {
     expect(timeline.turns).toHaveLength(0);
   });
 
+  test("collects summaries separately and they never affect isEnded", () => {
+    const timeline = buildTimeline([
+      ev({ kind: "session", event: "start", cwd: "a", hostname: "H1" }),
+      ev({
+        kind: "session",
+        event: "summary",
+        body: "Wrote the failing test first.",
+        model: "glm-4",
+      }),
+      ev({ kind: "session", event: "end", reason: "idle-timeout" }),
+      ev({
+        kind: "session",
+        event: "summary",
+        body: "Everything green; pushed.",
+        model: "glm-4",
+      }),
+    ]);
+    expect(timeline.summaries.map((s) => s.body)).toEqual([
+      "Wrote the failing test first.",
+      "Everything green; pushed.",
+    ]);
+    // the end is the latest lifecycle word — a trailing summary must not
+    // flip the session back to "running"
+    expect(isEnded(timeline)).toBe(true);
+  });
+
   test("isEnded: end after the latest start means ended, a later start means resumed", () => {
     const at = (iso: string, event: Record<string, unknown>): StoredEvent => {
       const stored = ev(event);

@@ -3,6 +3,7 @@ import type {
   SessionEndEvent,
   SessionStartEvent,
   SessionMetaEvent,
+  SessionSummaryEvent,
   ToolCallEvent,
   ToolResultEvent,
   TokenUsage,
@@ -32,6 +33,8 @@ export type SessionTimeline = {
   starts: SessionStartEvent[];
   ends: SessionEndEvent[];
   metas: SessionMetaEvent[];
+  /** Rolling machine-generated summaries, in emission order. */
+  summaries: SessionSummaryEvent[];
   /** First-appearance order; turns without a start event are synthesized. */
   turns: TurnActivity[];
   orphans: { requests: ModelRequestEvent[]; tools: ToolActivity[] };
@@ -47,6 +50,7 @@ export const buildTimeline = (events: StoredEvent[]): SessionTimeline => {
     starts: [],
     ends: [],
     metas: [],
+    summaries: [],
     turns: [],
     orphans: { requests: [], tools: [] },
   };
@@ -80,6 +84,7 @@ export const buildTimeline = (events: StoredEvent[]): SessionTimeline => {
       case "session":
         if (event.event === "start") timeline.starts.push(event);
         else if (event.event === "meta") timeline.metas.push(event);
+        else if (event.event === "summary") timeline.summaries.push(event);
         else timeline.ends.push(event);
         break;
       case "turn": {
@@ -162,6 +167,8 @@ export const describeEvent = (event: StoredEvent["event"]): string => {
         return [event.cwd, event.git_remote].filter(Boolean).join(" · ");
       if (event.event === "meta")
         return event.title ?? event.task_preview ?? "";
+      if (event.event === "summary")
+        return `summary · ${event.model} · ${event.body}`;
       return event.reason ?? "";
     case "turn":
       if (event.event === "start") return event.user_message ?? event.turn_id;
