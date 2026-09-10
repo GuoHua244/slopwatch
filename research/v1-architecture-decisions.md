@@ -116,9 +116,24 @@ Session events carry `hostname`, `cwd`, and `git remote URL` — dimension field
 
 ---
 
+## Resolved 2026-09-10
+
+### 16. Install flow: one command, central credentials, user-scope hooks
+
+`slopwatch install` (packages/cli, the `slopwatch` npm bin) detects installed agent hosts by home-directory presence — no `--version` process spawns (slow, antivirus-patrolled on Windows) — verifies the admin-minted token against `GET /me`, and stores it in `~/.slopwatch/config.json` (0600) together with the server URL and the optional llm summary block (the dependency open question 15's design placed here). **Hook commands carry no credentials**: hooks and sidecars resolve server-url/token as argv-pair-override → central config → stdout mode, so the token never sits in per-project config files and rotation is one `login` away, not a re-install per project.
+
+- **Commands**: `install` (detect + verify + wire), `login <token>` (verify + store; decision 6's step 3), `status` (detection, wiring, redacted config), `uninstall` (strips only our entries; deleting the config file is an explicit separate act). A rejected token writes nothing — fail loudly at install time, not silently at capture time.
+- **Token distribution stays decision 6's shape**: the admin mints in the admin UI, hands the token out-of-band, the developer runs `login`/`install` on their machine.
+- **Wiring reuses the listeners' idempotent merge functions** (CLI imports them via package exports); the CLI side adds `removeHookConfig` for uninstall. The zcode listener defaults to **user scope** (`~/.zcode/cli/config.json`): user-level hooks fire in every project and skip the workspace trust gate — live confirmation still pending (below); `--dir` opts into project scope with its trust-prompt caveat. The claude-code listener keeps user-scope `~/.claude/settings.json`. Credential-free entries idempotently replace the legacy embedded-token ones on upgrade.
+- **LLM summary config** (`--summary-endpoint/--summary-model/--summary-key`, OpenAI-compatible, endpoint may point at an internal gateway) lands in the same file; an absent block means summaries stay silently off (open question 15's design).
+- **npm distribution is a non-goal while the repo is private**: installed hooks reference the repo checkout's listener scripts, so re-running install after moving the checkout refreshes them. `npx slopwatch` polish (bundled scripts, publish) comes with public packaging.
+- **Spike (pending)**: wire user-scope zcode hooks, restart the client, start a session outside a wired workspace, confirm the Server saw it and no trust prompt appeared. If user-scope hooks turn out to be gated too, fall back to workspace scope as the default.
+
+---
+
 ## Open questions — pick up here
 
-Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13 (2026-09-09 decisions), 8/9 (ADR 0001), and 5 (resolved for v0 by the M1 code — see the note there). Still open: 2, 6, 10, 12 (deferred 2026-09-10 — see the note there), 15, plus the buffering half of 4 (numbered past 14 to avoid colliding with decision 14):
+Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13 (2026-09-09 decisions), 8/9 (ADR 0001), 5 (resolved for v0 by the M1 code — see the note there), and 10 (2026-09-10 — decision 16). Still open: 2, 6, 12 (deferred 2026-09-10 — see the note there), 15, plus the buffering half of 4 (numbered past 14 to avoid colliding with decision 14):
 
 1. **DRI shape** (blocks the review schema). Four edges surfaced mid-grill but unresolved:
    - **Queryer vs recipient**: DRI pulls from a filterable firehose, or sessions get auto-routed to a DRI's inbox on end?
@@ -135,11 +150,12 @@ Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13
 8. **Backend language/runtime.** Go, Rust, Node? Affects sidecar consistency (same language across sidecar + backend?) and the in-process TypeScript extensions for Pi/OpenCode (those _must_ be JS/TS). _(Resolved by ADR 0001 — Bun/TS everywhere.)_
 9. **Sidecar language.** Must run on dev machines across macOS/Linux/Windows with minimal install friction. Node (available wherever the agents are installed)? Go (single static binary per OS)? Rust (same)? _(Resolved by ADR 0001 — Bun/TS everywhere.)_
 10. **`npx slopwatch install` flow.** Detect installed agents, wire up per-agent hooks/extensions idempotently, store backend URL + token. Exact UX not drawn.
+    - **RESOLVED 2026-09-10 — decision 16.** Detection by home directory; central credential store the hooks read at fire time; user-scope hooks by default; the CLI reuses the listeners' merge functions instead of reimplementing them.
 11. **Identity binding beyond the token.** Does the sidecar send extra context (git email, OS user, hostname, cwd, repo)? Which of those are useful for the DRI view vs. noise? **RESOLVED 2026-09-09 — decision 14.**
 12. **Cost/token tracking.** Codex and Claude Code emit token usage; Copilot JSONL probably does too. Normalizing across providers (OpenAI vs Anthropic pricing, cached tokens, reasoning tokens) is its own small project. **DEFERRED 2026-09-10 — product decision: not scheduled for now.** Token totals are already captured and stored per session (`sessions.total_*_tokens`); only cross-provider price normalization is missing.
 13. **Admin UI scope.** Minimally: add/revoke users, view system health, configure retention. What else needs to be in v1? **RESOLVED 2026-09-09 — decision 13.**
 
-_(Numbering skips 14, which is taken by decision 14.)_
+_(Numbering skips 14 (taken by decision 14) and 15 (taken by open question 15).)_
 
 15. **LLM session summaries (raised 2026-09-10).** A machine-generated "what happened in this session / did it finish" summary shown on the session page, to make review scalable — a DRI reads summaries first and drills into turns only when one smells. Two placements considered: a server-side batch job summarizing at session end with a management LLM key, or the sidecar summarizing locally right before it emits session end. **Direction (2026-09-10, pending final call): client-side preferred.** The sidecar is the authority on when a session truly ended (Stop + idle timeout; the Server cannot tell an end from a pre-resume end), the developer's own provider key means no new data-egress boundary (the agent already sends this conversation to the same provider — a management key on the Server would widen it), cost attribution stays per-developer, and the Server stays a stateless store with no job scheduler. Cost of this choice: the sidecar needs a key (natural home: the install flow, open question 10 — wire the two together), listeners without a configured key skip summaries silently (capture is never blocked), each listener implements the same summarize-and-report step (shared package), and summaries come from the observed machine — so they are a reading aid, never evidence; the raw events remain the record. Schema impact is one new NormalEvent kind (`session`/`summary`: body + model), backward compatible.
 
