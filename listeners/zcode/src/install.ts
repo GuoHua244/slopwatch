@@ -19,11 +19,15 @@ export type HookProcess = {
   statusMessage: string;
 };
 
+/** The hook entry our installer registers. `serverUrl`/`token` are optional:
+ * the `slopwatch install` CLI omits them and the sidecar reads
+ * `~/.slopwatch/config.json` at fire time instead (the standalone script
+ * below still embeds them for a self-contained smoke setup). */
 export const slopwatchHookEntry = (opts: {
   bunPath: string;
   spawnerPath: string;
-  serverUrl: string;
-  token: string;
+  serverUrl?: string;
+  token?: string;
 }): HookProcess => ({
   type: "process",
   command: opts.bunPath,
@@ -31,10 +35,8 @@ export const slopwatchHookEntry = (opts: {
     opts.spawnerPath,
     "--session-id",
     "${ZCODE_SESSION_ID}",
-    "--server-url",
-    opts.serverUrl,
-    "--token",
-    opts.token,
+    ...(opts.serverUrl ? ["--server-url", opts.serverUrl] : []),
+    ...(opts.token ? ["--token", opts.token] : []),
   ],
   timeoutMs: 15000,
   statusMessage: "slopwatch capture",

@@ -23,20 +23,21 @@ export type HookEntry = {
   hooks: { type: "command"; command: string; timeout: number }[];
 };
 
-/** The command line our hook script is invoked with. */
+/** The command line our hook script is invoked with. `serverUrl`/`token`
+ * are optional: the `slopwatch install` CLI omits them and the hook reads
+ * `~/.slopwatch/config.json` at fire time instead (the standalone script
+ * below still embeds them for a self-contained smoke setup). */
 export const slopwatchHookCommand = (opts: {
   bunPath: string;
   hookScriptPath: string;
-  serverUrl: string;
-  token: string;
+  serverUrl?: string;
+  token?: string;
 }): string =>
   [
     JSON.stringify(opts.bunPath),
     JSON.stringify(opts.hookScriptPath),
-    "--server-url",
-    opts.serverUrl,
-    "--token",
-    opts.token,
+    ...(opts.serverUrl ? ["--server-url", opts.serverUrl] : []),
+    ...(opts.token ? ["--token", opts.token] : []),
   ].join(" ");
 
 const isOurEntry = (entry: unknown, hookScriptPath: string): boolean => {

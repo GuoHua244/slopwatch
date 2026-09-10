@@ -18,6 +18,26 @@ describe("slopwatchHookCommand", () => {
     expect(command).toContain("--server-url http://localhost:8787");
     expect(command).toContain("tok-1");
   });
+
+  test("omits --server-url/--token when not given (central-config mode)", () => {
+    const bare = slopwatchHookCommand({ bunPath, hookScriptPath: hookScript });
+    expect(bare).toContain(JSON.stringify(hookScript));
+    expect(bare).not.toContain("--server-url");
+    expect(bare).not.toContain("--token");
+  });
+
+  test("a credential-free command replaces a legacy embedded-token entry", () => {
+    const bare = slopwatchHookCommand({ bunPath, hookScriptPath: hookScript });
+    const merged = mergeHookConfig(
+      mergeHookConfig(undefined, command, hookScript),
+      bare,
+      hookScript,
+    );
+    for (const name of HOOK_EVENTS) {
+      expect(merged.hooks[name]).toHaveLength(1);
+      expect(merged.hooks[name]![0]!.hooks[0]!.command).toBe(bare);
+    }
+  });
 });
 
 describe("mergeHookConfig", () => {

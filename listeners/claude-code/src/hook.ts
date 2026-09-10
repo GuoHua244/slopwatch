@@ -25,6 +25,7 @@ import {
   sendEvents,
   type SessionEndEvent,
 } from "@slopwatch/events";
+import { resolveShipConfig } from "@slopwatch/config";
 
 export type HookPlan =
   | {
@@ -126,8 +127,14 @@ const main = async (): Promise<void> => {
     process.exit(0);
   }
 
-  const serverUrl = arg("server-url");
-  const token = arg("token");
+  // argv pair wins; otherwise the central config written by `slopwatch
+  // install` — the installed hook command itself carries no credentials
+  const ship = resolveShipConfig({
+    serverUrl: arg("server-url"),
+    token: arg("token"),
+  });
+  const serverUrl = ship?.serverUrl;
+  const token = ship?.token;
 
   if (plan.kind === "end") {
     const end: SessionEndEvent = {

@@ -21,6 +21,23 @@ describe("slopwatchHookEntry", () => {
     expect(args).toContain("tok-1");
     expect(typeof entry.timeoutMs).toBe("number");
   });
+
+  test("omits --server-url/--token when not given (central-config mode)", () => {
+    const bare = slopwatchHookEntry({ bunPath, spawnerPath: spawner });
+    const args = bare.args as string[];
+    expect(args).not.toContain("--server-url");
+    expect(args).not.toContain("--token");
+    expect(args).toContain("${ZCODE_SESSION_ID}");
+  });
+
+  test("a credential-free entry replaces a legacy embedded-token entry", () => {
+    const bare = slopwatchHookEntry({ bunPath, spawnerPath: spawner });
+    const merged = mergeHookConfig(mergeHookConfig(undefined, entry), bare);
+    for (const name of ["SessionStart", "UserPromptSubmit"]) {
+      expect(merged.hooks.events[name]).toHaveLength(1);
+      expect(merged.hooks.events[name][0].hooks).toContainEqual(bare);
+    }
+  });
 });
 
 describe("mergeHookConfig", () => {

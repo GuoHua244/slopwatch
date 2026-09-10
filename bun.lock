@@ -41,6 +41,7 @@
       "name": "@slopwatch/listener-claude-code",
       "version": "0.0.0",
       "dependencies": {
+        "@slopwatch/config": "workspace:*",
         "@slopwatch/events": "workspace:*",
       },
     },
@@ -48,8 +49,13 @@
       "name": "@slopwatch/listener-zcode",
       "version": "0.0.0",
       "dependencies": {
+        "@slopwatch/config": "workspace:*",
         "@slopwatch/events": "workspace:*",
       },
+    },
+    "packages/config": {
+      "name": "@slopwatch/config",
+      "version": "0.0.0",
     },
     "packages/events": {
       "name": "@slopwatch/events",
@@ -90,6 +96,8 @@
     "@rolldown/binding-win32-x64-msvc": ["@rolldown/binding-win32-x64-msvc@1.2.8", "https://registry.npmmirror.com/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.2.8.tgz", { "os": "win32", "cpu": "x64" }, "sha512-uz2ZvfgXbxqNwijjjbxrnvALwpyODDcgc1T1N8N3rf/DXKQmaFwmB4LX4yyjggpwN2obdQLb2rgirX5ffCWYng=="],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.1", "https://registry.npmmirror.com/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz", {}, "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="],
+
+    "@slopwatch/config": ["@slopwatch/config@workspace:packages/config"],
 
     "@slopwatch/events": ["@slopwatch/events@workspace:packages/events"],
 

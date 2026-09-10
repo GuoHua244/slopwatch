@@ -1,0 +1,77 @@
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { saveConfig } from "@slopwatch/config";
+import type { NormalEvent } from "@slopwatch/events";
+import { mainTurnRecord } from "./fixtures/rollout-record";
+
+// live.ts with no --server-url/--token argv must pick the credentials up
+// from ~/.slopwatch/config.json (relocated here via SLOPWATCH_HOME) — the
+// path installed hooks take once slopwatch install stops embedding the
+// token in hook command lines.
+
+const received: NormalEvent[][] = [];
+const server = Bun.serve({
+  port: 0,
+  fetch: async (req) => {
+    const body = (await req.json()) as { events: NormalEvent[] };
+    received.push(body.events);
+    return Response.json({ accepted: body.events.length });
+  },
+});
+
+const home = mkdtempSync(join(tmpdir(), "slopwatch-zcode-live-config-"));
+const rollout = join(home, "rollout.jsonl");
+saveConfig(
+  { serverUrl: `http://127.0.0.1:${server.port}`, token: "config-token" },
+  home,
+);
+
+const spawnLive = async (): Promise<void> => {
+  const proc = Bun.spawn({
+    cmd: [
+      process.execPath,
+      join(import.meta.dir, "live.ts"),
+      "--file",
+      rollout,
+      "--session-id",
+      "sess_live-config-test",
+      "--cwd",
+      home,
+      "--idle-ms",
+      "300",
+      "--max-lifetime-ms",
+      "4000",
+    ],
+    env: {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      SLOPWATCH_HOME: home,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [code, stderr] = await Promise.all([
+    proc.exited,
+    new Response(proc.stderr).text(),
+  ]);
+  if (code !== 0) throw new Error(`live.ts exited ${code}: ${stderr}`);
+};
+
+describe("zcode live.ts ships via the central config", () => {
+  test("no argv credentials — the config file supplies them", async () => {
+    writeFileSync(rollout, `${JSON.stringify(mainTurnRecord)}\n`);
+    await spawnLive();
+    expect(received.length).toBeGreaterThan(0);
+    expect(
+      received.flat().filter((e) => e.kind === "session" && e.event === "start")
+        .length,
+    ).toBe(1);
+  }, 30000);
+
+  test("cleanup", () => {
+    server.stop(true);
+  });
+});

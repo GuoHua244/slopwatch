@@ -28,6 +28,7 @@ import {
   type NormalEvent,
   type SessionEndEvent,
 } from "@slopwatch/events";
+import { resolveShipConfig } from "@slopwatch/config";
 import { readCursor, writeCursor } from "./cursor";
 import {
   eventsFromRecord,
@@ -61,12 +62,18 @@ const file =
     : undefined);
 const idleMs = numArg("idle-ms", 120_000);
 const maxLifetimeMs = numArg("max-lifetime-ms", 4 * 60 * 60 * 1000);
-const serverUrl = arg("server-url");
-const token = arg("token");
+// argv pair wins for manual runs; otherwise the central config written by
+// `slopwatch install` (the installed hook carries no credentials at all)
+const ship = resolveShipConfig({
+  serverUrl: arg("server-url"),
+  token: arg("token"),
+});
+const serverUrl = ship?.serverUrl;
+const token = ship?.token;
 
 if (!file) {
   console.error(
-    "usage: bun live.ts (--file <rollout> | --session-id <id>) [--idle-ms N] [--max-lifetime-ms N] [--server-url U --token T]",
+    "usage: bun live.ts (--file <rollout> | --session-id <id>) [--idle-ms N] [--max-lifetime-ms N] [--server-url U --token T]  (server-url/token default to ~/.slopwatch/config.json)",
   );
   process.exit(1);
 }

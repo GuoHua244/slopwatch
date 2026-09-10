@@ -9,6 +9,11 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@slopwatch/config": "workspace:*",
     "@slopwatch/events": "workspace:*"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./install": "./src/install.ts"
   }
 }
