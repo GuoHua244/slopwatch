@@ -423,3 +423,62 @@ main.full {
 .leaderboard {
   min-width: 760px;
 }
+.review-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0 10px;
+}
+.review-bar .state {
+  font-size: 12px;
+  color: var(--dim);
+}
+.review-bar .state.live {
+  color: var(--accent);
+}
+.note-btn {
+  font-size: 11px;
+  padding: 1px 8px;
+  margin-left: auto;
+}
+.comment-form {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+  max-width: 640px;
+}
+.comment-form input {
+  flex: 1;
+}
+.comments {
+  margin: 4px 0;
+}
+.comment {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 0 3px 14px;
+  border-left: 2px solid var(--accent);
+  margin: 2px 0;
+}
+.comment .detail {
+  overflow-wrap: anywhere;
+}
+.review-notes {
+  margin-top: 18px;
+  border-top: 1px solid var(--panel);
+  padding-top: 8px;
+}
+.review-notes h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+button.link {
+  background: none;
+  border: none;
+  color: var(--dim);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+}

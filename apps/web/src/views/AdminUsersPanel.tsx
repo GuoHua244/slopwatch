@@ -107,6 +107,7 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
             <th>user</th>
             <th>email</th>
             <th>status</th>
+            <th>role</th>
             <th>tokens</th>
             <th>created</th>
             <th>actions</th>
@@ -120,6 +121,7 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
               <td className={u.disabled ? "cell-down" : "cell-live"}>
                 {u.disabled ? "disabled" : "active"}
               </td>
+              <td>{u.is_dri ? "dri" : "—"}</td>
               <td className="num">{u.active_tokens}</td>
               <td>{clock(u.created_at)}</td>
               <td className="actions">
@@ -129,6 +131,11 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
                   }
                 >
                   {u.disabled ? "enable" : "disable"}
+                </button>
+                <button
+                  onClick={() => run(() => api.setUserDri(u.name, !u.is_dri))}
+                >
+                  {u.is_dri ? "unset dri" : "make dri"}
                 </button>
                 <button onClick={() => mintAndShow(u)}>mint token</button>
                 <button onClick={() => void toggleTokens(u)}>tokens</button>

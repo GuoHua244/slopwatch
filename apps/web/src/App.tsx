@@ -8,26 +8,35 @@ import { SessionList } from "./views/SessionList";
 
 type Route = "sessions" | "leaderboard" | "admin";
 
-const parseRoute = (hash: string): Route => {
+/** "#/sessions/sess_x" deep-links straight into a session detail. */
+const parseHash = (
+  hash: string,
+): { route: Route; sessionId: string | null } => {
   const path = hash.replace(/^#\/?/, "");
-  if (path === "leaderboard") return "leaderboard";
-  if (path === "admin") return "admin";
-  return "sessions";
+  const session = path.match(/^sessions\/(.+)$/);
+  if (session)
+    return { route: "sessions", sessionId: decodeURIComponent(session[1]!) };
+  if (path === "leaderboard") return { route: "leaderboard", sessionId: null };
+  if (path === "admin") return { route: "admin", sessionId: null };
+  return { route: "sessions", sessionId: null };
 };
 
-const useHashRoute = (): Route => {
-  const [route, setRoute] = useState<Route>(parseRoute(window.location.hash));
+const useHashRoute = (): {
+  route: Route;
+  sessionId: string | null;
+} => {
+  const [state, setState] = useState(parseHash(window.location.hash));
   useEffect(() => {
-    const onHashChange = () => setRoute(parseRoute(window.location.hash));
+    const onHashChange = () => setState(parseHash(window.location.hash));
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
-  return route;
+  return state;
 };
 
 export const App = () => {
   const feed = useSessions();
-  const route = useHashRoute();
+  const { route, sessionId } = useHashRoute();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Follow the newest session until the operator picks one.
@@ -35,6 +44,11 @@ export const App = () => {
     if (selectedId === null && feed.sessions.length > 0)
       setSelectedId(feed.sessions[0]!.session_id);
   }, [selectedId, feed.sessions]);
+
+  // A hash deep link (e.g. from the admin sessions panel) wins over the default.
+  useEffect(() => {
+    if (sessionId !== null) setSelectedId(sessionId);
+  }, [sessionId]);
 
   const selected =
     feed.sessions.find((s) => s.session_id === selectedId) ?? null;

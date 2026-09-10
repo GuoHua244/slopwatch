@@ -54,6 +54,19 @@ const refusingStore = (): Store => ({
     throw new Error("store must not be touched");
   },
   resolveTokenUser: async () => null,
+  markReviewed: () => {
+    throw new Error("store must not be touched");
+  },
+  unmarkReviewed: () => {
+    throw new Error("store must not be touched");
+  },
+  reviewFor: async () => null,
+  addComment: () => {
+    throw new Error("store must not be touched");
+  },
+  listComments: async () => [],
+  isDri: async () => false,
+  setUserDri: async () => null,
   health: () => {
     throw new Error("store must not be touched");
   },

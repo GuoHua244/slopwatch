@@ -18,7 +18,12 @@ import {
 const memStore = () => {
   const users = new Map<
     string,
-    { email: string | null; disabled: boolean; created_at: string }
+    {
+      email: string | null;
+      disabled: boolean;
+      is_dri: boolean;
+      created_at: string;
+    }
   >();
   const tokens = new Map<
     string,
@@ -38,6 +43,7 @@ const memStore = () => {
     name,
     email: users.get(name)!.email,
     disabled: users.get(name)!.disabled,
+    is_dri: users.get(name)!.is_dri,
     created_at: users.get(name)!.created_at,
     active_tokens: [...tokens.values()].filter(
       (t) => t.user === name && t.revoked_at === null,
@@ -76,6 +82,7 @@ const memStore = () => {
       users.set(name, {
         email,
         disabled: false,
+        is_dri: false,
         created_at: new Date().toISOString(),
       });
       return row(name);
@@ -85,6 +92,11 @@ const memStore = () => {
     setUserDisabled: async (name, disabled) => {
       if (!users.has(name)) return null;
       users.get(name)!.disabled = disabled;
+      return row(name);
+    },
+    setUserDri: async (name, isDri) => {
+      if (!users.has(name)) return null;
+      users.get(name)!.is_dri = isDri;
       return row(name);
     },
     deleteUser: async (name) => {
@@ -131,6 +143,12 @@ const memStore = () => {
       }
       return null;
     },
+    markReviewed: async () => null,
+    unmarkReviewed: async () => false,
+    reviewFor: async () => null,
+    addComment: async () => null,
+    listComments: async () => [],
+    isDri: async () => false,
     health: async () => ({
       sessions,
       events,

@@ -128,6 +128,13 @@ export const createApp = ({
   async fetch(req) {
     const url = new URL(req.url);
 
+    // Env tokens first (v0 bootstrap), then admin-minted tokens (decision 6).
+    const resolveUser = async (): Promise<string | null> => {
+      const bearer = bearerToken(req);
+      if (bearer === null) return null;
+      return tokens.get(bearer) ?? (await store.resolveTokenUser(bearer));
+    };
+
     if (url.pathname === "/healthz") return json(200, { ok: true });
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
@@ -144,12 +151,7 @@ export const createApp = ({
     }
 
     if (url.pathname === "/events" && req.method === "POST") {
-      // Env tokens first (v0 bootstrap), then admin-minted tokens (decision 6).
-      const bearer = bearerToken(req);
-      let user: string | null = null;
-      if (bearer !== null) {
-        user = tokens.get(bearer) ?? (await store.resolveTokenUser(bearer));
-      }
+      const user = await resolveUser();
       if (user === null) return json(401, { error: "unauthorized" });
 
       let body: { schema_version?: number; events?: unknown[] };
@@ -193,6 +195,57 @@ export const createApp = ({
       return json(200, { sessions: await store.listSessions() });
     }
 
+    // --- Review plane (decision 10): reads are org-wide, writes are authed;
+    // the review marker itself is DRI-exclusive. ---
+    if (url.pathname === "/me" && req.method === "GET") {
+      const user = await resolveUser();
+      if (user === null) return json(401, { error: "unauthorized" });
+      return json(200, { user, is_dri: await store.isDri(user) });
+    }
+
+    const reviewMatch = url.pathname.match(/^\/sessions\/([^/]+)\/review$/);
+    if (reviewMatch) {
+      const sessionId = decodeURIComponent(reviewMatch[1]!);
+      if (req.method === "GET")
+        return json(200, { review: await store.reviewFor(sessionId) });
+      if (req.method === "POST" || req.method === "DELETE") {
+        const user = await resolveUser();
+        if (user === null) return json(401, { error: "unauthorized" });
+        if (!(await store.isDri(user)))
+          return json(403, { error: "only a DRI can change review state" });
+        if (req.method === "POST") {
+          const review = await store.markReviewed(sessionId, user);
+          return review === null
+            ? json(404, { error: "no such session" })
+            : json(200, { review });
+        }
+        return (await store.unmarkReviewed(sessionId))
+          ? new Response(null, { status: 204 })
+          : json(404, { error: "no such review" });
+      }
+    }
+
+    const commentsMatch = url.pathname.match(/^\/sessions\/([^/]+)\/comments$/);
+    if (commentsMatch) {
+      const sessionId = decodeURIComponent(commentsMatch[1]!);
+      if (req.method === "GET")
+        return json(200, { comments: await store.listComments(sessionId) });
+      if (req.method === "POST") {
+        const user = await resolveUser();
+        if (user === null) return json(401, { error: "unauthorized" });
+        const body = await readJson(req);
+        if (body === null) return json(400, { error: "invalid json" });
+        const note = trimField(body.body, 4000);
+        if (note === null)
+          return json(400, { error: "body must be a non-empty string" });
+        const turnId = trimField(body.turn_id, 200);
+        const comment = await store.addComment(sessionId, turnId, user, note);
+        return comment === null
+          ? json(404, { error: "no such session" })
+          : json(201, { comment });
+      }
+    }
+
     // --- Admin plane (decision 13). Disabled unless SLOPWATCH_ADMIN_TOKEN is set.
     if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) {
       if (adminToken === undefined)
@@ -228,12 +281,23 @@ export const createApp = ({
         const name = decodeURIComponent(userMatch[1]!);
         if (req.method === "PATCH") {
           const body = await readJson(req);
-          if (body === null || typeof body.disabled !== "boolean")
+          if (body === null) return json(400, { error: "invalid json" });
+          const { disabled, is_dri } = body;
+          if (disabled !== undefined && typeof disabled !== "boolean")
             return json(400, { error: "disabled must be a boolean" });
-          const user = await store.setUserDisabled(name, body.disabled);
-          return user === null
-            ? json(404, { error: "no such user" })
-            : json(200, { user });
+          if (is_dri !== undefined && typeof is_dri !== "boolean")
+            return json(400, { error: "is_dri must be a boolean" });
+          if (disabled === undefined && is_dri === undefined)
+            return json(400, { error: "nothing to update" });
+          if (disabled !== undefined) {
+            const user = await store.setUserDisabled(name, disabled);
+            if (user === null) return json(404, { error: "no such user" });
+          }
+          if (is_dri !== undefined) {
+            const user = await store.setUserDri(name, is_dri);
+            if (user === null) return json(404, { error: "no such user" });
+          }
+          return json(200, { user: await store.getUser(name) });
         }
         if (req.method === "DELETE") {
           return (await store.deleteUser(name))

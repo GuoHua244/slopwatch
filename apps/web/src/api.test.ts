@@ -3,6 +3,7 @@ import type { NormalEvent } from "@slopwatch/events";
 import {
   ApiError,
   createAdminApi,
+  createReviewApi,
   createApi,
   type SessionSummary,
 } from "./api";
@@ -217,5 +218,125 @@ describe("createAdminApi", () => {
       expect(e instanceof ApiError).toBe(true);
       expect((e as ApiError).status).toBe(401);
     }
+  });
+});
+
+describe("createReviewApi", () => {
+  const reviewRow = {
+    session_id: "sess_1",
+    reviewer_id: "dri",
+    reviewed_at: "2026-09-10T00:00:00.000Z",
+  };
+
+  test("reads are org-wide: no authorization header without a token", async () => {
+    const headers: (string | null)[] = [];
+    const api = createReviewApi(
+      () => null,
+      (input, init) => {
+        headers.push(new Headers(init?.headers).get("authorization"));
+        return Promise.resolve(jsonResponse(200, { review: reviewRow }));
+      },
+    );
+    expect(await api.review("sess_1")).toEqual(reviewRow);
+    expect(headers[0]).toBeNull();
+  });
+
+  test("markReviewed POSTs with the bearer token and unwraps the review", async () => {
+    const calls: { path: string; method: string; auth: string | null }[] = [];
+    const api = createReviewApi(
+      () => "sw_tok",
+      (input, init) => {
+        calls.push({
+          path: String(input),
+          method: init?.method ?? "GET",
+          auth: new Headers(init?.headers).get("authorization"),
+        });
+        return Promise.resolve(jsonResponse(200, { review: reviewRow }));
+      },
+    );
+    expect(await api.markReviewed("sess_a b")).toEqual(reviewRow);
+    expect(calls).toEqual([
+      {
+        path: "/sessions/sess_a%20b/review",
+        method: "POST",
+        auth: "Bearer sw_tok",
+      },
+    ]);
+  });
+
+  test("unmarkReviewed tolerates the 204 no-body response", async () => {
+    const api = createReviewApi(
+      () => "sw_tok",
+      (_input, init) =>
+        Promise.resolve(new Response(null, { status: 204, ...init })),
+    );
+    await expect(api.unmarkReviewed("sess_1")).resolves.toBeUndefined();
+  });
+
+  test("a 403 from the server surfaces as ApiError with the method", async () => {
+    const api = createReviewApi(
+      () => "sw_tok",
+      () => Promise.resolve(jsonResponse(403, { error: "only a DRI" })),
+    );
+    try {
+      await api.markReviewed("sess_1");
+      throw new Error("expected markReviewed to reject");
+    } catch (e) {
+      expect(e instanceof ApiError).toBe(true);
+      expect((e as ApiError).status).toBe(403);
+      expect((e as ApiError).method).toBe("POST");
+    }
+  });
+
+  test("addComment posts turn scope and body, returns the stored comment", async () => {
+    const bodies: unknown[] = [];
+    const comment = {
+      comment_id: 7,
+      session_id: "sess_1",
+      turn_id: "turn_1",
+      author_id: "alice",
+      body: "looped twice",
+      created_at: "2026-09-10T00:00:00.000Z",
+    };
+    const api = createReviewApi(
+      () => "sw_tok",
+      (input, init) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return Promise.resolve(jsonResponse(201, { comment }));
+      },
+    );
+    expect(await api.addComment("sess_1", "turn_1", "looped twice")).toEqual(
+      comment,
+    );
+    expect(bodies).toEqual([{ turn_id: "turn_1", body: "looped twice" }]);
+  });
+
+  test("me() reports the token's user and DRI flag", async () => {
+    const api = createReviewApi(
+      () => "sw_tok",
+      () => Promise.resolve(jsonResponse(200, { user: "dri", is_dri: true })),
+    );
+    expect(await api.me()).toEqual({ user: "dri", is_dri: true });
+  });
+});
+
+describe("createAdminApi.setUserDri", () => {
+  test("PATCHes is_dri under the admin bearer", async () => {
+    const calls: { path: string; method: string; body: unknown }[] = [];
+    const api = createAdminApi(
+      () => "adm",
+      (input, init) => {
+        calls.push({
+          path: String(input),
+          method: init?.method ?? "GET",
+          body: JSON.parse(String(init?.body)),
+        });
+        return Promise.resolve(jsonResponse(200, { ok: true }));
+      },
+    );
+    await api.setUserDri("alice", true);
+    expect(calls).toEqual([
+      { path: "/admin/users/alice", method: "PATCH", body: { is_dri: true } },
+    ]);
   });
 });

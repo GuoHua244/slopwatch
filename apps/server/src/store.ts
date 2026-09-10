@@ -23,6 +23,7 @@ export type AdminUserRow = {
   name: string;
   email: string | null;
   disabled: boolean;
+  is_dri: boolean;
   created_at: string;
   active_tokens: number;
 };
@@ -33,6 +34,23 @@ export type AdminTokenRow = {
   hint: string;
   created_at: string;
   revoked_at: string | null;
+};
+
+/** The accountability marker (decision 10): one review per session, latest wins. */
+export type ReviewRow = {
+  session_id: string;
+  reviewer_id: string;
+  reviewed_at: string;
+};
+
+/** A review note, session-level (turn_id null) or pinned to one turn. */
+export type CommentRow = {
+  comment_id: number;
+  session_id: string;
+  turn_id: string | null;
+  author_id: string;
+  body: string;
+  created_at: string;
 };
 
 export type HealthInfo = {
@@ -98,6 +116,25 @@ export type Store = {
   revokeToken(tokenId: string): Promise<boolean>;
   /** Bearer token → user name; null for unknown, revoked, or disabled. */
   resolveTokenUser(token: string): Promise<string | null>;
+  /** Decision 10: mark a session reviewed (upsert). Null when the session is unknown. */
+  markReviewed(
+    sessionId: string,
+    reviewerId: string,
+  ): Promise<ReviewRow | null>;
+  /** Decision 10: retract a review. False when no review (or session) exists. */
+  unmarkReviewed(sessionId: string): Promise<boolean>;
+  reviewFor(sessionId: string): Promise<ReviewRow | null>;
+  /** Add a review note. Null when the session is unknown. */
+  addComment(
+    sessionId: string,
+    turnId: string | null,
+    authorId: string,
+    body: string,
+  ): Promise<CommentRow | null>;
+  listComments(sessionId: string): Promise<CommentRow[]>;
+  /** Decision 10: the DRI role attribute. False for unknown users. */
+  isDri(name: string): Promise<boolean>;
+  setUserDri(name: string, isDri: boolean): Promise<AdminUserRow | null>;
   health(): Promise<HealthInfo>;
   close(): Promise<void>;
 };
@@ -147,14 +184,45 @@ CREATE TABLE IF NOT EXISTS tokens (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   revoked_at TIMESTAMPTZ
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_dri BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE TABLE IF NOT EXISTS session_reviews (
+  session_id  TEXT PRIMARY KEY REFERENCES sessions (session_id) ON DELETE CASCADE,
+  reviewer_id TEXT NOT NULL,
+  reviewed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS review_comments (
+  comment_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,
+  turn_id    TEXT,
+  author_id  TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS review_comments_session ON review_comments (session_id);
 `;
 
 const pgUserRow = (r: Record<string, unknown>): AdminUserRow => ({
   name: r.name as string,
   email: (r.email as string | null) ?? null,
   disabled: r.disabled === true,
+  is_dri: r.is_dri === true,
   created_at: new Date(r.created_at as string).toISOString(),
   active_tokens: Number(r.active_tokens ?? 0),
+});
+
+const pgReviewRow = (r: Record<string, unknown>): ReviewRow => ({
+  session_id: r.session_id as string,
+  reviewer_id: r.reviewer_id as string,
+  reviewed_at: new Date(r.reviewed_at as string).toISOString(),
+});
+
+const pgCommentRow = (r: Record<string, unknown>): CommentRow => ({
+  comment_id: Number(r.comment_id),
+  session_id: r.session_id as string,
+  turn_id: (r.turn_id as string | null) ?? null,
+  author_id: r.author_id as string,
+  body: r.body as string,
+  created_at: new Date(r.created_at as string).toISOString(),
 });
 
 export const createPgStore = (databaseUrl: string): Store => {
@@ -340,13 +408,21 @@ export const createPgStore = (databaseUrl: string): Store => {
 
     async listUsers() {
       const { rows } = await pool.query(`
-        SELECT u.name, u.email, u.disabled, u.created_at,
+        SELECT u.name, u.email, u.disabled, u.is_dri, u.created_at,
                COUNT(t.token_id) FILTER (WHERE t.revoked_at IS NULL) AS active_tokens
         FROM users u LEFT JOIN tokens t ON t.user_name = u.name
-        GROUP BY u.name, u.email, u.disabled, u.created_at
+        GROUP BY u.name, u.email, u.disabled, u.is_dri, u.created_at
         ORDER BY u.created_at ASC
       `);
       return rows.map((r) => pgUserRow(r));
+    },
+
+    async setUserDri(name, isDri) {
+      const { rows } = await pool.query(
+        "UPDATE users SET is_dri = $2 WHERE name = $1 RETURNING name, email, disabled, is_dri, created_at",
+        [name, isDri],
+      );
+      return rows[0] ? pgUserRow(rows[0]) : null;
     },
 
     async setUserDisabled(name, disabled) {
@@ -405,6 +481,67 @@ export const createPgStore = (databaseUrl: string): Store => {
         [hashToken(token)],
       );
       return (rows[0]?.user_name as string | undefined) ?? null;
+    },
+
+    async markReviewed(sessionId, reviewerId) {
+      try {
+        const { rows } = await pool.query(
+          `INSERT INTO session_reviews (session_id, reviewer_id) VALUES ($1, $2)
+         ON CONFLICT (session_id) DO UPDATE
+           SET reviewer_id = EXCLUDED.reviewer_id, reviewed_at = now()
+         RETURNING session_id, reviewer_id, reviewed_at`,
+          [sessionId, reviewerId],
+        );
+        return pgReviewRow(rows[0]!);
+      } catch (e) {
+        if ((e as { code?: string }).code === "23503") return null; // no such session
+        throw e;
+      }
+    },
+
+    async unmarkReviewed(sessionId) {
+      const { rowCount } = await pool.query(
+        "DELETE FROM session_reviews WHERE session_id = $1",
+        [sessionId],
+      );
+      return (rowCount ?? 0) > 0;
+    },
+
+    async reviewFor(sessionId) {
+      const { rows } = await pool.query(
+        "SELECT session_id, reviewer_id, reviewed_at FROM session_reviews WHERE session_id = $1",
+        [sessionId],
+      );
+      return rows[0] ? pgReviewRow(rows[0]) : null;
+    },
+
+    async addComment(sessionId, turnId, authorId, body) {
+      try {
+        const { rows } = await pool.query(
+          "INSERT INTO review_comments (session_id, turn_id, author_id, body) VALUES ($1, $2, $3, $4) RETURNING comment_id, session_id, turn_id, author_id, body, created_at",
+          [sessionId, turnId, authorId, body],
+        );
+        return pgCommentRow(rows[0]!);
+      } catch (e) {
+        if ((e as { code?: string }).code === "23503") return null; // no such session
+        throw e;
+      }
+    },
+
+    async listComments(sessionId) {
+      const { rows } = await pool.query(
+        "SELECT comment_id, session_id, turn_id, author_id, body, created_at FROM review_comments WHERE session_id = $1 ORDER BY created_at ASC, comment_id ASC",
+        [sessionId],
+      );
+      return rows.map((r) => pgCommentRow(r));
+    },
+
+    async isDri(name) {
+      const { rows } = await pool.query(
+        "SELECT is_dri FROM users WHERE name = $1",
+        [name],
+      );
+      return rows[0]?.is_dri === true;
     },
 
     async health() {

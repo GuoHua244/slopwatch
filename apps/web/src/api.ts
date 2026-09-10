@@ -18,12 +18,48 @@ export type SessionSummary = {
 /** One entry of GET /sessions/:id/events — a NormalEvent plus its seq. */
 export type StoredEvent = { event_seq: number; event: NormalEvent };
 
+/** The accountability marker (decision 10): one review per session. */
+export type ReviewRow = {
+  session_id: string;
+  reviewer_id: string;
+  reviewed_at: string;
+};
+
+/** A review note, session-level (turn_id null) or pinned to one turn. */
+export type CommentRow = {
+  comment_id: number;
+  session_id: string;
+  turn_id: string | null;
+  author_id: string;
+  body: string;
+  created_at: string;
+};
+
+/** GET /me — the identity behind the reader's bearer token. */
+export type MeInfo = { user: string; is_dri: boolean };
+
+export type ReviewApi = {
+  me(): Promise<MeInfo>;
+  /** Org-wide read: the session's review marker, or null when unreviewed. */
+  review(sessionId: string): Promise<ReviewRow | null>;
+  /** DRI-only server-side; 403 surfaces as ApiError for non-DRIs. */
+  markReviewed(sessionId: string): Promise<ReviewRow>;
+  unmarkReviewed(sessionId: string): Promise<void>;
+  comments(sessionId: string): Promise<CommentRow[]>;
+  addComment(
+    sessionId: string,
+    turnId: string | null,
+    body: string,
+  ): Promise<CommentRow>;
+};
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly path: string,
+    readonly method = "GET",
   ) {
-    super(`GET ${path} failed with ${status}`);
+    super(`${method} ${path} failed with ${status}`);
     this.name = "ApiError";
   }
 }
@@ -39,6 +75,7 @@ export type AdminUserRow = {
   name: string;
   email: string | null;
   disabled: boolean;
+  is_dri: boolean;
   created_at: string;
   active_tokens: number;
 };
@@ -65,6 +102,7 @@ export type AdminApi = {
   users(): Promise<AdminUserRow[]>;
   createUser(name: string, email: string | null): Promise<AdminUserRow>;
   setUserDisabled(name: string, disabled: boolean): Promise<void>;
+  setUserDri(name: string, isDri: boolean): Promise<void>;
   deleteUser(name: string): Promise<void>;
   mintToken(name: string): Promise<MintedToken>;
   tokens(name: string): Promise<AdminTokenRow[]>;
@@ -88,14 +126,16 @@ const getJson = async <T>(doFetch: FetchLike, path: string): Promise<T> => {
   return (await res.json()) as T;
 };
 
-const sendJson = async (
+const unwrapJson = async <T = void>(
   doFetch: FetchLike,
   path: string,
   init: RequestInit,
-): Promise<Response> => {
+  method: string,
+): Promise<T> => {
   const res = await doFetch(path, init);
-  if (!res.ok) throw new ApiError(res.status, path);
-  return res;
+  if (!res.ok) throw new ApiError(res.status, path, method);
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
 };
 
 /** Dashboard client over the Server's read-only endpoints (same-origin). */
@@ -111,6 +151,77 @@ export const createApi = (doFetch: FetchLike = fetch): Api => ({
       )
     ).events,
 });
+
+/**
+ * Review-plane client (decision 10). Reads are org-wide (no token); writes
+ * carry the reader's own user token — the review marker additionally requires
+ * the DRI role, enforced server-side.
+ */
+export const createReviewApi = (
+  userToken: () => string | null,
+  doFetch: FetchLike = fetch,
+): ReviewApi => {
+  const auth = (init: RequestInit = {}): RequestInit => {
+    const token = userToken();
+    return {
+      ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+    };
+  };
+  const authedJson = (method: string, body: unknown): RequestInit =>
+    auth({
+      method,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  return {
+    me: async () =>
+      unwrapJson<MeInfo>(doFetch, "/me", auth({ method: "GET" }), "GET"),
+    review: async (sessionId) =>
+      (
+        await getJson<{ review: ReviewRow | null }>(
+          doFetch,
+          `/sessions/${encodeURIComponent(sessionId)}/review`,
+        )
+      ).review,
+    markReviewed: async (sessionId) =>
+      (
+        await unwrapJson<{ review: ReviewRow }>(
+          doFetch,
+          `/sessions/${encodeURIComponent(sessionId)}/review`,
+          auth({ method: "POST" }),
+          "POST",
+        )
+      ).review,
+    unmarkReviewed: async (sessionId) => {
+      await unwrapJson(
+        doFetch,
+        `/sessions/${encodeURIComponent(sessionId)}/review`,
+        auth({ method: "DELETE" }),
+        "DELETE",
+      );
+    },
+    comments: async (sessionId) =>
+      (
+        await getJson<{ comments: CommentRow[] }>(
+          doFetch,
+          `/sessions/${encodeURIComponent(sessionId)}/comments`,
+        )
+      ).comments,
+    addComment: async (sessionId, turnId, body) =>
+      (
+        await unwrapJson<{ comment: CommentRow }>(
+          doFetch,
+          `/sessions/${encodeURIComponent(sessionId)}/comments`,
+          authedJson("POST", { turn_id: turnId, body }),
+          "POST",
+        )
+      ).comment,
+  };
+};
 
 /** Admin plane client (decision 13); every call carries the admin bearer. */
 export const createAdminApi = (
@@ -154,6 +265,12 @@ export const createAdminApi = (
       await unwrap(
         `/admin/users/${encodeURIComponent(name)}`,
         authedJson("PATCH", { disabled }),
+      );
+    },
+    setUserDri: async (name, isDri) => {
+      await unwrap(
+        `/admin/users/${encodeURIComponent(name)}`,
+        authedJson("PATCH", { is_dri: isDri }),
       );
     },
     deleteUser: async (name) => {

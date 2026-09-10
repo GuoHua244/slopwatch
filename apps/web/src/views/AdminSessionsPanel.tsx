@@ -64,7 +64,11 @@ export const AdminSessionsPanel = ({ api, refreshKey, refresh }: Props) => {
           {(sessions ?? []).map((s) => (
             <tr key={s.session_id}>
               <td>{shortId(s.session_id)}</td>
-              <td>{s.title ?? "(untitled)"}</td>
+              <td>
+                <a href={`#/sessions/${encodeURIComponent(s.session_id)}`}>
+                  {s.title ?? "(untitled)"}
+                </a>
+              </td>
               <td>{s.user_id ?? "?"}</td>
               <td>{s.agent}</td>
               <td className="num">{s.last_seq}</td>
