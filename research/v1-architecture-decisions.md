@@ -118,7 +118,7 @@ Session events carry `hostname`, `cwd`, and `git remote URL` — dimension field
 
 ## Open questions — pick up here
 
-Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13 (2026-09-09 decisions), 8/9 (ADR 0001), and 5 (resolved for v0 by the M1 code — see the note there). Still open: 2, 6, 10, 12, plus the buffering half of 4:
+Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13 (2026-09-09 decisions), 8/9 (ADR 0001), and 5 (resolved for v0 by the M1 code — see the note there). Still open: 2, 6, 10, 12 (deferred 2026-09-10 — see the note there), plus the buffering half of 4:
 
 1. **DRI shape** (blocks the review schema). Four edges surfaced mid-grill but unresolved:
    - **Queryer vs recipient**: DRI pulls from a filterable firehose, or sessions get auto-routed to a DRI's inbox on end?
@@ -136,7 +136,7 @@ Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13
 9. **Sidecar language.** Must run on dev machines across macOS/Linux/Windows with minimal install friction. Node (available wherever the agents are installed)? Go (single static binary per OS)? Rust (same)? _(Resolved by ADR 0001 — Bun/TS everywhere.)_
 10. **`npx slopwatch install` flow.** Detect installed agents, wire up per-agent hooks/extensions idempotently, store backend URL + token. Exact UX not drawn.
 11. **Identity binding beyond the token.** Does the sidecar send extra context (git email, OS user, hostname, cwd, repo)? Which of those are useful for the DRI view vs. noise? **RESOLVED 2026-09-09 — decision 14.**
-12. **Cost/token tracking.** Codex and Claude Code emit token usage; Copilot JSONL probably does too. Normalizing across providers (OpenAI vs Anthropic pricing, cached tokens, reasoning tokens) is its own small project.
+12. **Cost/token tracking.** Codex and Claude Code emit token usage; Copilot JSONL probably does too. Normalizing across providers (OpenAI vs Anthropic pricing, cached tokens, reasoning tokens) is its own small project. **DEFERRED 2026-09-10 — product decision: not scheduled for now.** Token totals are already captured and stored per session (`sessions.total_*_tokens`); only cross-provider price normalization is missing.
 13. **Admin UI scope.** Minimally: add/revoke users, view system health, configure retention. What else needs to be in v1? **RESOLVED 2026-09-09 — decision 13.**
 
 ---
