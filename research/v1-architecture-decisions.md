@@ -118,7 +118,7 @@ Session events carry `hostname`, `cwd`, and `git remote URL` — dimension field
 
 ## Open questions — pick up here
 
-Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13 (2026-09-09 decisions), 8/9 (ADR 0001), and 5 (resolved for v0 by the M1 code — see the note there). Still open: 2, 6, 10, 12 (deferred 2026-09-10 — see the note there), plus the buffering half of 4:
+Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13 (2026-09-09 decisions), 8/9 (ADR 0001), and 5 (resolved for v0 by the M1 code — see the note there). Still open: 2, 6, 10, 12 (deferred 2026-09-10 — see the note there), 15, plus the buffering half of 4 (numbered past 14 to avoid colliding with decision 14):
 
 1. **DRI shape** (blocks the review schema). Four edges surfaced mid-grill but unresolved:
    - **Queryer vs recipient**: DRI pulls from a filterable firehose, or sessions get auto-routed to a DRI's inbox on end?
@@ -138,6 +138,7 @@ Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13
 11. **Identity binding beyond the token.** Does the sidecar send extra context (git email, OS user, hostname, cwd, repo)? Which of those are useful for the DRI view vs. noise? **RESOLVED 2026-09-09 — decision 14.**
 12. **Cost/token tracking.** Codex and Claude Code emit token usage; Copilot JSONL probably does too. Normalizing across providers (OpenAI vs Anthropic pricing, cached tokens, reasoning tokens) is its own small project. **DEFERRED 2026-09-10 — product decision: not scheduled for now.** Token totals are already captured and stored per session (`sessions.total_*_tokens`); only cross-provider price normalization is missing.
 13. **Admin UI scope.** Minimally: add/revoke users, view system health, configure retention. What else needs to be in v1? **RESOLVED 2026-09-09 — decision 13.**
+14. **LLM session summaries (raised 2026-09-10).** A machine-generated "what happened in this session / did it finish" summary shown on the session page, to make review scalable — a DRI reads summaries first and drills into turns only when one smells. Two placements considered: a server-side batch job summarizing at session end with a management LLM key, or the sidecar summarizing locally right before it emits session end. **Direction (2026-09-10, pending final call): client-side preferred.** The sidecar is the authority on when a session truly ended (Stop + idle timeout; the Server cannot tell an end from a pre-resume end), the developer's own provider key means no new data-egress boundary (the agent already sends this conversation to the same provider — a management key on the Server would widen it), cost attribution stays per-developer, and the Server stays a stateless store with no job scheduler. Cost of this choice: the sidecar needs a key (natural home: the install flow, open question 10 — wire the two together), listeners without a configured key skip summaries silently (capture is never blocked), each listener implements the same summarize-and-report step (shared package), and summaries come from the observed machine — so they are a reading aid, never evidence; the raw events remain the record. Schema impact is one new NormalEvent kind (`session`/`summary`: body + model), backward compatible.
 
 ---
 
