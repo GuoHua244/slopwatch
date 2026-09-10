@@ -20,7 +20,8 @@ usage:
   slopwatch install [options]    detect installed agents and wire capture hooks
   slopwatch login <token>        verify and store the backend token
   slopwatch status [--dir D]     show detection, wiring, and config state
-  slopwatch uninstall [--dir D]  remove slopwatch hooks
+  slopwatch uninstall [--dir D]  remove slopwatch hooks (user scope, or
+                                 only that project's scope with --dir)
 
 install options:
   --token <bearer>          admin-minted token (prompted on a TTY when omitted)

@@ -1,7 +1,9 @@
 /**
- * `slopwatch uninstall`: remove our hook entries from every scope, leaving
- * unrelated configuration untouched. The stored credentials are kept —
- * deleting ~/.slopwatch/config.json is an explicit, separate decision.
+ * `slopwatch uninstall`: remove our hook entries, leaving unrelated
+ * configuration untouched. Scoping mirrors install: --dir strips ONLY that
+ * project's files; without --dir ONLY the user-scope files are stripped.
+ * The stored credentials are kept — deleting ~/.slopwatch/config.json is
+ * an explicit, separate decision.
  */
 import { configFilePath } from "@slopwatch/config";
 import {
@@ -68,12 +70,12 @@ export const runUninstall = (opts: UninstallOptions): UninstallResult => {
     (opts.agents as AgentName[] | undefined) ?? AGENTS
   ).filter((a, i, all) => all.indexOf(a) === i);
   const detected = detectAgents(home);
-
+  // mirror install's scoping: --dir means ONLY that project's files, no
+  // --dir means ONLY the user-scope files — never both in one run
   if (wanted.includes("zcode")) {
-    const targets = [
-      zcodeUserConfigPath(home),
-      ...(opts.dir ? [zcodeWorkspaceConfigPath(opts.dir)] : []),
-    ];
+    const targets = opts.dir
+      ? [zcodeWorkspaceConfigPath(opts.dir)]
+      : [zcodeUserConfigPath(home)];
     if (!detected.zcode && !targets.some((t) => existsSync(t))) {
       lines.push("zcode: not detected — nothing to remove");
     }
@@ -84,10 +86,9 @@ export const runUninstall = (opts: UninstallOptions): UninstallResult => {
   }
 
   if (wanted.includes("claude-code")) {
-    const targets = [
-      claudeUserSettingsPath(home),
-      ...(opts.dir ? [claudeProjectSettingsPath(opts.dir)] : []),
-    ];
+    const targets = opts.dir
+      ? [claudeProjectSettingsPath(opts.dir)]
+      : [claudeUserSettingsPath(home)];
     if (!detected["claude-code"] && !targets.some((t) => existsSync(t))) {
       lines.push("claude-code: not detected — nothing to remove");
     }

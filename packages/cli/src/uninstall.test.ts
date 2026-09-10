@@ -94,4 +94,46 @@ describe("runUninstall", () => {
     expect(loadConfig(home)?.token).toBe("tok-1");
     expect(existsSync(join(home, ".slopwatch", "config.json"))).toBe(true);
   });
+
+  test("--dir strips only that project's scope, leaving user scope wired", async () => {
+    const { zcodeUserConfigPath, zcodeWorkspaceConfigPath } =
+      await import("./detect");
+    const home = tempHome();
+    await installAll(home); // wires user scope for both hosts
+    // a project-scope wiring too (the legacy shape this cleanup targets)
+    const { runInstall } = await import("./install");
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => Response.json({ user: "alice", is_dri: false }),
+    });
+    try {
+      const wired = await runInstall({
+        token: "tok-1",
+        serverUrl: `http://127.0.0.1:${server.port}`,
+        homeDir: home,
+        dir: join(home, "project"),
+        agents: ["zcode"],
+      });
+      expect(wired.ok).toBe(true);
+
+      const result = runUninstall({
+        homeDir: home,
+        dir: join(home, "project"),
+        agents: ["zcode"],
+      });
+      expect(result.ok).toBe(true);
+
+      const projectHooks = JSON.parse(
+        readFileSync(zcodeWorkspaceConfigPath(join(home, "project")), "utf8"),
+      );
+      expect(projectHooks.hooks.events.SessionStart).toBeUndefined();
+      // user scope untouched by a --dir run
+      const userHooks = JSON.parse(
+        readFileSync(zcodeUserConfigPath(home), "utf8"),
+      );
+      expect(userHooks.hooks.events.SessionStart).toHaveLength(1);
+    } finally {
+      server.stop(true);
+    }
+  });
 });
