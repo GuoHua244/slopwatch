@@ -117,7 +117,6 @@ const cursorFile = join(stateDir, `claude-code-${sessionId}.cursor`);
 mkdirSync(stateDir, { recursive: true });
 // resume from the previous sidecar generation's offset (0 on first capture)
 let size = readCursor(cursorFile);
-const firstCapture = size === 0;
 let partial = "";
 const state = newTailState();
 let draining = false;
@@ -179,20 +178,21 @@ const start = () => {
 // Land session:start BEFORE any drained record can flush, so the event
 // stream begins with the session envelope rather than a race.
 const init = async (): Promise<void> => {
-  if (firstCapture) {
-    const startEvent: SessionStartEvent = {
-      schema_version: SCHEMA_VERSION,
-      agent: "claude-code",
-      session_id: sessionId,
-      occurred_at: new Date().toISOString(),
-      kind: "session",
-      event: "start",
-      cwd,
-      hostname: hostname(),
-      ...(gitRemote ? { git_remote: gitRemote } : {}),
-    };
-    await flush([startEvent]);
-  }
+  // Every generation opens with its own start: after an idle-timeout end the
+  // re-spawn must re-assert start so the dashboard's last-end-wins status
+  // flips the session back to live.
+  const startEvent: SessionStartEvent = {
+    schema_version: SCHEMA_VERSION,
+    agent: "claude-code",
+    session_id: sessionId,
+    occurred_at: new Date().toISOString(),
+    kind: "session",
+    event: "start",
+    cwd,
+    hostname: hostname(),
+    ...(gitRemote ? { git_remote: gitRemote } : {}),
+  };
+  await flush([startEvent]);
   resetIdle();
   if (existsSync(file!)) {
     start();

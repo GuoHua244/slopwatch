@@ -138,7 +138,6 @@ const cursorFile = join(
 mkdirSync(join(homedir(), ".slopwatch", "listeners"), { recursive: true });
 // resume from the previous sidecar generation's offset (0 on first capture)
 let size = readCursor(cursorFile);
-const firstCapture = size === 0;
 let partial = "";
 let taskPreviewSent = false;
 const seenTurns = new Set<string>();
@@ -218,21 +217,22 @@ try {
   // optional
 }
 
-if (firstCapture) {
-  void flush([
-    {
-      schema_version: SCHEMA_VERSION,
-      agent: "zcode",
-      session_id: sessionId,
-      occurred_at: new Date().toISOString(),
-      kind: "session",
-      event: "start",
-      cwd: arg("cwd") ?? process.cwd(),
-      hostname: hostname(),
-      git_remote: gitRemote,
-    },
-  ]);
-}
+// Every generation opens with its own start: the sidecar re-spawns after each
+// idle-timeout end, and the dashboard's last-end-wins status needs a fresh
+// start to flip the session back to live.
+void flush([
+  {
+    schema_version: SCHEMA_VERSION,
+    agent: "zcode",
+    session_id: sessionId,
+    occurred_at: new Date().toISOString(),
+    kind: "session",
+    event: "start",
+    cwd: arg("cwd") ?? process.cwd(),
+    hostname: hostname(),
+    git_remote: gitRemote,
+  },
+]);
 resetIdle();
 
 if (existsSync(file)) {
