@@ -45,6 +45,7 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
   const start = timeline.starts.at(-1);
   const lastEnd = timeline.ends.at(-1);
   const ended = isEnded(timeline);
+  const latestSummary = timeline.summaries.at(-1);
   // Event sums are the ground truth once loaded; the Server's token columns
   // undercount sessions that predate that migration.
   const totals = stream.events.length > 0 ? sessionTotals(stream.events) : null;
@@ -166,6 +167,19 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
           </div>
         )}
       </dl>
+      {latestSummary && (
+        <section className="machine-summary">
+          <h3>
+            machine-generated summary{" "}
+            <span className="meta">· {latestSummary.model}</span>
+          </h3>
+          <p>{latestSummary.body}</p>
+          <p className="meta">
+            produced on the developer's machine with their own LLM key — a
+            reading aid, never evidence; review the event stream
+          </p>
+        </section>
+      )}
       <UsageView events={stream.events} />
       <nav className="tabs">
         <button

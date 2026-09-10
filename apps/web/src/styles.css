@@ -482,3 +482,17 @@ button.link {
   font-size: 11px;
   padding: 0;
 }
+.machine-summary {
+  margin-top: 18px;
+  border: 1px solid var(--panel);
+  border-left: 3px solid var(--dim);
+  padding: 10px 12px;
+}
+.machine-summary h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.machine-summary p {
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
