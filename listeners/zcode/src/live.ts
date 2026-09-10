@@ -28,7 +28,8 @@ import {
   type NormalEvent,
   type SessionEndEvent,
 } from "@slopwatch/events";
-import { resolveShipConfig } from "@slopwatch/config";
+import { resolveShipConfig, loadConfig } from "@slopwatch/config";
+import { foldSummary, summaryStore } from "@slopwatch/summary";
 import { readCursor, writeCursor } from "./cursor";
 import {
   eventsFromRecord,
@@ -112,11 +113,35 @@ const flush = async (batch: NormalEvent[]): Promise<void> => {
   }
 };
 
+// Rolling summaries (open question 15): only while shipping, only with a
+// configured summary block — no key means silent skip, capture unaffected.
+const summaryLlm = serverUrl ? loadConfig()?.summary : undefined;
+
 let finished = false;
-const finish = (reason: string): void => {
+const finish = async (reason: string): Promise<void> => {
   if (finished) return;
   finished = true;
-  const end: SessionEndEvent = {
+  clearTimeout(idleTimer);
+  // fold the summary first so summary → end ships in one POST; an LLM
+  // failure leaves the digests pending and only costs this end's summary
+  closeTurnDigest();
+  const batch: NormalEvent[] = [];
+  if (summaryLlm) {
+    try {
+      const summaryEvent = await foldSummary({
+        stateBase,
+        agent: "zcode",
+        sessionId,
+        llm: summaryLlm,
+      });
+      if (summaryEvent) batch.push(summaryEvent);
+    } catch (e) {
+      console.error(
+        `live: summary fold skipped (${e instanceof Error ? e.message : String(e)})`,
+      );
+    }
+  }
+  batch.push({
     schema_version: SCHEMA_VERSION,
     agent: "zcode",
     session_id: sessionId,
@@ -124,8 +149,8 @@ const finish = (reason: string): void => {
     kind: "session",
     event: "end",
     reason,
-  };
-  void flush([end]);
+  });
+  await flush(batch);
   // grace period so in-flight POSTs can complete before exiting
   setTimeout(() => process.exit(0), serverUrl ? 1500 : 50);
 };
@@ -133,7 +158,7 @@ const finish = (reason: string): void => {
 let idleTimer: ReturnType<typeof setTimeout>;
 const resetIdle = () => {
   clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => finish("idle-timeout"), idleMs);
+  idleTimer = setTimeout(() => void finish("idle-timeout"), idleMs);
 };
 
 const cursorFile = join(
@@ -143,6 +168,37 @@ const cursorFile = join(
   `zcode-${sessionId}.cursor`,
 );
 mkdirSync(join(homedir(), ".slopwatch", "listeners"), { recursive: true });
+const stateBase = cursorFile.slice(0, -".cursor".length);
+const summaries = summaryStore(stateBase);
+
+// Rolling digest of the turn in progress — appended to the summary log when
+// the turn closes (next turn starts, or the session ends). ZCode has no
+// turn-end record, so turn completion is inferred from turn transitions.
+const fmtTokens = (n: number): string =>
+  n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`;
+let currentTurn: {
+  user: string;
+  requests: number;
+  inTokens: number;
+  outTokens: number;
+  tools: string[];
+} | null = null;
+const closeTurnDigest = (): void => {
+  if (!currentTurn) return;
+  const t = currentTurn;
+  // cumulative ordinal: everything folded so far plus pending log entries
+  const ordinal =
+    (summaries.loadCache()?.folded ?? 0) +
+    summaries.pendingDigests().length +
+    1;
+  const parts = [
+    `turn ${ordinal}: "${t.user.slice(0, 160)}"`,
+    `${t.requests} model request${t.requests === 1 ? "" : "s"} (${fmtTokens(t.inTokens)} in / ${fmtTokens(t.outTokens)} out)`,
+    t.tools.length > 0 ? `tools: ${t.tools.join(", ")}` : "",
+  ].filter(Boolean);
+  summaries.appendDigest(parts.join(" · "));
+  currentTurn = null;
+};
 // resume from the previous sidecar generation's offset (0 on first capture)
 let size = readCursor(cursorFile);
 let partial = "";
@@ -192,8 +248,30 @@ const drain = async (): Promise<void> => {
         }
       }
       const turnStart = turnStartFromRecord(record, sessionId, seenTurns);
-      if (turnStart) batch.push(turnStart);
-      batch.push(...eventsFromRecord(record, sessionId));
+      if (turnStart) {
+        closeTurnDigest();
+        currentTurn = {
+          user: turnStart.user_message ?? "(no user message text)",
+          requests: 0,
+          inTokens: 0,
+          outTokens: 0,
+          tools: [],
+        };
+        batch.push(turnStart);
+      }
+      const recordEvents = eventsFromRecord(record, sessionId);
+      batch.push(...recordEvents);
+      if (currentTurn) {
+        for (const e of recordEvents) {
+          if (e.kind === "model_request") {
+            currentTurn.requests += 1;
+            currentTurn.inTokens += e.usage?.input_tokens ?? 0;
+            currentTurn.outTokens += e.usage?.output_tokens ?? 0;
+          } else if (e.kind === "tool" && e.event === "call") {
+            if (currentTurn.tools.length < 8) currentTurn.tools.push(e.tool);
+          }
+        }
+      }
       resetIdle();
     }
     await flush(batch);
@@ -210,7 +288,7 @@ const start = () => {
   void drain(); // backfill everything written before we attached
   watch(file, () => void drain());
   setInterval(() => void drain(), 2000); // belt-and-braces alongside fs.watch
-  setTimeout(() => finish("max-lifetime"), maxLifetimeMs);
+  setTimeout(() => void finish("max-lifetime"), maxLifetimeMs);
 };
 
 let gitRemote: string | undefined;

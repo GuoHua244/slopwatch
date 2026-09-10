@@ -51,6 +51,7 @@
       "dependencies": {
         "@slopwatch/config": "workspace:*",
         "@slopwatch/events": "workspace:*",
+        "@slopwatch/summary": "workspace:*",
       },
     },
     "packages/cli": {
