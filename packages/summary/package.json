@@ -1,0 +1,16 @@
+{
+  "name": "@slopwatch/summary",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@slopwatch/events": "workspace:*"
+  }
+}
