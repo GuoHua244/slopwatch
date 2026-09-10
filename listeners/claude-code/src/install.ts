@@ -40,7 +40,8 @@ export const slopwatchHookCommand = (opts: {
     ...(opts.token ? ["--token", opts.token] : []),
   ].join(" ");
 
-const isOurEntry = (entry: unknown, hookScriptPath: string): boolean => {
+/** Does this hooks entry point at our hook script? */
+export const isOurEntry = (entry: unknown, hookScriptPath: string): boolean => {
   if (typeof entry !== "object" || entry === null) return false;
   const hooks = (entry as { hooks?: unknown }).hooks;
   if (!Array.isArray(hooks)) return false;
@@ -54,6 +55,37 @@ const isOurEntry = (entry: unknown, hookScriptPath: string): boolean => {
       ((h as { command: string }).command.includes(hookScriptPath) ||
         (h as { command: string }).command.includes(quoted)),
   );
+};
+
+/** Absolute path of the hook script the installed command points at. */
+export const defaultHookScriptPath = (): string =>
+  fileURLToPath(new URL("./hook.ts", import.meta.url));
+
+/**
+ * Remove our entries from each of our hook events. Event keys that empty
+ * out are deleted; unrelated keys and hooks are preserved. Returns the
+ * input unchanged (as a copy) when nothing of ours exists.
+ */
+export const removeHookConfig = (
+  existing: unknown,
+  hookScriptPath: string,
+): Record<string, unknown> => {
+  const base: Record<string, unknown> =
+    typeof existing === "object" && existing !== null
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
+  if (typeof base.hooks !== "object" || base.hooks === null) return base;
+  const hooksBlock = { ...(base.hooks as Record<string, unknown>) };
+  for (const eventName of HOOK_EVENTS) {
+    if (!Array.isArray(hooksBlock[eventName])) continue;
+    const kept = (hooksBlock[eventName] as unknown[]).filter(
+      (e) => !isOurEntry(e, hookScriptPath),
+    );
+    if (kept.length === 0) delete hooksBlock[eventName];
+    else hooksBlock[eventName] = kept;
+  }
+  base.hooks = hooksBlock;
+  return base;
 };
 
 /**
@@ -113,7 +145,7 @@ if (import.meta.main) {
     process.exit(1);
   }
 
-  const hookScriptPath = fileURLToPath(new URL("./hook.ts", import.meta.url));
+  const hookScriptPath = defaultHookScriptPath();
   const command = slopwatchHookCommand({
     bunPath: process.execPath,
     hookScriptPath,

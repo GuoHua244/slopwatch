@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mergeHookConfig, slopwatchHookEntry } from "./install";
+import {
+  defaultSpawnerPath,
+  mergeHookConfig,
+  removeHookConfig,
+  slopwatchHookEntry,
+} from "./install";
 
 const bunPath = "C:\\bun\\bun.exe";
 const spawner = "D:\\repo\\listeners\\zcode\\src\\spawner.ts";
@@ -99,5 +104,64 @@ describe("mergeHookConfig", () => {
     expect(updated.hooks.events.UserPromptSubmit).toHaveLength(1);
     expect(JSON.stringify(updated)).toContain("tok-2");
     expect(JSON.stringify(updated)).not.toContain("tok-1");
+  });
+});
+
+describe("defaultSpawnerPath", () => {
+  test("points at the real spawner.ts next to this module", () => {
+    expect(defaultSpawnerPath().replaceAll("\\", "/")).toMatch(
+      /listeners\/zcode\/src\/spawner\.ts$/,
+    );
+  });
+});
+
+describe("removeHookConfig", () => {
+  test("removes our entries, keeps unrelated ones and the enabled flag", () => {
+    const merged = mergeHookConfig(
+      {
+        other: { keep: true },
+        hooks: {
+          enabled: true,
+          events: {
+            PreToolUse: [
+              {
+                matcher: "Bash",
+                hooks: [{ type: "command", command: "echo x" }],
+              },
+            ],
+          },
+        },
+      },
+      entry,
+    );
+    const cleaned = removeHookConfig(merged, spawner);
+    expect(cleaned.other).toEqual({ keep: true });
+    const hooks = cleaned.hooks as {
+      enabled: boolean;
+      events: Record<string, unknown[]>;
+    };
+    expect(hooks.enabled).toBe(true);
+    // ours was the only SessionStart entry — the emptied key is deleted
+    expect(hooks.events.SessionStart).toBeUndefined();
+    expect(hooks.events.PreToolUse).toHaveLength(1);
+  });
+
+  test("deletes our emptied event keys entirely", () => {
+    const merged = mergeHookConfig(undefined, entry);
+    const cleaned = removeHookConfig(merged, spawner);
+    const hooks = cleaned.hooks as {
+      enabled: boolean;
+      events: Record<string, unknown[]>;
+    };
+    expect(hooks.events.SessionStart).toBeUndefined();
+    expect(hooks.events.UserPromptSubmit).toBeUndefined();
+  });
+
+  test("is a no-op on a config without our hooks", () => {
+    const existing = {
+      hooks: { enabled: false, events: {} },
+      unrelated: 1,
+    };
+    expect(removeHookConfig(existing, spawner)).toEqual(existing);
   });
 });

@@ -44,7 +44,11 @@ export const slopwatchHookEntry = (opts: {
 
 type MatcherEntry = { matcher?: string; hooks: unknown[] };
 
-const isOurMatcherEntry = (entry: unknown, spawnerPath: string): boolean => {
+/** Does this matcher entry point at our spawner script? */
+export const isOurMatcherEntry = (
+  entry: unknown,
+  spawnerPath: string,
+): boolean => {
   if (typeof entry !== "object" || entry === null) return false;
   const hooks = (entry as { hooks?: unknown }).hooks;
   if (!Array.isArray(hooks)) return false;
@@ -55,6 +59,49 @@ const isOurMatcherEntry = (entry: unknown, spawnerPath: string): boolean => {
       Array.isArray((h as { args?: unknown }).args) &&
       (h as { args: unknown[] }).args[0] === spawnerPath,
   );
+};
+
+/** Absolute path of the spawner script the installed hook points at. */
+export const defaultSpawnerPath = (): string =>
+  fileURLToPath(new URL("./spawner.ts", import.meta.url));
+
+/**
+ * Remove our entries from each of our hook events. Event keys that empty
+ * out are deleted; unrelated keys, hooks, and the enabled flag are
+ * preserved. Returns the input unchanged (as a copy) when nothing of ours
+ * exists.
+ */
+export const removeHookConfig = (
+  existing: unknown,
+  spawnerPath: string,
+): Record<string, unknown> => {
+  const base: Record<string, unknown> =
+    typeof existing === "object" && existing !== null
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
+  if (typeof base.hooks !== "object" || base.hooks === null) return base;
+  const hooks = { ...(base.hooks as Record<string, unknown>) } as Record<
+    string,
+    unknown
+  >;
+  const events = (
+    typeof hooks.events === "object" && hooks.events !== null
+      ? { ...(hooks.events as Record<string, unknown>) }
+      : {}
+  ) as Record<string, unknown>;
+
+  for (const eventName of HOOK_EVENTS) {
+    if (!Array.isArray(events[eventName])) continue;
+    const kept = (events[eventName] as unknown[]).filter(
+      (e) => !isOurMatcherEntry(e, spawnerPath),
+    );
+    if (kept.length === 0) delete events[eventName];
+    else events[eventName] = kept;
+  }
+
+  hooks.events = events;
+  base.hooks = hooks;
+  return base;
 };
 
 /**
@@ -126,7 +173,7 @@ if (import.meta.main) {
     process.exit(1);
   }
 
-  const spawnerPath = fileURLToPath(new URL("./spawner.ts", import.meta.url));
+  const spawnerPath = defaultSpawnerPath();
   const entry = slopwatchHookEntry({
     bunPath: process.execPath,
     spawnerPath,

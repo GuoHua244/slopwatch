@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { HOOK_EVENTS, mergeHookConfig, slopwatchHookCommand } from "./install";
+import {
+  defaultHookScriptPath,
+  HOOK_EVENTS,
+  mergeHookConfig,
+  removeHookConfig,
+  slopwatchHookCommand,
+} from "./install";
 
 const bunPath = "C:\\bun\\bun.exe";
 const hookScript = "D:\\repo\\listeners\\claude-code\\src\\hook.ts";
@@ -88,5 +94,39 @@ describe("mergeHookConfig", () => {
     }
     expect(JSON.stringify(twice)).toContain("tok-2");
     expect(JSON.stringify(twice)).not.toContain("tok-1");
+  });
+});
+
+describe("defaultHookScriptPath", () => {
+  test("points at the real hook.ts next to this module", () => {
+    expect(defaultHookScriptPath().replaceAll("\\", "/")).toMatch(
+      /listeners\/claude-code\/src\/hook\.ts$/,
+    );
+  });
+});
+
+describe("removeHookConfig", () => {
+  test("removes our entries, keeps unrelated settings and hooks", () => {
+    const existing = {
+      model: "claude-sonnet-4-5",
+      hooks: {
+        PreToolUse: [
+          { matcher: "Bash", hooks: [{ type: "command", command: "echo x" }] },
+        ],
+      },
+    };
+    const merged = mergeHookConfig(existing, command, hookScript);
+    const cleaned = removeHookConfig(merged, hookScript);
+    expect(cleaned.model).toBe("claude-sonnet-4-5");
+    const hooks = cleaned.hooks as Record<string, unknown[]>;
+    for (const name of HOOK_EVENTS) {
+      expect(hooks[name]).toBeUndefined();
+    }
+    expect(hooks.PreToolUse).toHaveLength(1);
+  });
+
+  test("is a no-op on a settings file without our hooks", () => {
+    const existing = { model: "claude-sonnet-4-5", other: { a: 1 } };
+    expect(removeHookConfig(existing, hookScript)).toEqual(existing);
   });
 });
