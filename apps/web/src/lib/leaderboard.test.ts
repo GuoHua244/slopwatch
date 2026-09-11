@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionSummary } from "../api";
-import type { SessionStats } from "./leaderboard";
-import { aggregateLeaderboard } from "./leaderboard";
+import type { ModelRollupRow, RollupsSnapshot, SessionSummary } from "../api";
+import {
+  aggregateLeaderboard,
+  dailyCostSeries,
+  type LeaderboardRow,
+} from "./leaderboard";
 
-export type Stats = { costUsd: number | null; turns: number; requests: number };
+const NOW = new Date("2026-09-12T10:00:00Z"); // UTC: today 09-12, trailing 09-05..09-11
+const PRICED = "GLM-5.3-Flash"; // $0.15/M in, $0.50/M out
+const UNPRICED = "some-unknown-model";
 
 const session = (
   sessionId: string,
@@ -25,40 +30,55 @@ const session = (
   total_cache_write_tokens: 0,
 });
 
-const stats = (
-  costUsd: number | null,
-  turns = 0,
-  requests = 0,
-  tokens = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 },
-): SessionStats => ({ costUsd, turns, requests, ...tokens });
+const modelRow = (
+  user_id: string,
+  bucket: string,
+  model: string,
+  modelRequests: number,
+  inputTokens = 0,
+  outputTokens = 0,
+): ModelRollupRow => ({
+  user_id,
+  bucket,
+  model,
+  model_requests: modelRequests,
+  input_tokens: inputTokens,
+  output_tokens: outputTokens,
+  cache_read_tokens: 0,
+  cache_write_tokens: 0,
+});
+
+// 1M in + 1M out on the Flash price line costs exactly $0.65.
+const MEGA = 1_000_000;
+
+const snapshot = (partial: Partial<RollupsSnapshot> = {}): RollupsSnapshot => ({
+  totals: [],
+  daily: [],
+  model_daily: [],
+  model_totals: [],
+  model_hourly: [],
+  ...partial,
+});
+
+const byUser = (rows: LeaderboardRow[], userId: string): LeaderboardRow =>
+  rows.find((r) => r.userId === userId)!;
 
 describe("aggregateLeaderboard", () => {
-  test("groups by user and sums sessions, tokens, turns, requests", () => {
+  test("all-time columns come from rollup totals, sessions facts from the list", () => {
     const rows = aggregateLeaderboard(
       [
-        session("s1", "alice", "zcode", "2026-09-09T10:00:00Z", 5),
-        session("s2", "alice", "pi", "2026-09-09T11:00:00Z", 7),
-        session("s3", "bob", "zcode", "2026-09-09T09:00:00Z", 1),
+        session("s1", "alice", "zcode", "2026-09-09T10:00:00Z"),
+        session("s2", "alice", "pi", "2026-09-09T11:00:00Z"),
+        session("s3", "bob", "zcode", "2026-09-09T09:00:00Z"),
       ],
-      new Map([
-        [
-          "s1",
-          stats(1, 3, 4, {
-            inputTokens: 100,
-            outputTokens: 50,
-            cacheReadTokens: 10,
-          }),
+      snapshot({
+        totals: [{ user_id: "alice", turns: 4, tool_calls: 7 }],
+        model_totals: [
+          modelRow("alice", "", PRICED, 6, 300, 110),
+          modelRow("bob", "", PRICED, 1, 5, 1),
         ],
-        [
-          "s2",
-          stats(2, 1, 2, {
-            inputTokens: 200,
-            outputTokens: 60,
-            cacheReadTokens: 20,
-          }),
-        ],
-        ["s3", stats(0.5, 1, 1)],
-      ]),
+      }),
+      NOW,
     );
     expect(rows.map((r) => r.userId)).toEqual(["alice", "bob"]);
     const alice = rows[0]!;
@@ -67,81 +87,122 @@ describe("aggregateLeaderboard", () => {
     expect(alice.requests).toBe(6);
     expect(alice.inputTokens).toBe(300);
     expect(alice.outputTokens).toBe(110);
-    expect(alice.cacheReadTokens).toBe(30);
-    expect(alice.costUsd).toBe(3);
+    expect(alice.topAgent).toBe("pi");
     expect(alice.lastActiveAt).toBe("2026-09-09T11:00:00Z");
+    expect(alice.trend).toHaveLength(24);
   });
 
-  test("event-backed token sums replace the Server's token columns", () => {
+  test("cost is priced per model row; an unpriced model poisons the sum", () => {
     const rows = aggregateLeaderboard(
-      [session("s1", "alice", "zcode", "2026-09-09T10:00:00Z", 5)],
-      new Map([
-        [
-          "s1",
-          stats(1, 1, 1, {
-            inputTokens: 1000,
-            outputTokens: 500,
-            cacheReadTokens: 100,
-          }),
+      [],
+      snapshot({
+        model_totals: [
+          modelRow("alice", "", PRICED, 2, MEGA, MEGA),
+          modelRow("alice", "", PRICED, 1, MEGA, MEGA),
+          modelRow("bob", "", UNPRICED, 3, MEGA, MEGA),
         ],
-      ]),
+      }),
+      NOW,
     );
-    expect(rows[0]!.inputTokens).toBe(1000);
-    expect(rows[0]!.outputTokens).toBe(500);
-    expect(rows[0]!.cacheReadTokens).toBe(100);
+    expect(byUser(rows, "alice").costUsd).toBeCloseTo(1.3, 6);
+    expect(byUser(rows, "bob").costUsd).toBeNull();
+    // Unpriced rows sort last.
+    expect(rows.map((r) => r.userId)).toEqual(["alice", "bob"]);
   });
 
-  test("sessions with zero requests cost zero; unpriced requests poison", () => {
+  test("delta compares the UTC day against the trailing 7-day mean", () => {
     const rows = aggregateLeaderboard(
-      [
-        session("s1", "alice", "zcode", "2026-09-09T10:00:00Z"),
-        session("s2", "bob", "zcode", "2026-09-09T10:00:00Z"),
-      ],
-      new Map([
-        ["s1", stats(null, 1, 0)],
-        ["s2", stats(null, 1, 3)],
-      ]),
+      [],
+      snapshot({
+        model_daily: [
+          modelRow("alice", "2026-09-12", PRICED, 1, MEGA, MEGA),
+          modelRow("alice", "2026-09-11", PRICED, 1, MEGA, MEGA),
+          // The other six trailing days are absent → they count as zero,
+          // so the mean is 0.65/7 and today is exactly 7× it.
+          modelRow("bob", "2026-09-12", PRICED, 1, MEGA, MEGA),
+        ],
+      }),
+      NOW,
     );
-    expect(rows[0]!.costUsd).toBe(0);
-    expect(rows[1]!.costUsd).toBeNull();
+    const alice = byUser(rows, "alice");
+    expect(alice.todayCostUsd).toBeCloseTo(0.65, 6);
+    expect(alice.deltaVsWeek).toBeCloseTo(6, 6);
+    // Bob has no baseline (all seven trailing days are zero).
+    expect(byUser(rows, "bob").deltaVsWeek).toBeNull();
   });
 
-  test("missing stats (not yet fetched) keep the row unpriced", () => {
+  test("today's unpriced spend hides the delta instead of mispricing it", () => {
     const rows = aggregateLeaderboard(
-      [session("s1", "alice", "zcode", "2026-09-09T10:00:00Z")],
-      new Map(),
+      [],
+      snapshot({
+        model_daily: [
+          modelRow("alice", "2026-09-12", UNPRICED, 1, MEGA, MEGA),
+          modelRow("alice", "2026-09-11", PRICED, 1, MEGA, MEGA),
+        ],
+      }),
+      NOW,
     );
-    expect(rows[0]!.costUsd).toBeNull();
+    expect(byUser(rows, "alice").todayCostUsd).toBeNull();
+    expect(byUser(rows, "alice").deltaVsWeek).toBeNull();
   });
 
-  test("top agent breaks ties alphabetically; null user becomes (unknown)", () => {
+  test("the trend is the last 24 UTC hours of priced spend", () => {
     const rows = aggregateLeaderboard(
-      [
-        session("s1", null, "pi", "2026-09-09T10:00:00Z"),
-        session("s2", null, "zcode", "2026-09-09T11:00:00Z"),
-        session("s3", null, "pi", "2026-09-09T12:00:00Z"),
-      ],
-      new Map(),
+      [],
+      snapshot({
+        model_hourly: [
+          modelRow("alice", "2026-09-12T08", PRICED, 1, MEGA, MEGA),
+          modelRow("alice", "2026-09-11T11", PRICED, 1, MEGA, MEGA),
+        ],
+      }),
+      NOW,
+    );
+    const trend = byUser(rows, "alice").trend;
+    expect(trend).toHaveLength(24);
+    // NOW is 10:00Z — bucket 0 is 11:00Z yesterday, so 11:00Z is index 0
+    // and 08:00Z today is index 21; both price to $0.65.
+    expect(trend[0]).toBeCloseTo(0.65, 6);
+    expect(trend[21]).toBeCloseTo(0.65, 6);
+    expect(trend[1]).toBe(0);
+  });
+
+  test("sessions with no rollups yet (unknown user) still render a row", () => {
+    const rows = aggregateLeaderboard(
+      [session("s1", null, "pi", "2026-09-09T10:00:00Z")],
+      snapshot(),
+      NOW,
     );
     const row = rows[0]!;
     expect(row.userId).toBe("(unknown)");
-    expect(row.topAgent).toBe("pi");
-    expect(row.lastActiveAt).toBe("2026-09-09T12:00:00Z");
+    expect(row.sessions).toBe(1);
+    expect(row.turns).toBe(0);
+    // Zero requests cost zero — the old estimator's rule, kept.
+    expect(row.costUsd).toBe(0);
   });
+});
 
-  test("sorts by cost desc, nulls last, then output tokens desc", () => {
-    const rows = aggregateLeaderboard(
+describe("dailyCostSeries", () => {
+  test("spans the requested UTC days oldest → newest with zeros for gaps", () => {
+    const series = dailyCostSeries(
       [
-        session("s-free", "free", "zcode", "2026-09-09T10:00:00Z", 100),
-        session("s-big", "big", "zcode", "2026-09-09T10:00:00Z", 50),
-        session("s-mid", "mid", "zcode", "2026-09-09T10:00:00Z", 90),
+        modelRow("alice", "2026-09-11", PRICED, 1, MEGA, MEGA),
+        modelRow("alice", "2026-09-12", UNPRICED, 1, MEGA, MEGA),
       ],
-      new Map([
-        ["s-free", stats(null, 1, 2)],
-        ["s-big", stats(5, 1, 2)],
-        ["s-mid", stats(2, 1, 2)],
-      ]),
+      5,
+      NOW,
     );
-    expect(rows.map((r) => r.userId)).toEqual(["big", "mid", "free"]);
+    expect(series.map((d) => d.day)).toEqual([
+      "2026-09-08",
+      "2026-09-09",
+      "2026-09-10",
+      "2026-09-11",
+      "2026-09-12",
+    ]);
+    expect(series[3]).toEqual({
+      day: "2026-09-11",
+      cost: 0.65,
+      unpriced: false,
+    });
+    expect(series[4]).toEqual({ day: "2026-09-12", cost: 0, unpriced: true });
   });
 });

@@ -1,13 +1,6 @@
-import type { SessionSummary } from "../api";
-
-export type SessionStats = {
-  costUsd: number | null;
-  turns: number;
-  requests: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-};
+import type { TokenUsage } from "@slopwatch/events";
+import type { ModelRollupRow, RollupsSnapshot, SessionSummary } from "../api";
+import { estimateCost, priceFor } from "./pricing";
 
 export type LeaderboardRow = {
   userId: string;
@@ -17,98 +10,189 @@ export type LeaderboardRow = {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
-  /** null while any contributing session's cost is unknown. */
+  /** All-time list-price estimate; null while any contributing model is unpriced. */
   costUsd: number | null;
   topAgent: string;
   lastActiveAt: string;
+  /** UTC-today spend; null while a contributing model is unpriced. */
+  todayCostUsd: number | null;
+  /** (today − trailing 7-day mean) / mean; null with no baseline or unpriced. */
+  deltaVsWeek: number | null;
+  /** Hourly spend over the last 24 UTC hours, oldest → newest. */
+  trend: number[];
 };
 
-type Draft = {
-  userId: string;
+/** UTC day key of a date: "2026-09-12". */
+export const dayKey = (d: Date): string => d.toISOString().slice(0, 10);
+
+/** UTC hour key of a date: "2026-09-12T09". */
+export const hourKey = (d: Date): string => d.toISOString().slice(0, 13);
+
+const rowUsage = (row: ModelRollupRow): TokenUsage => ({
+  input_tokens: row.input_tokens,
+  output_tokens: row.output_tokens,
+  cache_read_tokens: row.cache_read_tokens,
+  cache_write_tokens: row.cache_write_tokens,
+});
+
+/**
+ * List-price estimate over model-grain rollup rows. Zero-request rows cost
+ * nothing; an unpriced model with requests poisons the whole sum (same rule
+ * the per-event estimator applies).
+ */
+export const pricedCost = (rows: ModelRollupRow[]): number | null => {
+  let cost = 0;
+  for (const row of rows) {
+    if (row.model_requests === 0) continue;
+    const price = priceFor(row.model);
+    if (price === null) return null;
+    cost += estimateCost(rowUsage(row), price);
+  }
+  return cost;
+};
+
+const groupByUser = (rows: ModelRollupRow[]): Map<string, ModelRollupRow[]> => {
+  const byUser = new Map<string, ModelRollupRow[]>();
+  for (const row of rows) {
+    const list = byUser.get(row.user_id) ?? [];
+    list.push(row);
+    byUser.set(row.user_id, list);
+  }
+  return byUser;
+};
+
+/** Hourly spend buckets for the last 24 UTC hours; unpriced models draw as 0. */
+const hourlyTrend = (rows: ModelRollupRow[], now: Date): number[] => {
+  const byHour = new Map<string, number>();
+  for (const row of rows) {
+    const price = priceFor(row.model);
+    if (price === null) continue;
+    byHour.set(
+      row.bucket,
+      (byHour.get(row.bucket) ?? 0) + estimateCost(rowUsage(row), price),
+    );
+  }
+  return Array.from({ length: 24 }, (_, i) => {
+    const hour = hourKey(new Date(now.getTime() - (23 - i) * 3_600_000));
+    return byHour.get(hour) ?? 0;
+  });
+};
+
+/**
+ * One developer's per-day spend over the last `days` UTC days (oldest →
+ * newest) — the drill-down chart's data. Absent days are zero; unpriced
+ * contributions are flagged so the view can annotate rather than misprice.
+ */
+export const dailyCostSeries = (
+  rows: ModelRollupRow[],
+  days: number,
+  now = new Date(),
+): { day: string; cost: number; unpriced: boolean }[] => {
+  const byDay = new Map<string, { cost: number; unpriced: boolean }>();
+  for (const row of rows) {
+    const price = priceFor(row.model);
+    const entry = byDay.get(row.bucket) ?? { cost: 0, unpriced: false };
+    if (price === null) entry.unpriced = true;
+    else entry.cost += estimateCost(rowUsage(row), price);
+    byDay.set(row.bucket, entry);
+  }
+  return Array.from({ length: days }, (_, i) => {
+    const day = dayKey(new Date(now.getTime() - (days - 1 - i) * 86_400_000));
+    const entry = byDay.get(day);
+    return {
+      day,
+      cost: entry?.cost ?? 0,
+      unpriced: entry?.unpriced ?? false,
+    };
+  });
+};
+
+type SessionFacts = {
   sessions: number;
-  turns: number;
-  requests: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cost: number;
-  /** False once a session with unpriced requests contributes. */
-  priced: boolean;
-  topAgent: string;
   lastActiveAt: string;
   agents: Map<string, number>;
 };
 
 /**
- * Roll the session list up into per-developer leaderboard rows (the "who is
- * spending / working the most" surface from the leaderboard design). Turns,
- * requests, cost, and tokens come from the event-backed stats map — the
- * Server's sessions token columns undercount sessions that predate that
- * migration — falling back to them only while events are still loading.
+ * Build the leaderboard from the decision-18 rollups: all-time columns come
+ * from the snapshot's totals, today/delta/trend from its daily and hourly
+ * windows. The sessions list keeps supplying session counts, top agent, and
+ * last-seen — no per-session event fetching anywhere.
  */
 export const aggregateLeaderboard = (
   sessions: SessionSummary[],
-  statsBySession: Map<string, SessionStats>,
+  rollups: RollupsSnapshot,
+  now = new Date(),
 ): LeaderboardRow[] => {
-  const byUser = new Map<string, Draft>();
+  const today = dayKey(now);
+  const trailingDays = Array.from({ length: 7 }, (_, i) =>
+    dayKey(new Date(now.getTime() - (i + 1) * 86_400_000)),
+  );
+
+  const facts = new Map<string, SessionFacts>();
   for (const s of sessions) {
     const key = s.user_id ?? "(unknown)";
-    let row = byUser.get(key);
+    let row = facts.get(key);
     if (!row) {
-      row = {
-        userId: key,
-        sessions: 0,
-        turns: 0,
-        requests: 0,
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cost: 0,
-        priced: true,
-        topAgent: "",
-        lastActiveAt: s.first_seen_at,
-        agents: new Map(),
-      };
-      byUser.set(key, row);
+      row = { sessions: 0, lastActiveAt: s.first_seen_at, agents: new Map() };
+      facts.set(key, row);
     }
     row.sessions += 1;
     if (s.first_seen_at > row.lastActiveAt) row.lastActiveAt = s.first_seen_at;
     row.agents.set(s.agent, (row.agents.get(s.agent) ?? 0) + 1);
-
-    const stats = statsBySession.get(s.session_id);
-    if (!stats) {
-      // Event stats not fetched yet — fall back to the Server's token
-      // columns and keep the row unpriced until known.
-      row.inputTokens += s.total_input_tokens;
-      row.outputTokens += s.total_output_tokens;
-      row.cacheReadTokens += s.total_cache_read_tokens;
-      row.priced = false;
-    } else {
-      row.inputTokens += stats.inputTokens;
-      row.outputTokens += stats.outputTokens;
-      row.cacheReadTokens += stats.cacheReadTokens;
-      row.turns += stats.turns;
-      row.requests += stats.requests;
-      if (stats.requests > 0) {
-        if (stats.costUsd === null) row.priced = false;
-        else row.cost += stats.costUsd;
-      }
-    }
   }
 
-  return [...byUser.values()]
-    .map((row) => ({
-      userId: row.userId,
-      sessions: row.sessions,
-      turns: row.turns,
-      requests: row.requests,
-      inputTokens: row.inputTokens,
-      outputTokens: row.outputTokens,
-      cacheReadTokens: row.cacheReadTokens,
-      costUsd: row.priced ? row.cost : null,
-      topAgent: topAgent(row.agents),
-      lastActiveAt: row.lastActiveAt,
-    }))
+  const totalsByUser = new Map(rollups.totals.map((r) => [r.user_id, r]));
+  const modelTotalsByUser = groupByUser(rollups.model_totals);
+  const dailyByUser = groupByUser(rollups.model_daily);
+  const hourlyByUser = groupByUser(rollups.model_hourly);
+
+  const userIds = new Set<string>([
+    ...facts.keys(),
+    ...totalsByUser.keys(),
+    ...modelTotalsByUser.keys(),
+    ...dailyByUser.keys(),
+    ...hourlyByUser.keys(),
+  ]);
+  return [...userIds]
+    .map((userId): LeaderboardRow => {
+      const modelTotals = modelTotalsByUser.get(userId) ?? [];
+      const dailyRows = dailyByUser.get(userId) ?? [];
+      const todayCost = pricedCost(
+        dailyRows.filter((row) => row.bucket === today),
+      );
+      let trailingSum = 0;
+      let trailingPriced = true;
+      for (const day of trailingDays) {
+        const dayCost = pricedCost(
+          dailyRows.filter((row) => row.bucket === day),
+        );
+        if (dayCost === null) trailingPriced = false;
+        else trailingSum += dayCost;
+      }
+      const trailingMean = trailingSum / 7;
+      return {
+        userId,
+        sessions: facts.get(userId)?.sessions ?? 0,
+        turns: totalsByUser.get(userId)?.turns ?? 0,
+        requests: modelTotals.reduce((sum, r) => sum + r.model_requests, 0),
+        inputTokens: modelTotals.reduce((sum, r) => sum + r.input_tokens, 0),
+        outputTokens: modelTotals.reduce((sum, r) => sum + r.output_tokens, 0),
+        cacheReadTokens: modelTotals.reduce(
+          (sum, r) => sum + r.cache_read_tokens,
+          0,
+        ),
+        costUsd: pricedCost(modelTotals),
+        topAgent: topAgent(facts.get(userId)?.agents ?? new Map()),
+        lastActiveAt: facts.get(userId)?.lastActiveAt ?? "",
+        todayCostUsd: todayCost,
+        deltaVsWeek:
+          todayCost !== null && trailingPriced && trailingMean > 0
+            ? (todayCost - trailingMean) / trailingMean
+            : null,
+        trend: hourlyTrend(hourlyByUser.get(userId) ?? [], now),
+      };
+    })
     .sort((a, b) => {
       if (a.costUsd === null && b.costUsd !== null) return 1;
       if (b.costUsd === null && a.costUsd !== null) return -1;

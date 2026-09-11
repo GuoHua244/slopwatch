@@ -496,3 +496,57 @@ button.link {
   margin: 4px 0;
   overflow-wrap: anywhere;
 }
+
+/* --- Leaderboard drill-down (decision 18) --- */
+.leaderboard tbody tr.row-link {
+  cursor: pointer;
+}
+.leaderboard tbody tr.row-link:hover td {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.spark {
+  padding-right: 12px;
+}
+.spark polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin: 10px 0;
+}
+.chips dt {
+  color: var(--dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.chips dd {
+  margin: 2px 0 0;
+  font-size: 14px;
+}
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 80px;
+  margin: 8px 0 4px;
+}
+.bars .bar {
+  flex: 1;
+  min-height: 1px;
+  background: var(--accent);
+}
+.bars .bar.unpriced {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.developer h3 {
+  font-size: 12px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 18px 0 4px;
+}

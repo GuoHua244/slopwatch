@@ -38,6 +38,40 @@ export type CommentRow = {
 /** GET /me — the identity behind the reader's bearer token. */
 export type MeInfo = { user: string; is_dri: boolean };
 
+/** Row of GET /rollups — per-day turn/tool counts for one developer. */
+export type DailyRollupRow = {
+  user_id: string;
+  /** UTC day, "YYYY-MM-DD". */
+  day: string;
+  turns: number;
+  tool_calls: number;
+};
+
+/**
+ * Row of GET /rollups — per-model request/token counts over a UTC day or
+ * hour bucket. Model grain comes back verbatim so the client keeps pricing.
+ */
+export type ModelRollupRow = {
+  user_id: string;
+  /** "YYYY-MM-DD" (daily) or "YYYY-MM-DDTHH" (hourly). */
+  bucket: string;
+  model: string;
+  model_requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+};
+
+/** One GET /rollups answer: all-time totals plus the requested windows. */
+export type RollupsSnapshot = {
+  totals: { user_id: string; turns: number; tool_calls: number }[];
+  model_totals: ModelRollupRow[];
+  daily: DailyRollupRow[];
+  model_daily: ModelRollupRow[];
+  model_hourly: ModelRollupRow[];
+};
+
 export type ReviewApi = {
   me(): Promise<MeInfo>;
   /** Org-wide read: the session's review marker, or null when unreviewed. */
@@ -68,6 +102,12 @@ export type Api = {
   listSessions(): Promise<SessionSummary[]>;
   /** Decision 8: incremental page of a session's events after sinceSeq. */
   eventsSince(sessionId: string, sinceSeq: number): Promise<StoredEvent[]>;
+  /**
+   * Decision 18: per-developer usage rollups. `days` lower-bounds the daily
+   * windows (absent = all history); `hours` the hourly window (server
+   * default 24). Totals always cover all history.
+   */
+  rollups(params?: { days?: number; hours?: number }): Promise<RollupsSnapshot>;
 };
 
 /** Row of GET /admin/users — mirrors the Server's AdminUserRow. */
@@ -150,6 +190,16 @@ export const createApi = (doFetch: FetchLike = fetch): Api => ({
         `/sessions/${encodeURIComponent(sessionId)}/events?since_seq=${sinceSeq}`,
       )
     ).events,
+  rollups: async (params = {}) => {
+    const search = new URLSearchParams();
+    if (params.days !== undefined) search.set("days", String(params.days));
+    if (params.hours !== undefined) search.set("hours", String(params.hours));
+    const query = search.toString();
+    return getJson<RollupsSnapshot>(
+      doFetch,
+      `/rollups${query ? `?${query}` : ""}`,
+    );
+  },
 });
 
 /**

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSessions } from "./hooks/useSessions";
 import { clock } from "./lib/format";
+import { DeveloperDetail } from "./views/DeveloperDetail";
 import { LeaderboardView } from "./views/LeaderboardView";
 import { AdminView } from "./views/AdminView";
 import { SessionDetail } from "./views/SessionDetail";
@@ -8,22 +9,36 @@ import { SessionList } from "./views/SessionList";
 
 type Route = "sessions" | "leaderboard" | "admin";
 
-/** "#/sessions/sess_x" deep-links straight into a session detail. */
+/** "#/sessions/sess_x" deep-links into a session detail, "#/leaderboard/dev" into a developer. */
 const parseHash = (
   hash: string,
-): { route: Route; sessionId: string | null } => {
+): { route: Route; sessionId: string | null; userId: string | null } => {
   const path = hash.replace(/^#\/?/, "");
   const session = path.match(/^sessions\/(.+)$/);
   if (session)
-    return { route: "sessions", sessionId: decodeURIComponent(session[1]!) };
-  if (path === "leaderboard") return { route: "leaderboard", sessionId: null };
-  if (path === "admin") return { route: "admin", sessionId: null };
-  return { route: "sessions", sessionId: null };
+    return {
+      route: "sessions",
+      sessionId: decodeURIComponent(session[1]!),
+      userId: null,
+    };
+  const developer = path.match(/^leaderboard\/(.+)$/);
+  if (developer)
+    return {
+      route: "leaderboard",
+      sessionId: null,
+      userId: decodeURIComponent(developer[1]!),
+    };
+  if (path === "leaderboard")
+    return { route: "leaderboard", sessionId: null, userId: null };
+  if (path === "admin")
+    return { route: "admin", sessionId: null, userId: null };
+  return { route: "sessions", sessionId: null, userId: null };
 };
 
 const useHashRoute = (): {
   route: Route;
   sessionId: string | null;
+  userId: string | null;
 } => {
   const [state, setState] = useState(parseHash(window.location.hash));
   useEffect(() => {
@@ -36,7 +51,7 @@ const useHashRoute = (): {
 
 export const App = () => {
   const feed = useSessions();
-  const { route, sessionId } = useHashRoute();
+  const { route, sessionId, userId } = useHashRoute();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Follow the newest session until the operator picks one.
@@ -82,8 +97,14 @@ export const App = () => {
       {route === "leaderboard" ? (
         <main className="full">
           <section>
-            <h2>developer leaderboard</h2>
-            <LeaderboardView sessions={feed.sessions} />
+            {userId ? (
+              <DeveloperDetail userId={userId} sessions={feed.sessions} />
+            ) : (
+              <>
+                <h2>developer leaderboard</h2>
+                <LeaderboardView sessions={feed.sessions} />
+              </>
+            )}
           </section>
         </main>
       ) : route === "admin" ? (

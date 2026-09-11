@@ -5,6 +5,17 @@ export const fmtTokens = (n: number): string => {
   return String(n);
 };
 
+/**
+ * Delta against a baseline: null (no baseline) → "—", 0.25 → "↑ 25%",
+ * -0.25 → "↓ 25%". Deliberately colorless — on a spend metric "up" is not
+ * good, so the arrow carries the direction and nothing carries a verdict.
+ */
+export const fmtDelta = (ratio: number | null): string => {
+  if (ratio === null || !Number.isFinite(ratio)) return "—";
+  const pct = Math.round(Math.abs(ratio) * 100);
+  return `${ratio >= 0 ? "↑" : "↓"} ${pct}%`;
+};
+
 /** 0 → "$0.0000", 0.0042 → "$0.0042", 12.345 → "$12.35" */
 export const fmtCost = (usd: number): string =>
   usd < 1 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;

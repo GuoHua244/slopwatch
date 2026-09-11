@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   clock,
   fmtCost,
+  fmtDelta,
   fmtDuration,
   fmtTokens,
   shortId,
@@ -93,5 +94,17 @@ describe("summarizeArgs", () => {
     expect(summarizeArgs({})).toBe("");
     expect(summarizeArgs("raw string")).toBe("raw string");
     expect(summarizeArgs({ nested: { a: 1 } })).toBe('nested={"a":1}');
+  });
+});
+
+describe("fmtDelta", () => {
+  test("no baseline renders a dash", () => {
+    expect(fmtDelta(null)).toBe("—");
+  });
+
+  test("ratios render a colorless direction arrow", () => {
+    expect(fmtDelta(0)).toBe("↑ 0%");
+    expect(fmtDelta(0.2534)).toBe("↑ 25%");
+    expect(fmtDelta(-0.2534)).toBe("↓ 25%");
   });
 });
