@@ -29,6 +29,16 @@ const refusingStore = (): Store => ({
   backfillTokenTotals: () => {
     throw new Error("store must not be touched");
   },
+  listRollups: async () => ({
+    totals: [],
+    model_totals: [],
+    daily: [],
+    model_daily: [],
+    model_hourly: [],
+  }),
+  backfillRollups: () => {
+    throw new Error("store must not be touched");
+  },
   createUser: () => {
     throw new Error("store must not be touched");
   },

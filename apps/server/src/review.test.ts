@@ -13,6 +13,14 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
   deleteSession: async () => false,
   pruneRawOlderThan: async () => 0,
   backfillTokenTotals: async () => 0,
+  listRollups: async () => ({
+    totals: [],
+    model_totals: [],
+    daily: [],
+    model_daily: [],
+    model_hourly: [],
+  }),
+  backfillRollups: async () => 0,
   createUser: async () => {
     throw new Error("not scripted");
   },

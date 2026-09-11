@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import type { NormalEvent } from "@slopwatch/events";
+import { rollupDeltas, type ModelDelta } from "./rollups";
 
 export type SessionRow = {
   session_id: string;
@@ -59,6 +60,41 @@ export type HealthInfo = {
   last_event_at: string | null;
 };
 
+/** Per-day turn/tool counts for one developer (decision 18). */
+export type DailyRollupRow = {
+  user_id: string;
+  /** UTC day, "YYYY-MM-DD". */
+  day: string;
+  turns: number;
+  tool_calls: number;
+};
+
+/** Per-model request/token counts over a UTC day or hour bucket (decision 18). */
+export type ModelRollupRow = {
+  user_id: string;
+  /** "YYYY-MM-DD" (daily) or "YYYY-MM-DDTHH" (hourly). */
+  bucket: string;
+  model: string;
+  model_requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+};
+
+/**
+ * One GET /rollups answer. Totals cover all history; the windowed arrays are
+ * lower-bounded by the caller's cutoffs. Cost estimation stays client-side,
+ * which is why model-grain rows come back verbatim instead of pre-priced.
+ */
+export type RollupsSnapshot = {
+  totals: { user_id: string; turns: number; tool_calls: number }[];
+  model_totals: ModelRollupRow[];
+  daily: DailyRollupRow[];
+  model_daily: ModelRollupRow[];
+  model_hourly: ModelRollupRow[];
+};
+
 /** Thrown when a unique user name collides (HTTP 409). */
 export class UserExistsError extends Error {
   constructor(name: string) {
@@ -99,6 +135,13 @@ export type Store = {
    * sessions captured before that undercount; idempotent, safe on a live DB.
    */
   backfillTokenTotals(): Promise<number>;
+  /**
+   * Decision 18: per-developer usage rollups, UTC-bucketed. `sinceDay` and
+   * `sinceHour` ("YYYY-MM-DD" / "YYYY-MM-DDTHH") are inclusive lower bounds.
+   */
+  listRollups(sinceDay: string, sinceHour: string): Promise<RollupsSnapshot>;
+  /** Full recompute of every rollup table from the events table. Rows written. */
+  backfillRollups(): Promise<number>;
   /** Decision 13 admin plane. */
   createUser(name: string, email: string | null): Promise<AdminUserRow>;
   getUser(name: string): Promise<AdminUserRow | null>;
@@ -199,6 +242,35 @@ CREATE TABLE IF NOT EXISTS review_comments (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS review_comments_session ON review_comments (session_id);
+CREATE TABLE IF NOT EXISTS user_daily_rollup (
+  user_id    TEXT NOT NULL,
+  day        TEXT NOT NULL,
+  turns      BIGINT NOT NULL DEFAULT 0,
+  tool_calls BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day)
+);
+CREATE TABLE IF NOT EXISTS model_daily_rollup (
+  user_id            TEXT NOT NULL,
+  day                TEXT NOT NULL,
+  model              TEXT NOT NULL,
+  model_requests     BIGINT NOT NULL DEFAULT 0,
+  input_tokens       BIGINT NOT NULL DEFAULT 0,
+  output_tokens      BIGINT NOT NULL DEFAULT 0,
+  cache_read_tokens  BIGINT NOT NULL DEFAULT 0,
+  cache_write_tokens BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day, model)
+);
+CREATE TABLE IF NOT EXISTS model_hourly_rollup (
+  user_id            TEXT NOT NULL,
+  hour               TEXT NOT NULL,
+  model              TEXT NOT NULL,
+  model_requests     BIGINT NOT NULL DEFAULT 0,
+  input_tokens       BIGINT NOT NULL DEFAULT 0,
+  output_tokens      BIGINT NOT NULL DEFAULT 0,
+  cache_read_tokens  BIGINT NOT NULL DEFAULT 0,
+  cache_write_tokens BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, hour, model)
+);
 `;
 
 const pgUserRow = (r: Record<string, unknown>): AdminUserRow => ({
@@ -224,6 +296,90 @@ const pgCommentRow = (r: Record<string, unknown>): CommentRow => ({
   body: r.body as string,
   created_at: new Date(r.created_at as string).toISOString(),
 });
+
+const modelRollupRow = (r: Record<string, unknown>): ModelRollupRow => ({
+  user_id: r.user_id as string,
+  bucket: r.bucket as string,
+  model: r.model as string,
+  model_requests: Number(r.model_requests),
+  input_tokens: Number(r.input_tokens),
+  output_tokens: Number(r.output_tokens),
+  cache_read_tokens: Number(r.cache_read_tokens),
+  cache_write_tokens: Number(r.cache_write_tokens),
+});
+
+const DAY_BUCKET_SQL = `to_char((e.payload->>'occurred_at')::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD')`;
+const HOUR_BUCKET_SQL = `to_char((e.payload->>'occurred_at')::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24')`;
+
+type Queryable = {
+  query: (
+    sql: string,
+    values?: unknown[],
+  ) => Promise<{ rowCount: number | null }>;
+};
+
+/**
+ * Rebuild the rollup tables from the events table — the aggregate truth —
+ * either for one user (after a session delete) or for everyone (backfill).
+ * Bucketing mirrors rollups.ts: UTC day/hour of the event's occurred_at.
+ */
+const recomputeRollups = async (
+  client: Queryable,
+  userId?: string,
+): Promise<number> => {
+  const scoped = userId !== undefined;
+  const args = scoped ? [userId] : [];
+  const filter = scoped ? " AND s.user_id = $1" : "";
+  for (const table of [
+    "user_daily_rollup",
+    "model_daily_rollup",
+    "model_hourly_rollup",
+  ]) {
+    await client.query(
+      `DELETE FROM ${table}${scoped ? " WHERE user_id = $1" : ""}`,
+      args,
+    );
+  }
+  const from = `
+    FROM events e
+    JOIN sessions s ON s.session_id = e.session_id
+    WHERE s.user_id IS NOT NULL${filter}`;
+  const flat = await client.query(
+    `INSERT INTO user_daily_rollup (user_id, day, turns, tool_calls)
+     SELECT s.user_id,
+            ${DAY_BUCKET_SQL},
+            COUNT(*) FILTER (WHERE e.kind = 'turn' AND e.payload->>'event' = 'start'),
+            COUNT(*) FILTER (WHERE e.kind = 'tool' AND e.payload->>'event' = 'call')
+     ${from}
+     GROUP BY s.user_id, 2
+     HAVING COUNT(*) FILTER (WHERE e.kind = 'turn' AND e.payload->>'event' = 'start') > 0
+         OR COUNT(*) FILTER (WHERE e.kind = 'tool' AND e.payload->>'event' = 'call') > 0`,
+    args,
+  );
+  const modelInsert = (table: string, bucketSql: string) => `
+    INSERT INTO ${table} (user_id, ${
+      table === "model_daily_rollup" ? "day" : "hour"
+    }, model, model_requests, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
+    SELECT s.user_id,
+           ${bucketSql},
+           e.payload->>'model',
+           COUNT(*),
+           SUM(COALESCE((e.payload->'usage'->>'input_tokens')::bigint, 0)),
+           SUM(COALESCE((e.payload->'usage'->>'output_tokens')::bigint, 0)),
+           SUM(COALESCE((e.payload->'usage'->>'cache_read_tokens')::bigint, 0)),
+           SUM(COALESCE((e.payload->'usage'->>'cache_write_tokens')::bigint, 0))
+    ${from} AND e.kind = 'model_request'
+    GROUP BY s.user_id, 2, 3`;
+  const daily = await client.query(
+    modelInsert("model_daily_rollup", DAY_BUCKET_SQL),
+    args,
+  );
+  const hourly = await client.query(
+    modelInsert("model_hourly_rollup", HOUR_BUCKET_SQL),
+    args,
+  );
+  return (flat.rowCount ?? 0) + (daily.rowCount ?? 0) + (hourly.rowCount ?? 0);
+};
 
 export const createPgStore = (databaseUrl: string): Store => {
   const pool = new Pool({ connectionString: databaseUrl });
@@ -292,6 +448,63 @@ export const createPgStore = (databaseUrl: string): Store => {
               [sessionId, dIn, dOut, dCacheRead, dCacheWrite],
             );
           }
+        }
+        // Decision 18: fold the batch into the usage rollups in the same
+        // transaction, so the aggregates can never drift from the events.
+        if (userId !== null) {
+          const rollupUser: string = userId;
+          const deltas = rollupDeltas(events);
+          for (const [day, d] of deltas.daily) {
+            if (d.turns === 0 && d.toolCalls === 0) continue;
+            await client.query(
+              `INSERT INTO user_daily_rollup (user_id, day, turns, tool_calls)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (user_id, day) DO UPDATE SET
+                 turns = user_daily_rollup.turns + EXCLUDED.turns,
+                 tool_calls = user_daily_rollup.tool_calls + EXCLUDED.tool_calls`,
+              [rollupUser, day, d.turns, d.toolCalls],
+            );
+          }
+          const upsertModelRollup = async (
+            table: "model_daily_rollup" | "model_hourly_rollup",
+            column: "day" | "hour",
+            byModel: Map<string, Map<string, ModelDelta>>,
+          ) => {
+            for (const [bucket, models] of byModel) {
+              for (const [model, d] of models) {
+                await client.query(
+                  `INSERT INTO ${table} (user_id, ${column}, model, model_requests, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                   ON CONFLICT (user_id, ${column}, model) DO UPDATE SET
+                     model_requests = ${table}.model_requests + EXCLUDED.model_requests,
+                     input_tokens = ${table}.input_tokens + EXCLUDED.input_tokens,
+                     output_tokens = ${table}.output_tokens + EXCLUDED.output_tokens,
+                     cache_read_tokens = ${table}.cache_read_tokens + EXCLUDED.cache_read_tokens,
+                     cache_write_tokens = ${table}.cache_write_tokens + EXCLUDED.cache_write_tokens`,
+                  [
+                    rollupUser,
+                    bucket,
+                    model,
+                    d.modelRequests,
+                    d.inputTokens,
+                    d.outputTokens,
+                    d.cacheReadTokens,
+                    d.cacheWriteTokens,
+                  ],
+                );
+              }
+            }
+          };
+          await upsertModelRollup(
+            "model_daily_rollup",
+            "day",
+            deltas.modelDaily,
+          );
+          await upsertModelRollup(
+            "model_hourly_rollup",
+            "hour",
+            deltas.modelHourly,
+          );
         }
         await client.query("COMMIT");
         return { accepted: events.length };
@@ -367,6 +580,10 @@ export const createPgStore = (databaseUrl: string): Store => {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        const owner = await client.query(
+          "SELECT user_id FROM sessions WHERE session_id = $1",
+          [sessionId],
+        );
         await client.query("DELETE FROM events WHERE session_id = $1", [
           sessionId,
         ]);
@@ -374,8 +591,70 @@ export const createPgStore = (databaseUrl: string): Store => {
           "DELETE FROM sessions WHERE session_id = $1",
           [sessionId],
         );
+        if ((session.rowCount ?? 0) > 0) {
+          // Rollups keep summing the sessions that remain.
+          const userId = owner.rows[0]?.user_id;
+          if (typeof userId === "string")
+            await recomputeRollups(client, userId);
+        }
         await client.query("COMMIT");
         return (session.rowCount ?? 0) > 0;
+      } catch (e) {
+        await client.query("ROLLBACK");
+        throw e;
+      } finally {
+        client.release();
+      }
+    },
+
+    async listRollups(sinceDay, sinceHour) {
+      const modelSelect =
+        "user_id, day AS bucket, model, model_requests, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens";
+      const totals = await pool.query(
+        "SELECT user_id, SUM(turns) AS turns, SUM(tool_calls) AS tool_calls FROM user_daily_rollup GROUP BY user_id ORDER BY user_id",
+      );
+      const modelTotals = await pool.query(
+        `SELECT user_id, model, SUM(model_requests) AS model_requests, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens FROM model_daily_rollup GROUP BY user_id, model ORDER BY user_id, model`,
+      );
+      const daily = await pool.query(
+        "SELECT user_id, day, turns, tool_calls FROM user_daily_rollup WHERE day >= $1 ORDER BY user_id, day",
+        [sinceDay],
+      );
+      const modelDaily = await pool.query(
+        `SELECT ${modelSelect} FROM model_daily_rollup WHERE day >= $1 ORDER BY user_id, day, model`,
+        [sinceDay],
+      );
+      const modelHourly = await pool.query(
+        `SELECT ${modelSelect.replace("day AS bucket", "hour AS bucket")} FROM model_hourly_rollup WHERE hour >= $1 ORDER BY user_id, hour, model`,
+        [sinceHour],
+      );
+      return {
+        totals: totals.rows.map((r) => ({
+          user_id: r.user_id as string,
+          turns: Number(r.turns),
+          tool_calls: Number(r.tool_calls),
+        })),
+        model_totals: modelTotals.rows.map((r) =>
+          modelRollupRow({ ...r, bucket: "" }),
+        ),
+        daily: daily.rows.map((r) => ({
+          user_id: r.user_id as string,
+          day: r.day as string,
+          turns: Number(r.turns),
+          tool_calls: Number(r.tool_calls),
+        })),
+        model_daily: modelDaily.rows.map(modelRollupRow),
+        model_hourly: modelHourly.rows.map(modelRollupRow),
+      };
+    },
+
+    async backfillRollups() {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const rows = await recomputeRollups(client);
+        await client.query("COMMIT");
+        return rows;
       } catch (e) {
         await client.query("ROLLBACK");
         throw e;

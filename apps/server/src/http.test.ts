@@ -33,6 +33,16 @@ const refusingStore = (): Store => ({
   backfillTokenTotals: () => {
     throw new Error("store must not be touched");
   },
+  listRollups: async () => ({
+    totals: [],
+    model_totals: [],
+    daily: [],
+    model_daily: [],
+    model_hourly: [],
+  }),
+  backfillRollups: () => {
+    throw new Error("store must not be touched");
+  },
   createUser: () => {
     throw new Error("store must not be touched");
   },
@@ -143,6 +153,39 @@ describe("POST /events validation", () => {
   });
 });
 
+describe("GET /rollups", () => {
+  test("answers with the snapshot shape and sane default windows", async () => {
+    let seen: { sinceDay: string; sinceHour: string } | undefined;
+    const spyStore: Store = {
+      ...refusingStore(),
+      listRollups: async (sinceDay, sinceHour) => {
+        seen = { sinceDay, sinceHour };
+        return {
+          totals: [],
+          model_totals: [],
+          daily: [],
+          model_daily: [],
+          model_hourly: [],
+        };
+      },
+    };
+    const res = await createApp({ tokens: new Map(), store: spyStore }).fetch(
+      new Request("http://x/rollups?days=99999&hours=not-a-number"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      totals: [],
+      model_totals: [],
+      daily: [],
+      model_daily: [],
+      model_hourly: [],
+    });
+    expect(seen).toBeDefined();
+    expect(seen!.sinceDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(seen!.sinceHour).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}$/);
+  });
+});
+
 // --- DB-backed integration tests (require DATABASE_URL) ---
 
 const dbTests = () =>
@@ -236,6 +279,25 @@ describe.skipIf(!dbTests())("events endpoint against Postgres", () => {
     expect(row?.total_input_tokens).toBe(100);
     expect(row?.total_output_tokens).toBe(50);
     expect(row?.total_cache_read_tokens).toBe(10);
+  });
+
+  test("rollups reflect appended events", async () => {
+    const res = await dbApp!.fetch(
+      new Request("http://x/rollups?days=1&hours=1"),
+    );
+    expect(res.status).toBe(200);
+    const snap = (await res.json()) as {
+      model_daily: {
+        user_id: string;
+        model: string;
+        model_requests: number;
+      }[];
+    };
+    // The DB persists between runs, so alice's sums only ever grow.
+    expect(
+      snap.model_daily.find((r) => r.user_id === "alice" && r.model === "m")
+        ?.model_requests,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   test("healthz", async () => {

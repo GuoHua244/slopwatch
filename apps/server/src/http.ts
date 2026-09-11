@@ -119,6 +119,17 @@ const trimField = (value: unknown, maxLen: number): string | null => {
   return trimmed.length > 0 && trimmed.length <= maxLen ? trimmed : null;
 };
 
+/** Positive int query param clamped to 1..max; fallback when absent/garbage. */
+const windowParam = (
+  raw: string | null,
+  max: number,
+  fallback: number,
+): number => {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.min(Math.floor(n), max);
+};
+
 export const createApp = ({
   tokens,
   store,
@@ -193,6 +204,20 @@ export const createApp = ({
 
     if (url.pathname === "/sessions" && req.method === "GET") {
       return json(200, { sessions: await store.listSessions() });
+    }
+
+    // Decision 18: per-developer usage rollups (org-wide read like /sessions).
+    if (url.pathname === "/rollups" && req.method === "GET") {
+      const days = windowParam(url.searchParams.get("days"), 3650, 30);
+      const hours = windowParam(url.searchParams.get("hours"), 168, 24);
+      const now = Date.now();
+      const sinceDay = new Date(now - (days - 1) * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const sinceHour = new Date(now - (hours - 1) * 3_600_000)
+        .toISOString()
+        .slice(0, 13);
+      return json(200, await store.listRollups(sinceDay, sinceHour));
     }
 
     // --- Review plane (decision 10): reads are org-wide, writes are authed;
