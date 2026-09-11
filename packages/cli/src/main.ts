@@ -11,6 +11,7 @@
  */
 import { runInstall } from "./install";
 import { login } from "./login";
+import { setCapturePaused } from "./pause";
 import { statusReport } from "./status";
 import { runUninstall } from "./uninstall";
 
@@ -20,6 +21,8 @@ usage:
   slopwatch install [options]    detect installed agents and wire capture hooks
   slopwatch login <token>        verify and store the backend token
   slopwatch status [--dir D]     show detection, wiring, and config state
+  slopwatch pause                stop capturing (hooks stay wired, nothing spawns)
+  slopwatch resume               turn capture back on after a pause
   slopwatch uninstall [--dir D]  remove slopwatch hooks (user scope, or
                                  only that project's scope with --dir)
 
@@ -131,6 +134,12 @@ const main = async (): Promise<number> => {
     case "status": {
       printLines(statusReport({ dir: argValue("dir") }));
       return 0;
+    }
+    case "pause":
+    case "resume": {
+      const result = setCapturePaused(command === "pause");
+      printLines(result.lines);
+      return result.ok ? 0 : 1;
     }
     case "uninstall": {
       const result = runUninstall({

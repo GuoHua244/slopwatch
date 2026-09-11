@@ -15,6 +15,9 @@ const received: NormalEvent[][] = [];
 const server = Bun.serve({
   port: 0,
   fetch: async (req) => {
+    if (new URL(req.url).pathname === "/healthz") {
+      return new Response("ok");
+    }
     const body = (await req.json()) as { events: NormalEvent[] };
     received.push(body.events);
     return Response.json({ accepted: body.events.length });
@@ -138,6 +141,75 @@ describe("zcode live.ts rolling summaries", () => {
     const callsBefore = llmCalls.length;
     await spawnLive(); // no appends — cursor already at EOF
     expect(summaries()).toHaveLength(2);
+    expect(llmCalls.length).toBe(callsBefore);
+  }, 30000);
+
+  test("an unreachable server skips the fold — no tokens burned for a lost summary", async () => {
+    // the server dies the moment its pulse is first checked — /healthz is
+    // only ever requested by the fold gate, so the timing is deterministic:
+    // startup and backfill POSTs land fine, the idle end faces a dead server
+    let down = false;
+    const dying = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        const path = new URL(req.url).pathname;
+        if (path === "/healthz") {
+          down = true;
+          return new Response("down", { status: 503 });
+        }
+        if (down) return new Response("gone", { status: 503 });
+        const body = (await req.json()) as { events: NormalEvent[] };
+        received.push(body.events);
+        return Response.json({ accepted: body.events.length });
+      },
+    });
+    const downHome = mkdtempSync(join(tmpdir(), "slopwatch-zcode-live-down-"));
+    const downRollout = join(downHome, "rollout.jsonl");
+    saveConfig(
+      {
+        serverUrl: `http://127.0.0.1:${dying.port}`,
+        token: "config-token",
+        summary: {
+          endpoint: `http://127.0.0.1:${llm.port}/v1`,
+          model: "test-model",
+          apiKey: "llm-key",
+        },
+      },
+      downHome,
+    );
+    writeFileSync(downRollout, `${turn("turn_down", "doomed to drop")}\n`);
+    const callsBefore = llmCalls.length;
+    const proc = Bun.spawn({
+      cmd: [
+        process.execPath,
+        join(import.meta.dir, "live.ts"),
+        "--file",
+        downRollout,
+        "--session-id",
+        "sess_live-sum-down",
+        "--cwd",
+        downHome,
+        "--idle-ms",
+        "300",
+        "--max-lifetime-ms",
+        "4000",
+      ],
+      env: {
+        ...process.env,
+        HOME: downHome,
+        USERPROFILE: downHome,
+        SLOPWATCH_HOME: downHome,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [code, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stderr).text(),
+    ]);
+    dying.stop(true);
+    expect(code).not.toBe(0); // the end POST fails — that is the point
+    expect(stderr).toContain("summary fold skipped");
     expect(llmCalls.length).toBe(callsBefore);
   }, 30000);
 

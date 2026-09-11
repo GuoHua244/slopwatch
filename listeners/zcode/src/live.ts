@@ -118,17 +118,38 @@ const flush = async (batch: NormalEvent[]): Promise<void> => {
 // configured summary block — no key means silent skip, capture unaffected.
 const summaryLlm = serverUrl ? loadConfig()?.summary : undefined;
 
+const serverReachable = async (url: string): Promise<boolean> => {
+  try {
+    const res = await fetch(`${url.replace(/\/+$/, "")}/healthz`, {
+      signal: AbortSignal.timeout(2_500),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
+
 let finished = false;
 const finish = async (reason: string): Promise<void> => {
   if (finished) return;
   finished = true;
   clearTimeout(idleTimer);
   clearInterval(heartbeatTimer);
-  // fold the summary first so summary → end ships in one POST; an LLM
-  // failure leaves the digests pending and only costs this end's summary
   closeTurnDigest();
+  // fold the summary first so summary → end ships in one POST; an LLM
+  // failure leaves the digests pending and only costs this end's summary.
+  // Tokens are only worth spending when the result can actually ship:
+  // probe the server first, because a fold computed offline is lost with
+  // the failed POST and re-burned on the next end.
+  const shipable =
+    summaryLlm && serverUrl ? await serverReachable(serverUrl) : false;
+  if (summaryLlm && !shipable) {
+    console.error(
+      "live: server unreachable — summary fold skipped, digests kept for retry",
+    );
+  }
   const batch: NormalEvent[] = [];
-  if (summaryLlm) {
+  if (summaryLlm && shipable) {
     try {
       const summaryEvent = await foldSummary({
         stateBase,

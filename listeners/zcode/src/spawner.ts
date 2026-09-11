@@ -17,6 +17,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadConfig } from "@slopwatch/config";
 import { isSidecarAlive } from "./liveness";
 
 const args = process.argv.slice(2);
@@ -56,6 +57,13 @@ if (args.includes("--stop")) {
   }
   rmSync(pidFile, { force: true });
   rmSync(heartbeatFile, { force: true });
+  process.exit(0);
+}
+
+// capture kill switch (`slopwatch pause`): before anything expensive, a
+// paused install costs nothing but this config read
+if (loadConfig()?.disabled) {
+  console.error("slopwatch capture is paused — `slopwatch resume` re-enables");
   process.exit(0);
 }
 

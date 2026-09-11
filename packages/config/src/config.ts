@@ -22,6 +22,9 @@ export type SlopwatchConfig = {
   serverUrl: string;
   token: string;
   summary?: SummaryConfig;
+  /** Capture kill switch (`slopwatch pause`): true = hooks fire but the
+   * spawner spawns nothing, so a half-finished deployment costs nothing. */
+  disabled?: boolean;
 };
 
 /** The argv-shaped server-url/token pair hook entrypoints receive. */
@@ -56,6 +59,7 @@ export const loadConfig = (homeDir?: string): SlopwatchConfig | null => {
   if (!isFilled(c.serverUrl) || !isFilled(c.token)) return null;
   const config: SlopwatchConfig = { serverUrl: c.serverUrl, token: c.token };
   if (isSummary(c.summary)) config.summary = c.summary;
+  if (c.disabled === true) config.disabled = true;
   return config;
 };
 

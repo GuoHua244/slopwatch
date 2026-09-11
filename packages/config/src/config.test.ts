@@ -158,3 +158,17 @@ describe("redactConfig", () => {
     expect(redacted).toEqual({ serverUrl: "u", token: "…" });
   });
 });
+
+describe("capture kill switch", () => {
+  test("disabled round-trips and clears when omitted", () => {
+    const home = mkdtempSync(join(tmpdir(), "slopwatch-cfg-switch-"));
+    saveConfig(
+      { serverUrl: "http://localhost:8787", token: "t", disabled: true },
+      home,
+    );
+    expect(loadConfig(home)?.disabled).toBe(true);
+
+    saveConfig({ serverUrl: "http://localhost:8787", token: "t" }, home);
+    expect(loadConfig(home)?.disabled).toBeUndefined();
+  });
+});

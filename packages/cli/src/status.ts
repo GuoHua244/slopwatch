@@ -70,6 +70,7 @@ const describeConfig = (config: SlopwatchConfig | null): string => {
     `server ${config.serverUrl}`,
     `token ${redactConfig(config).token}`,
   ];
+  if (config.disabled) parts.push("CAPTURE PAUSED (`slopwatch resume`)");
   parts.push(
     config.summary
       ? `summary ${config.summary.model} @ ${config.summary.endpoint}`
