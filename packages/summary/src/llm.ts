@@ -31,7 +31,9 @@ export const chatCompletion = async (
         },
         body: JSON.stringify({
           model: o.model,
-          max_tokens: o.maxTokens ?? 400,
+          // reasoning models spend completion budget thinking before they
+          // answer — 400 left a truncated summary after ~370 reasoning tokens
+          max_tokens: o.maxTokens ?? 1024,
           temperature: 0.2,
           messages: [
             { role: "system", content: o.system },
