@@ -16,6 +16,9 @@ const meServer = (status: number) =>
 
 const tempHome = (): string => mkdtempSync(join(tmpdir(), "slopwatch-login-"));
 
+type FetchLike = (input?: unknown, init?: unknown) => Promise<Response>;
+const asFetch = (fn: FetchLike): typeof fetch => fn as unknown as typeof fetch;
+
 describe("login", () => {
   test("verifies and stores the token, preserving a summary block", async () => {
     const server = meServer(200);
@@ -93,11 +96,26 @@ describe("login", () => {
         serverUrl: `http://127.0.0.1:${server.port}`,
       });
 
-      // no config anywhere: localhost default (unreachable here → error)
+      // no config anywhere: localhost default. The fetch is injected so the
+      // test cannot be flipped red by a real server listening on 8787.
       const fresh = tempHome();
-      const failed = await login({ token: "tok", homeDir: fresh });
+      const requested: string[] = [];
+      const refusingFetch = asFetch(async (input) => {
+        requested.push(String(input));
+        throw new Error("connection refused");
+      });
+      const failed = await login({
+        token: "tok",
+        homeDir: fresh,
+        fetchImpl: refusingFetch,
+      });
       expect(failed.ok).toBe(false);
-      if (!failed.ok) expect(failed.error).toContain("server unreachable");
+      if (!failed.ok) {
+        expect(failed.error).toContain("server unreachable");
+        expect(failed.error).toContain("nothing written");
+      }
+      expect(requested).toEqual(["http://localhost:8787/me"]);
+      expect(loadConfig(fresh)).toBeNull();
     } finally {
       server.stop(true);
     }
