@@ -17,6 +17,7 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isSidecarAlive } from "./liveness";
 
 const args = process.argv.slice(2);
 const arg = (name: string): string | undefined => {
@@ -35,6 +36,7 @@ if (!sessionId) {
 const logDir = arg("log-dir") ?? join(homedir(), ".slopwatch", "listeners");
 const logFile = join(logDir, `zcode-${sessionId}.log`);
 const pidFile = join(logDir, `zcode-${sessionId}.pid`);
+const heartbeatFile = join(logDir, `zcode-${sessionId}.heartbeat`);
 
 if (args.includes("--stop")) {
   let pid: number | undefined;
@@ -53,6 +55,7 @@ if (args.includes("--stop")) {
     );
   }
   rmSync(pidFile, { force: true });
+  rmSync(heartbeatFile, { force: true });
   process.exit(0);
 }
 
@@ -65,12 +68,17 @@ const rolloutFile = join(
 );
 const liveTs = fileURLToPath(new URL("./live.ts", import.meta.url));
 
-// SessionStart also fires on resume/clear/compact — skip if a sidecar for this
-// session is already alive (signal 0 is the existence check).
+// SessionStart also fires on resume/clear/compact — skip if a sidecar for
+// this session is already alive: the PID exists AND its heartbeat is fresh.
+// Signal-0 alone misreads Windows PID reuse as a live sidecar and would
+// stall this session's capture forever.
 try {
   const pid = Number(readFileSync(pidFile, "utf8").trim());
-  if (Number.isFinite(pid) && pid > 0) {
-    process.kill(pid, 0);
+  if (
+    Number.isFinite(pid) &&
+    pid > 0 &&
+    isSidecarAlive({ pid, heartbeatFile })
+  ) {
     console.error(`slopwatch listener already running: pid=${pid}`);
     process.exit(0);
   }
@@ -95,6 +103,9 @@ const child = Bun.spawn([process.execPath, ...childArgs], {
 child.unref?.();
 
 writeFileSync(pidFile, String(child.pid));
+// make the newborn visible to the next spawner invocation before the
+// sidecar's own first heartbeat lands (bun start can lag seconds under AV scans)
+writeFileSync(heartbeatFile, String(Date.now()));
 console.error(
   `slopwatch listener spawned: pid=${child.pid} log=${logFile} rollout=${rolloutFile}`,
 );

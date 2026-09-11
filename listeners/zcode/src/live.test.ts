@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdtempSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NormalEvent } from "@slopwatch/events";
@@ -23,6 +28,12 @@ const server = Bun.serve({
 const dir = mkdtempSync(join(tmpdir(), "slopwatch-zcode-live-"));
 const home = join(dir, "home");
 const rollout = join(dir, "rollout.jsonl");
+const heartbeat = join(
+  home,
+  ".slopwatch",
+  "listeners",
+  "zcode-sess_live-start-test.heartbeat",
+);
 
 const spawnLive = async (): Promise<void> => {
   const proc = Bun.spawn({
@@ -66,6 +77,8 @@ describe("zcode live.ts session:start across re-attach", () => {
     await spawnLive();
     expect(received.length).toBeGreaterThan(0);
     expect(startCount()).toBe(1);
+    // the spawner's respawn decision reads this file — it must exist by exit
+    expect(existsSync(heartbeat)).toBe(true);
   }, 30000);
 
   test("re-attach after idle-timeout sends a fresh start", async () => {

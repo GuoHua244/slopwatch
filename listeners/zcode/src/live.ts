@@ -18,6 +18,7 @@ import {
   readSync,
   statSync,
   watch,
+  writeFileSync,
 } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
@@ -122,6 +123,7 @@ const finish = async (reason: string): Promise<void> => {
   if (finished) return;
   finished = true;
   clearTimeout(idleTimer);
+  clearInterval(heartbeatTimer);
   // fold the summary first so summary → end ships in one POST; an LLM
   // failure leaves the digests pending and only costs this end's summary
   closeTurnDigest();
@@ -170,6 +172,15 @@ const cursorFile = join(
 mkdirSync(join(homedir(), ".slopwatch", "listeners"), { recursive: true });
 const stateBase = cursorFile.slice(0, -".cursor".length);
 const summaries = summaryStore(stateBase);
+
+// Liveness heartbeat for the spawner's respawn decision: Windows reuses PIDs,
+// so signal-0 alone can mistake a dead sidecar for a live one — the freshness
+// of this file is what actually proves we are running.
+const heartbeatFile = `${stateBase}.heartbeat`;
+const touchHeartbeat = (): void =>
+  writeFileSync(heartbeatFile, String(Date.now()));
+touchHeartbeat();
+const heartbeatTimer = setInterval(touchHeartbeat, 30_000);
 
 // Rolling digest of the turn in progress — appended to the summary log when
 // the turn closes (next turn starts, or the session ends). ZCode has no
