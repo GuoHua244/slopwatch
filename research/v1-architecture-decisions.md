@@ -138,6 +138,15 @@ Open question 15's direction confirmed and shipped. Each listener keeps a rollin
 - **Turn ordinals stay cumulative across sidecar generations** (folded count + pending log length), so the LLM sees a stable history even though the process restarts at every idle timeout.
 - **The dashboard renders the latest summary as a banner** on the session page, labeled machine-generated with the producing model: a reading aid, never evidence — the event stream remains the record.
 
+### 18. Leaderboard rollups: incremental UTC-bucketed tables fed at ingest
+
+The leaderboard's per-session N+1 (ADR 0002) was fine at prototype scale and wrong past it; the rollups from `research/developer-leaderboard-design.md` are now the server-side answer. Three tables keyed by developer and UTC bucket: `user_daily_rollup` (turn starts, tool calls per day), and model-grain `model_daily_rollup` / `model_hourly_rollup` (requests plus the four token totals, per model per day/hour). Model grain stays because cost estimation lives client-side (the web pricing table) — `GET /rollups` returns the rows verbatim, keeping the Server out of price normalization (open question 12) and the estimates identical to the per-event ones they replace. Buckets are **UTC** calendar windows of the event's machine-side `occurred_at` (2026-09-12): the industry-default choice, and the honest one for replay — a backfilled backlog lands where the work happened, not where the Server was when it arrived. Local-timezone day boundaries are a display concern, deferred until someone misses them.
+
+- **Refresh is incremental at ingest (2026-09-12)**: each appended batch upserts its own deltas inside the append transaction, so the aggregates can never drift from the events — and since every appended event is new (the seq allocator has no dedup), the deltas apply as-is. Admin session deletion (decision 13) recomputes the affected developer's rows from the events table in the same transaction, and `backfill-rollups.ts` seeds or rebuilds history; recompute-from-truth is the repair path for all three tables.
+- **Delta semantics (2026-09-12)**: today's UTC day vs the trailing 7-day mean — the seven calendar days before today, zero-activity days included, so "no baseline" renders as no delta. Rendered as a colorless arrow: on a spend metric "up" is not good, and the color question stays closed until a second delta-able metric exists to triangulate with.
+- **One snapshot feeds both surfaces**: the leaderboard table (all-time columns from totals, sparkline from the hourly window, delta from today + the trailing week) and the developer drill-down — clicking a row opens `#/leaderboard/:user`, a 30-day spend chart plus that developer's sessions deep-linking into the existing detail view. The per-session event-fetching hook is deleted.
+- **Still open**: the team/avatar column waits for the Team entity (decision 10, v2); hourly-row retention is "keep for now" — the rows are tiny, revisit with real volume.
+
 ---
 
 ## Open questions — pick up here

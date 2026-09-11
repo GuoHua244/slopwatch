@@ -140,14 +140,16 @@ And per user (static):
 
 Call this a **`user_daily_rollup`** + **`user_hourly_rollup`** pair. Neither is written up in `v1-architecture-decisions.md` yet.
 
+> **Update 2026-09-12 — decision 18.** Written up and shipped, with a shape twist: the token/request tables are model-grain (`model_daily_rollup` / `model_hourly_rollup`) so the client keeps pricing per model, alongside a flat `user_daily_rollup` for turn/tool counts. Buckets are UTC windows of the event's `occurred_at`; refresh is incremental at ingest, with recompute-from-truth as the repair path.
+
 ---
 
 ## Open questions
 
-1. **"Developer" vs "user" naming.** Pick one; the prototype uses both. Ties into whether the product's vocabulary distinguishes "person who is being observed" from "person logged into the dashboard" (they overlap but aren't identical — a DRI is a user who may not be a reviewed developer on their own team).
-2. **Team modeling.** Is `team` a free-form string on the user, or a first-class `Team` entity with its own DRI? Unresolved in the architecture doc; the leaderboard commits to _at least_ a string.
-3. **Click-through target.** Where does a row click go? A per-user "all their sessions today" view? A longer-range profile? Not drawn.
-4. **Delta color semantics.** Green-for-up is cheerful but misleading on a spend metric. Consider neutral (both directions gray), or invert for cost columns specifically.
-5. **Hourly rollup table.** The sparkline demands it — confirm the schema and retention.
-6. **Sort/filter controls.** Currently implicit (spend desc, today). Will v1 need "sort by turns," "filter to team," "last 7d instead of today"? If yes, the density-based column-hiding model interacts awkwardly with user-chosen column sets.
-7. **Scaling past a roster.** 12 rows is a roster; 500+ rows is a directory. Pagination, virtualization, and a "show only active today" filter all become necessary. The prototype doesn't commit.
+1. **"Developer" vs "user" naming.** Pick one; the prototype uses both. Ties into whether the product's vocabulary distinguishes "person who is being observed" from "person logged into the dashboard" (they overlap but aren't identical — a DRI is a user who may not be a reviewed developer on their own team). **Update 2026-09-12: the glossary settles the entity (`user`); "developer" survives only as the leaderboard's display label.**
+2. **Team modeling.** Is `team` a free-form string on the user, or a first-class `Team` entity with its own DRI? Unresolved in the architecture doc; the leaderboard commits to _at least_ a string. **Still deferred — the team/avatar column ships with the Team entity in v2 (decision 10).**
+3. **Click-through target.** Where does a row click go? A per-user "all their sessions today" view? A longer-range profile? Not drawn. **RESOLVED 2026-09-12 — decision 18: `#/leaderboard/:user`, a 30-day spend chart plus the developer's sessions.**
+4. **Delta color semantics.** Green-for-up is cheerful but misleading on a spend metric. Consider neutral (both directions gray), or invert for cost columns specifically. **RESOLVED 2026-09-12 — decision 18: colorless direction arrows; the color question stays closed until a second delta-able metric exists.**
+5. **Hourly rollup table.** The sparkline demands it — confirm the schema and retention. **RESOLVED 2026-09-12 — decision 18: `model_hourly_rollup` (UTC hours); retention is "keep for now", revisit with real volume.**
+6. **Sort/filter controls.** Currently implicit (spend desc, today). Will v1 need "sort by turns," "filter to team," "last 7d instead of today"? If yes, the density-based column-hiding model interacts awkwardly with user-chosen column sets. **Still open.**
+7. **Scaling past a roster.** 12 rows is a roster; 500+ rows is a directory. Pagination, virtualization, and a "show only active today" filter all become necessary. The prototype doesn't commit. **Still open.**
