@@ -3,12 +3,24 @@ import type { ModelRollupRow, RollupsSnapshot, SessionSummary } from "../api";
 import {
   aggregateLeaderboard,
   dailyCostSeries,
+  localDayKey,
   type LeaderboardRow,
 } from "./leaderboard";
 
 const NOW = new Date("2026-09-12T10:00:00Z"); // UTC: today 09-12, trailing 09-05..09-11
 const PRICED = "GLM-5.3-Flash"; // $0.15/M in, $0.50/M out
 const UNPRICED = "some-unknown-model";
+
+/** UTC hour bucket for `hour` o'clock, `dayOffset` local days from NOW. */
+const localHourBucket = (dayOffset: number, hour: number): string =>
+  new Date(NOW.getFullYear(), NOW.getMonth(), NOW.getDate() + dayOffset, hour)
+    .toISOString()
+    .slice(0, 13);
+
+const localDay = (dayOffset: number): string =>
+  localDayKey(
+    new Date(NOW.getFullYear(), NOW.getMonth(), NOW.getDate() + dayOffset),
+  );
 
 const session = (
   sessionId: string,
@@ -54,6 +66,7 @@ const MEGA = 1_000_000;
 const snapshot = (partial: Partial<RollupsSnapshot> = {}): RollupsSnapshot => ({
   totals: [],
   daily: [],
+  user_hourly: [],
   model_daily: [],
   model_totals: [],
   model_hourly: [],
@@ -110,16 +123,38 @@ describe("aggregateLeaderboard", () => {
     expect(rows.map((r) => r.userId)).toEqual(["alice", "bob"]);
   });
 
-  test("delta compares the UTC day against the trailing 7-day mean", () => {
+  test("delta compares the LOCAL day against the trailing 7-day mean", () => {
+    // hourly rows, re-bucketed into the viewer's calendar days (decision 27)
     const rows = aggregateLeaderboard(
       [],
       snapshot({
-        model_daily: [
-          modelRow("alice", "2026-09-12", PRICED, 1, MEGA, MEGA),
-          modelRow("alice", "2026-09-11", PRICED, 1, MEGA, MEGA),
+        model_hourly: [
+          modelRow(
+            "alice",
+            localHourBucket(0, NOW.getHours()),
+            PRICED,
+            1,
+            MEGA,
+            MEGA,
+          ),
+          modelRow(
+            "alice",
+            localHourBucket(-1, NOW.getHours()),
+            PRICED,
+            1,
+            MEGA,
+            MEGA,
+          ),
           // The other six trailing days are absent → they count as zero,
           // so the mean is 0.65/7 and today is exactly 7× it.
-          modelRow("bob", "2026-09-12", PRICED, 1, MEGA, MEGA),
+          modelRow(
+            "bob",
+            localHourBucket(0, NOW.getHours()),
+            PRICED,
+            1,
+            MEGA,
+            MEGA,
+          ),
         ],
       }),
       NOW,
@@ -135,9 +170,23 @@ describe("aggregateLeaderboard", () => {
     const rows = aggregateLeaderboard(
       [],
       snapshot({
-        model_daily: [
-          modelRow("alice", "2026-09-12", UNPRICED, 1, MEGA, MEGA),
-          modelRow("alice", "2026-09-11", PRICED, 1, MEGA, MEGA),
+        model_hourly: [
+          modelRow(
+            "alice",
+            localHourBucket(0, NOW.getHours()),
+            UNPRICED,
+            1,
+            MEGA,
+            MEGA,
+          ),
+          modelRow(
+            "alice",
+            localHourBucket(-1, NOW.getHours()),
+            PRICED,
+            1,
+            MEGA,
+            MEGA,
+          ),
         ],
       }),
       NOW,
@@ -182,27 +231,31 @@ describe("aggregateLeaderboard", () => {
 });
 
 describe("dailyCostSeries", () => {
-  test("spans the requested UTC days oldest → newest with zeros for gaps", () => {
+  test("spans the requested LOCAL days oldest → newest with zeros for gaps", () => {
     const series = dailyCostSeries(
       [
-        modelRow("alice", "2026-09-11", PRICED, 1, MEGA, MEGA),
-        modelRow("alice", "2026-09-12", UNPRICED, 1, MEGA, MEGA),
+        modelRow("alice", localHourBucket(-1, 12), PRICED, 1, MEGA, MEGA),
+        modelRow("alice", localHourBucket(0, 9), UNPRICED, 1, MEGA, MEGA),
       ],
       5,
       NOW,
     );
     expect(series.map((d) => d.day)).toEqual([
-      "2026-09-08",
-      "2026-09-09",
-      "2026-09-10",
-      "2026-09-11",
-      "2026-09-12",
+      localDay(-4),
+      localDay(-3),
+      localDay(-2),
+      localDay(-1),
+      localDay(0),
     ]);
     expect(series[3]).toEqual({
-      day: "2026-09-11",
+      day: localDay(-1),
       cost: 0.65,
       unpriced: false,
     });
-    expect(series[4]).toEqual({ day: "2026-09-12", cost: 0, unpriced: true });
+    expect(series[4]).toEqual({
+      day: localDay(0),
+      cost: 0,
+      unpriced: true,
+    });
   });
 });

@@ -23,7 +23,7 @@ const refusingStore = (): Store => ({
   deleteSession: () => {
     throw new Error("store must not be touched");
   },
-  pruneRawOlderThan: () => {
+  pruneRaw: () => {
     throw new Error("store must not be touched");
   },
   backfillTokenTotals: () => {
@@ -34,6 +34,7 @@ const refusingStore = (): Store => ({
     model_totals: [],
     daily: [],
     model_daily: [],
+    user_hourly: [],
     model_hourly: [],
   }),
   backfillRollups: () => {

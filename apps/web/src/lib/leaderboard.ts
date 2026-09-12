@@ -28,6 +28,20 @@ export const dayKey = (d: Date): string => d.toISOString().slice(0, 10);
 /** UTC hour key of a date: "2026-09-12T09". */
 export const hourKey = (d: Date): string => d.toISOString().slice(0, 13);
 
+/**
+ * The viewer's local day key (v2 decision 27): daily display re-buckets the
+ * UTC-hour rollups into the browser's calendar days, so for a UTC+8 team
+ * "today" ends at local midnight — storage stays UTC (decision 18).
+ */
+export const localDayKey = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+
+/** UTC hour bucket → local day key. */
+export const localDayOfHourBucket = (bucket: string): string =>
+  localDayKey(new Date(`${bucket}:00Z`));
+
 const rowUsage = (row: ModelRollupRow): TokenUsage => ({
   input_tokens: row.input_tokens,
   output_tokens: row.output_tokens,
@@ -78,26 +92,43 @@ const hourlyTrend = (rows: ModelRollupRow[], now: Date): number[] => {
   });
 };
 
+/** Priced spend + unpriced flag per LOCAL day, from UTC-hour rollup rows. */
+const localDaySpend = (
+  rows: ModelRollupRow[],
+): Map<string, { cost: number; unpriced: boolean }> => {
+  const byDay = new Map<string, { cost: number; unpriced: boolean }>();
+  for (const row of rows) {
+    const price = priceFor(row.model);
+    const day = localDayOfHourBucket(row.bucket);
+    const entry = byDay.get(day) ?? { cost: 0, unpriced: false };
+    if (price === null) entry.unpriced = true;
+    else entry.cost += estimateCost(rowUsage(row), price);
+    byDay.set(day, entry);
+  }
+  return byDay;
+};
+
 /**
- * One developer's per-day spend over the last `days` UTC days (oldest →
- * newest) — the drill-down chart's data. Absent days are zero; unpriced
- * contributions are flagged so the view can annotate rather than misprice.
+ * One developer's per-day spend over the last `days` LOCAL days (oldest →
+ * newest) — the drill-down chart's data, re-bucketed from UTC-hour rollups
+ * into the viewer's calendar days (v2 decision 27). Absent days are zero;
+ * unpriced contributions are flagged so the view can annotate rather than
+ * misprice.
  */
 export const dailyCostSeries = (
   rows: ModelRollupRow[],
   days: number,
   now = new Date(),
 ): { day: string; cost: number; unpriced: boolean }[] => {
-  const byDay = new Map<string, { cost: number; unpriced: boolean }>();
-  for (const row of rows) {
-    const price = priceFor(row.model);
-    const entry = byDay.get(row.bucket) ?? { cost: 0, unpriced: false };
-    if (price === null) entry.unpriced = true;
-    else entry.cost += estimateCost(rowUsage(row), price);
-    byDay.set(row.bucket, entry);
-  }
+  const byDay = localDaySpend(rows);
   return Array.from({ length: days }, (_, i) => {
-    const day = dayKey(new Date(now.getTime() - (days - 1 - i) * 86_400_000));
+    const day = localDayKey(
+      new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - (days - 1 - i),
+      ),
+    );
     const entry = byDay.get(day);
     return {
       day,
@@ -115,18 +146,21 @@ type SessionFacts = {
 
 /**
  * Build the leaderboard from the decision-18 rollups: all-time columns come
- * from the snapshot's totals, today/delta/trend from its daily and hourly
- * windows. The sessions list keeps supplying session counts, top agent, and
- * last-seen — no per-session event fetching anywhere.
+ * from the snapshot's totals, today/delta/trend from its hourly windows.
+ * Today and the trailing week are LOCAL calendar days re-bucketed from the
+ * UTC-hour rows (v2 decision 27) — storage stays UTC. The sessions list
+ * keeps supplying session counts, top agent, and last-seen.
  */
 export const aggregateLeaderboard = (
   sessions: SessionSummary[],
   rollups: RollupsSnapshot,
   now = new Date(),
 ): LeaderboardRow[] => {
-  const today = dayKey(now);
+  const today = localDayKey(now);
   const trailingDays = Array.from({ length: 7 }, (_, i) =>
-    dayKey(new Date(now.getTime() - (i + 1) * 86_400_000)),
+    localDayKey(
+      new Date(now.getFullYear(), now.getMonth(), now.getDate() - (i + 1)),
+    ),
   );
 
   const facts = new Map<string, SessionFacts>();
@@ -144,31 +178,31 @@ export const aggregateLeaderboard = (
 
   const totalsByUser = new Map(rollups.totals.map((r) => [r.user_id, r]));
   const modelTotalsByUser = groupByUser(rollups.model_totals);
-  const dailyByUser = groupByUser(rollups.model_daily);
   const hourlyByUser = groupByUser(rollups.model_hourly);
 
   const userIds = new Set<string>([
     ...facts.keys(),
     ...totalsByUser.keys(),
     ...modelTotalsByUser.keys(),
-    ...dailyByUser.keys(),
     ...hourlyByUser.keys(),
   ]);
   return [...userIds]
     .map((userId): LeaderboardRow => {
       const modelTotals = modelTotalsByUser.get(userId) ?? [];
-      const dailyRows = dailyByUser.get(userId) ?? [];
-      const todayCost = pricedCost(
-        dailyRows.filter((row) => row.bucket === today),
-      );
+      const localDays = localDaySpend(hourlyByUser.get(userId) ?? []);
+      const todayEntry = localDays.get(today);
+      const todayCost = todayEntry
+        ? todayEntry.unpriced
+          ? null
+          : todayEntry.cost
+        : 0;
       let trailingSum = 0;
       let trailingPriced = true;
       for (const day of trailingDays) {
-        const dayCost = pricedCost(
-          dailyRows.filter((row) => row.bucket === day),
-        );
-        if (dayCost === null) trailingPriced = false;
-        else trailingSum += dayCost;
+        const dayEntry = localDays.get(day);
+        if (dayEntry === undefined) continue; // zero day
+        if (dayEntry.unpriced) trailingPriced = false;
+        else trailingSum += dayEntry.cost;
       }
       const trailingMean = trailingSum / 7;
       return {

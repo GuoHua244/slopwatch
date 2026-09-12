@@ -1,126 +1,257 @@
+import { useMemo, useState } from "react";
 import type { SessionSummary } from "../api";
 import { useRollups } from "../hooks/useRollups";
 import { useTeams } from "../hooks/useTeams";
 import { clock, fmtCost, fmtDelta, fmtTokens } from "../lib/format";
-import { aggregateLeaderboard } from "../lib/leaderboard";
+import { aggregateLeaderboard, type LeaderboardRow } from "../lib/leaderboard";
 import { sparklinePoints } from "../lib/sparkline";
 
 const rank = (index: number): string => String(index + 1).padStart(2, "0");
 
+type SortKey =
+  | "costUsd"
+  | "sessions"
+  | "turns"
+  | "requests"
+  | "inputTokens"
+  | "outputTokens"
+  | "cacheReadTokens"
+  | "userId";
+
+type Column = {
+  key: SortKey | "team" | "topAgent" | "lastSeen" | "trend" | "delta";
+  label: string;
+  title?: string;
+  /** Numeric cells right-align; sortable columns get a click-to-sort header. */
+  num?: boolean;
+  sortable?: boolean;
+};
+
+const COLUMNS: Column[] = [
+  { key: "team", label: "team" },
+  { key: "userId", label: "developer", sortable: true },
+  { key: "sessions", label: "sessions", num: true, sortable: true },
+  { key: "turns", label: "turns", num: true, sortable: true },
+  { key: "requests", label: "requests", num: true, sortable: true },
+  { key: "inputTokens", label: "in", num: true, sortable: true },
+  { key: "outputTokens", label: "out", num: true, sortable: true },
+  { key: "cacheReadTokens", label: "cache rd", num: true, sortable: true },
+  { key: "topAgent", label: "top agent" },
+  { key: "lastSeen", label: "last seen" },
+  {
+    key: "trend",
+    label: "24h",
+    title: "Spend per UTC hour over the last 24 hours",
+  },
+  {
+    key: "delta",
+    label: "vs 7d avg",
+    title: "Local-today spend vs the trailing 7-day mean",
+  },
+  {
+    key: "costUsd",
+    label: "cost est.",
+    title: "Public list-price estimate — plan billing may differ",
+    num: true,
+    sortable: true,
+  },
+];
+
+type RowWithTeam = LeaderboardRow & { teamName: string | null };
+
+const cellValue = (row: RowWithTeam, key: Column["key"]): string | number => {
+  switch (key) {
+    case "team":
+      return row.teamName ?? "unassigned";
+    case "lastSeen":
+      return row.lastActiveAt;
+    case "trend":
+    case "delta":
+      return 0;
+    default:
+      // costUsd is the only nullable sortable value; null sorts as 0
+      return (row[key] ?? 0) as string | number;
+  }
+};
+
 /**
  * The developer leaderboard, served from the decision-18 rollups — one
- * rollups call plus the session list, no per-session event fetching. Clicking
- * a row drills into that developer (the "(unknown)" bucket has no identity to
- * drill into). The team column is the user's current team (decision 23);
- * "unassigned" users render as "—" until the admin files them.
+ * rollups call plus the session list. The team column groups users by their
+ * current team (decision 23) with an "unassigned" bucket; the numeric headers
+ * sort and the team dropdown filters (v2 decision 27). Clicking a row drills
+ * into that developer.
  */
 export const LeaderboardView = ({
   sessions,
 }: {
   sessions: SessionSummary[];
 }) => {
-  const rollups = useRollups({ days: 8 });
+  const rollups = useRollups({ days: 8, hours: 8 * 24 });
   const teams = useTeams();
+  const [sortKey, setSortKey] = useState<SortKey>("costUsd");
+  const [sortDesc, setSortDesc] = useState(true);
+  const [teamFilter, setTeamFilter] = useState<string>("all");
+
   const rows = aggregateLeaderboard(sessions, rollups);
+  const teamByUser = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const team of teams) {
+      for (const member of team.members) map.set(member, team.name);
+    }
+    return map;
+  }, [teams]);
+
+  const rowsWithTeam: RowWithTeam[] = rows.map((row) => ({
+    ...row,
+    teamName: teamByUser.get(row.userId) ?? null,
+  }));
+
+  const visible = rowsWithTeam
+    .filter(
+      (row) =>
+        teamFilter === "all" ||
+        (teamFilter === "unassigned"
+          ? row.teamName === null
+          : row.teamName === teamFilter),
+    )
+    .sort((a, b) => {
+      const va = cellValue(a, sortKey);
+      const vb = cellValue(b, sortKey);
+      let cmp: number;
+      if (typeof va === "string" || typeof vb === "string") {
+        cmp = String(va).localeCompare(String(vb));
+      } else {
+        cmp = va - vb;
+      }
+      return sortDesc ? -cmp : cmp;
+    });
+
   if (rows.length === 0) return <p className="empty">no sessions yet</p>;
-  const teamByUser = new Map<string, string>();
-  for (const team of teams) {
-    for (const member of team.members) teamByUser.set(member, team.name);
-  }
-  const maxCost = Math.max(...rows.map((row) => row.costUsd ?? 0), 0);
+  const maxCost = Math.max(...rowsWithTeam.map((row) => row.costUsd ?? 0), 0);
+
+  const toggleSort = (key: SortKey): void => {
+    if (sortKey === key) setSortDesc(!sortDesc);
+    else {
+      setSortKey(key);
+      setSortDesc(true);
+    }
+  };
+
+  const sortMarker = (key: Column["key"]): string =>
+    sortKey === key ? (sortDesc ? " ↓" : " ↑") : "";
+
   return (
-    <table className="usage leaderboard">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>developer</th>
-          <th>team</th>
-          <th>sessions</th>
-          <th>turns</th>
-          <th>requests</th>
-          <th>in</th>
-          <th>out</th>
-          <th>cache rd</th>
-          <th>top agent</th>
-          <th>last seen</th>
-          <th title="Spend per UTC hour over the last 24 hours">24h</th>
-          <th title="UTC-today spend vs the trailing 7-day mean">vs 7d avg</th>
-          <th title="Public list-price estimate — plan billing may differ">
-            cost est.
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row, index) => {
-          const drillable =
-            row.userId !== "(unknown)" && row.sessions > 0
-              ? `#/leaderboard/${encodeURIComponent(row.userId)}`
-              : null;
-          const teamName = teamByUser.get(row.userId);
-          return (
-            <tr
-              key={row.userId}
-              className={drillable ? "row-link" : undefined}
-              onClick={
-                drillable
-                  ? () => {
-                      window.location.hash = drillable;
-                    }
-                  : undefined
-              }
-            >
-              <td className="num dim">{rank(index)}</td>
-              <td>{row.userId}</td>
-              <td className={teamName ? undefined : "dim"}>
-                {teamName ?? "unassigned"}
-              </td>
-              <td className="num">{row.sessions}</td>
-              <td className="num">{row.turns}</td>
-              <td className="num">{row.requests}</td>
-              <td className="num">{fmtTokens(row.inputTokens)}</td>
-              <td className="num">{fmtTokens(row.outputTokens)}</td>
-              <td className="num">{fmtTokens(row.cacheReadTokens)}</td>
-              <td>{row.topAgent}</td>
-              <td className="dim">
-                {row.lastActiveAt ? clock(row.lastActiveAt) : "—"}
-              </td>
-              <td className="spark">
-                <svg viewBox="0 0 96 24" width="96" height="24" aria-hidden>
-                  <polyline points={sparklinePoints(row.trend, 96, 24)} />
-                </svg>
-              </td>
-              <td
-                className="num dim"
-                title={
-                  row.todayCostUsd === null
-                    ? undefined
-                    : `today ${fmtCost(row.todayCostUsd)}`
+    <>
+      <form className="admin-form" onSubmit={(e) => e.preventDefault()}>
+        <label className="dim">
+          team{" "}
+          <select
+            value={teamFilter}
+            onChange={(e) => setTeamFilter(e.target.value)}
+          >
+            <option value="all">all</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.name}>
+                {t.name}
+              </option>
+            ))}
+            <option value="unassigned">unassigned</option>
+          </select>
+        </label>
+      </form>
+      <table className="usage leaderboard">
+        <thead>
+          <tr>
+            <th>#</th>
+            {COLUMNS.map((col) => (
+              <th
+                key={col.key}
+                className={col.num ? "num" : undefined}
+                title={col.title}
+                onClick={
+                  col.sortable
+                    ? () => toggleSort(col.key as SortKey)
+                    : undefined
+                }
+                style={col.sortable ? { cursor: "pointer" } : undefined}
+              >
+                {col.label}
+                {col.sortable ? sortMarker(col.key) : ""}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {visible.map((row, index) => {
+            const drillable =
+              row.userId !== "(unknown)" && row.sessions > 0
+                ? `#/leaderboard/${encodeURIComponent(row.userId)}`
+                : null;
+            return (
+              <tr
+                key={row.userId}
+                className={drillable ? "row-link" : undefined}
+                onClick={
+                  drillable
+                    ? () => {
+                        window.location.hash = drillable;
+                      }
+                    : undefined
                 }
               >
-                {fmtDelta(row.deltaVsWeek)}
-              </td>
-              <td className="num">
-                {row.costUsd === null ? (
-                  "—"
-                ) : (
-                  <span className="cost-cell">
-                    <span>{fmtCost(row.costUsd)}</span>
-                    <span
-                      className="share"
-                      style={{
-                        width:
-                          maxCost > 0
-                            ? `${(row.costUsd / maxCost) * 100}%`
-                            : "0",
-                      }}
-                    />
-                  </span>
-                )}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+                <td className="num dim">{rank(index)}</td>
+                <td className={row.teamName ? undefined : "dim"}>
+                  {row.teamName ?? "unassigned"}
+                </td>
+                <td>{row.userId}</td>
+                <td className="num">{row.sessions}</td>
+                <td className="num">{row.turns}</td>
+                <td className="num">{row.requests}</td>
+                <td className="num">{fmtTokens(row.inputTokens)}</td>
+                <td className="num">{fmtTokens(row.outputTokens)}</td>
+                <td className="num">{fmtTokens(row.cacheReadTokens)}</td>
+                <td>{row.topAgent}</td>
+                <td className="dim">
+                  {row.lastActiveAt ? clock(row.lastActiveAt) : "—"}
+                </td>
+                <td className="spark">
+                  <svg viewBox="0 0 96 24" width="96" height="24" aria-hidden>
+                    <polyline points={sparklinePoints(row.trend, 96, 24)} />
+                  </svg>
+                </td>
+                <td
+                  className="num dim"
+                  title={
+                    row.todayCostUsd === null
+                      ? undefined
+                      : `today ${fmtCost(row.todayCostUsd)}`
+                  }
+                >
+                  {fmtDelta(row.deltaVsWeek)}
+                </td>
+                <td className="num">
+                  {row.costUsd === null ? (
+                    "—"
+                  ) : (
+                    <span className="cost-cell">
+                      <span>{fmtCost(row.costUsd)}</span>
+                      <span
+                        className="share"
+                        style={{
+                          width:
+                            maxCost > 0
+                              ? `${(row.costUsd / maxCost) * 100}%`
+                              : "0",
+                        }}
+                      />
+                    </span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </>
   );
 };

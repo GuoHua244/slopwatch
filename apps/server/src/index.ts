@@ -1,6 +1,7 @@
 import { loadConfig } from "./config";
 import { createApp } from "./http";
 import { createPgStore } from "./store";
+import { createS3Client } from "./s3";
 import { fileURLToPath } from "node:url";
 
 const config = loadConfig();
@@ -18,11 +19,21 @@ if (config.adminToken === undefined) {
 const store = createPgStore(config.databaseUrl);
 await store.migrate();
 
-// Decision 11: prune expired raw payloads daily (and once at boot).
+// Decision 11 + v2 decision 24: expire raw payloads past their effective
+// per-team TTL (and once at boot), archiving to the S3-compatible cold store
+// when one is configured.
+const archive = config.s3 ? createS3Client(config.s3) : undefined;
 const prune = () =>
   store
-    .pruneRawOlderThan(config.rawTtlDays)
-    .then((n) => n > 0 && console.log(`pruned raw payloads from ${n} events`))
+    .pruneRaw({ defaultDays: config.rawTtlDays, archive })
+    .then(({ archived, pruned }) => {
+      if (pruned > 0) {
+        console.log(
+          `pruned raw payloads from ${pruned} events` +
+            (archive ? ` (${archived} archived to object storage)` : ""),
+        );
+      }
+    })
     .catch((e: unknown) => console.error("prune failed:", e));
 void prune();
 setInterval(prune, 24 * 60 * 60 * 1000);

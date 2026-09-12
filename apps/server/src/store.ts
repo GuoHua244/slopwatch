@@ -106,6 +106,15 @@ export type DailyRollupRow = {
   tool_calls: number;
 };
 
+/** Per-hour turn/tool counts for one developer (v2 decision 27). */
+export type UserHourlyRollupRow = {
+  user_id: string;
+  /** UTC hour, "YYYY-MM-DDTHH". */
+  hour: string;
+  turns: number;
+  tool_calls: number;
+};
+
 /** Per-model request/token counts over a UTC day or hour bucket (decision 18). */
 export type ModelRollupRow = {
   user_id: string;
@@ -128,6 +137,7 @@ export type RollupsSnapshot = {
   totals: { user_id: string; turns: number; tool_calls: number }[];
   model_totals: ModelRollupRow[];
   daily: DailyRollupRow[];
+  user_hourly: UserHourlyRollupRow[];
   model_daily: ModelRollupRow[];
   model_hourly: ModelRollupRow[];
 };
@@ -180,8 +190,16 @@ export type Store = {
    * and the row itself. The leak-remediation action. False when absent.
    */
   deleteSession(sessionId: string): Promise<boolean>;
-  /** Decision 11: null out raw payloads older than the TTL. Returns rows touched. */
-  pruneRawOlderThan(days: number): Promise<number>;
+  /**
+   * Decision 11 + v2 decision 24: expire raw payloads past their effective
+   * TTL — the owning user's current team override, else the default —
+   * archiving each payload to the sink first when one is configured.
+   * Archive failures leave the row for the next run.
+   */
+  pruneRaw(opts: {
+    defaultDays: number;
+    archive?: { putObject(key: string, body: string): Promise<void> };
+  }): Promise<{ archived: number; pruned: number }>;
   /**
    * Rewrite each session's token columns with the full sum over its events.
    * The columns only accumulated events appended after they shipped, so
@@ -319,6 +337,13 @@ CREATE TABLE IF NOT EXISTS user_daily_rollup (
   tool_calls BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, day)
 );
+CREATE TABLE IF NOT EXISTS user_hourly_rollup (
+  user_id    TEXT NOT NULL,
+  hour       TEXT NOT NULL,
+  turns      BIGINT NOT NULL DEFAULT 0,
+  tool_calls BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, hour)
+);
 CREATE TABLE IF NOT EXISTS model_daily_rollup (
   user_id            TEXT NOT NULL,
   day                TEXT NOT NULL,
@@ -361,6 +386,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams (id) ON
 -- ADR 0004: the session's team is a snapshot from creation time — no FK, so
 -- a later team delete (or reorg) can never rewrite captured history.
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS team_id UUID;
+-- v2 decision 24: archive bookkeeping for the raw-payload cold store
+ALTER TABLE events ADD COLUMN IF NOT EXISTS raw_archived BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS archive_key TEXT;
 `;
 
 const USER_SELECT = `
@@ -441,6 +469,7 @@ const recomputeRollups = async (
   const filter = scoped ? " AND s.user_id = $1" : "";
   for (const table of [
     "user_daily_rollup",
+    "user_hourly_rollup",
     "model_daily_rollup",
     "model_hourly_rollup",
   ]) {
@@ -457,6 +486,18 @@ const recomputeRollups = async (
     `INSERT INTO user_daily_rollup (user_id, day, turns, tool_calls)
      SELECT s.user_id,
             ${DAY_BUCKET_SQL},
+            COUNT(*) FILTER (WHERE e.kind = 'turn' AND e.payload->>'event' = 'start'),
+            COUNT(*) FILTER (WHERE e.kind = 'tool' AND e.payload->>'event' = 'call')
+     ${from}
+     GROUP BY s.user_id, 2
+     HAVING COUNT(*) FILTER (WHERE e.kind = 'turn' AND e.payload->>'event' = 'start') > 0
+         OR COUNT(*) FILTER (WHERE e.kind = 'tool' AND e.payload->>'event' = 'call') > 0`,
+    args,
+  );
+  const flatHourly = await client.query(
+    `INSERT INTO user_hourly_rollup (user_id, hour, turns, tool_calls)
+     SELECT s.user_id,
+            ${HOUR_BUCKET_SQL},
             COUNT(*) FILTER (WHERE e.kind = 'turn' AND e.payload->>'event' = 'start'),
             COUNT(*) FILTER (WHERE e.kind = 'tool' AND e.payload->>'event' = 'call')
      ${from}
@@ -487,7 +528,12 @@ const recomputeRollups = async (
     modelInsert("model_hourly_rollup", HOUR_BUCKET_SQL),
     args,
   );
-  return (flat.rowCount ?? 0) + (daily.rowCount ?? 0) + (hourly.rowCount ?? 0);
+  return (
+    (flat.rowCount ?? 0) +
+    (flatHourly.rowCount ?? 0) +
+    (daily.rowCount ?? 0) +
+    (hourly.rowCount ?? 0)
+  );
 };
 
 export const createPgStore = (databaseUrl: string): Store => {
@@ -615,6 +661,17 @@ export const createPgStore = (databaseUrl: string): Store => {
               [rollupUser, day, d.turns, d.toolCalls],
             );
           }
+          for (const [hour, d] of deltas.hourly) {
+            if (d.turns === 0 && d.toolCalls === 0) continue;
+            await client.query(
+              `INSERT INTO user_hourly_rollup (user_id, hour, turns, tool_calls)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (user_id, hour) DO UPDATE SET
+                 turns = user_hourly_rollup.turns + EXCLUDED.turns,
+                 tool_calls = user_hourly_rollup.tool_calls + EXCLUDED.tool_calls`,
+              [rollupUser, hour, d.turns, d.toolCalls],
+            );
+          }
           const upsertModelRollup = async (
             table: "model_daily_rollup" | "model_hourly_rollup",
             column: "day" | "hour",
@@ -697,12 +754,46 @@ export const createPgStore = (databaseUrl: string): Store => {
       }));
     },
 
-    async pruneRawOlderThan(days) {
-      const { rowCount } = await pool.query(
-        "UPDATE events SET raw = NULL WHERE raw IS NOT NULL AND received_at < now() - ($1 || ' days')::interval",
-        [days],
+    async pruneRaw({ defaultDays, archive }) {
+      // effective TTL = the owner's current team override, else the global default;
+      // sessions without a user (or team) always fall back to the default
+      const candidates = await pool.query(
+        `SELECT e.session_id, e.event_seq, e.agent, e.raw
+        FROM events e
+        JOIN sessions s ON s.session_id = e.session_id
+        LEFT JOIN users u ON u.name = s.user_id
+        LEFT JOIN teams t ON t.id = u.team_id
+        WHERE e.raw IS NOT NULL
+          AND e.received_at < now() - make_interval(days => COALESCE(t.raw_retention_days, $1))
+        LIMIT 200`,
+        [defaultDays],
       );
-      return rowCount ?? 0;
+      let archived = 0;
+      let pruned = 0;
+      for (const row of candidates.rows) {
+        const sessionId = row.session_id as string;
+        const seq = Number(row.event_seq);
+        const key = `raw/${row.agent}/${sessionId}/${seq}.json`;
+        if (archive) {
+          try {
+            await archive.putObject(key, JSON.stringify(row.raw));
+          } catch {
+            continue; // keep the row; the next run retries the upload
+          }
+        }
+        await pool.query(
+          "UPDATE events SET raw = NULL, raw_archived = $3, archive_key = $4 WHERE session_id = $1 AND event_seq = $2",
+          [
+            sessionId,
+            seq,
+            archive !== undefined,
+            archive !== undefined ? key : null,
+          ],
+        );
+        if (archive !== undefined) archived += 1;
+        pruned += 1;
+      }
+      return { archived, pruned };
     },
 
     async backfillTokenTotals() {
@@ -771,6 +862,10 @@ export const createPgStore = (databaseUrl: string): Store => {
         "SELECT user_id, day, turns, tool_calls FROM user_daily_rollup WHERE day >= $1 ORDER BY user_id, day",
         [sinceDay],
       );
+      const userHourly = await pool.query(
+        "SELECT user_id, hour, turns, tool_calls FROM user_hourly_rollup WHERE hour >= $1 ORDER BY user_id, hour",
+        [sinceHour],
+      );
       const modelDaily = await pool.query(
         `SELECT ${modelSelect} FROM model_daily_rollup WHERE day >= $1 ORDER BY user_id, day, model`,
         [sinceDay],
@@ -796,6 +891,12 @@ export const createPgStore = (databaseUrl: string): Store => {
         })),
         model_daily: modelDaily.rows.map(modelRollupRow),
         model_hourly: modelHourly.rows.map(modelRollupRow),
+        user_hourly: userHourly.rows.map((r) => ({
+          user_id: r.user_id as string,
+          hour: r.hour as string,
+          turns: Number(r.turns),
+          tool_calls: Number(r.tool_calls),
+        })),
       };
     },
 

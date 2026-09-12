@@ -9,6 +9,7 @@ const EMPTY: RollupsSnapshot = {
   model_totals: [],
   daily: [],
   model_daily: [],
+  user_hourly: [],
   model_hourly: [],
 };
 
@@ -18,7 +19,7 @@ const EMPTY: RollupsSnapshot = {
  * its trailing week); the hourly window covers the sparkline.
  */
 export const useRollups = (
-  params: { days?: number } = {},
+  params: { days?: number; hours?: number } = {},
   intervalMs = 5000,
 ): RollupsSnapshot => {
   const [snapshot, setSnapshot] = useState<RollupsSnapshot>(EMPTY);

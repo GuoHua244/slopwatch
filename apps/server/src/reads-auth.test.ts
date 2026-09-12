@@ -20,7 +20,7 @@ const scriptedStore = (): Store => {
       return [];
     },
     deleteSession: async () => false,
-    pruneRawOlderThan: async () => 0,
+    pruneRaw: async () => ({ archived: 0, pruned: 0 }),
     backfillTokenTotals: async () => 0,
     listRollups: async () => {
       calls.push("listRollups");
@@ -28,6 +28,7 @@ const scriptedStore = (): Store => {
         totals: [],
         model_totals: [],
         daily: [],
+        user_hourly: [],
         model_daily: [],
         model_hourly: [],
       };

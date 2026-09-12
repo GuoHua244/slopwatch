@@ -16,13 +16,15 @@ export const DeveloperDetail = ({
   userId: string;
   sessions: SessionSummary[];
 }) => {
-  const rollups = useRollups({ days: 31 });
+  // 31 local days of spend need hourly rows (v2 decision 27): daily display
+  // re-buckets UTC hours into the viewer's calendar days.
+  const rollups = useRollups({ days: 31, hours: 31 * 24 });
   const row =
     aggregateLeaderboard(sessions, rollups).find(
       (candidate) => candidate.userId === userId,
     ) ?? null;
   const series = dailyCostSeries(
-    rollups.model_daily.filter((r) => r.user_id === userId),
+    rollups.model_hourly.filter((r) => r.user_id === userId),
     31,
   );
   const maxDay = Math.max(...series.map((d) => d.cost), 0);
@@ -74,7 +76,7 @@ export const DeveloperDetail = ({
               </dd>
             </div>
           </dl>
-          <h3>daily spend, last 30 days (UTC)</h3>
+          <h3>daily spend, last 30 days (local days)</h3>
           <div
             className="bars"
             role="img"

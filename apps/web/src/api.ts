@@ -48,6 +48,15 @@ export type DailyRollupRow = {
   tool_calls: number;
 };
 
+/** Row of GET /rollups — per-hour turn/tool counts for one developer. */
+export type UserHourlyRollupRow = {
+  user_id: string;
+  /** UTC hour, "YYYY-MM-DDTHH". */
+  hour: string;
+  turns: number;
+  tool_calls: number;
+};
+
 /**
  * Row of GET /rollups — per-model request/token counts over a UTC day or
  * hour bucket. Model grain comes back verbatim so the client keeps pricing.
@@ -69,6 +78,7 @@ export type RollupsSnapshot = {
   totals: { user_id: string; turns: number; tool_calls: number }[];
   model_totals: ModelRollupRow[];
   daily: DailyRollupRow[];
+  user_hourly: UserHourlyRollupRow[];
   model_daily: ModelRollupRow[];
   model_hourly: ModelRollupRow[];
 };

@@ -27,7 +27,7 @@ const refusingStore = (): Store => ({
   deleteSession: () => {
     throw new Error("store must not be touched");
   },
-  pruneRawOlderThan: () => {
+  pruneRaw: () => {
     throw new Error("store must not be touched");
   },
   backfillTokenTotals: () => {
@@ -37,6 +37,7 @@ const refusingStore = (): Store => ({
     totals: [],
     model_totals: [],
     daily: [],
+    user_hourly: [],
     model_daily: [],
     model_hourly: [],
   }),
@@ -184,6 +185,7 @@ describe("GET /rollups", () => {
           model_totals: [],
           daily: [],
           model_daily: [],
+          user_hourly: [],
           model_hourly: [],
         };
       },
@@ -203,6 +205,7 @@ describe("GET /rollups", () => {
       model_totals: [],
       daily: [],
       model_daily: [],
+      user_hourly: [],
       model_hourly: [],
     });
     expect(seen).toBeDefined();

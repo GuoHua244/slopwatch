@@ -30,6 +30,8 @@ export type ModelDelta = {
 export type RollupDeltas = {
   /** day → counters */
   daily: Map<string, FlatDelta>;
+  /** hour → counters (v2 decision 27: feeds local-day display re-bucketing) */
+  hourly: Map<string, FlatDelta>;
   /** day → model → counters */
   modelDaily: Map<string, Map<string, ModelDelta>>;
   /** hour → model → counters */
@@ -72,6 +74,7 @@ const bumpModel = (
 export const rollupDeltas = (events: NormalEvent[]): RollupDeltas => {
   const deltas: RollupDeltas = {
     daily: new Map(),
+    hourly: new Map(),
     modelDaily: new Map(),
     modelHourly: new Map(),
   };
@@ -81,11 +84,19 @@ export const rollupDeltas = (events: NormalEvent[]): RollupDeltas => {
       const row = deltas.daily.get(day) ?? { turns: 0, toolCalls: 0 };
       row.turns += 1;
       deltas.daily.set(day, row);
+      const hour = utcHour(event.occurred_at);
+      const hourRow = deltas.hourly.get(hour) ?? { turns: 0, toolCalls: 0 };
+      hourRow.turns += 1;
+      deltas.hourly.set(hour, hourRow);
     } else if (event.kind === "tool" && event.event === "call") {
       const day = utcDay(event.occurred_at);
       const row = deltas.daily.get(day) ?? { turns: 0, toolCalls: 0 };
       row.toolCalls += 1;
       deltas.daily.set(day, row);
+      const hour = utcHour(event.occurred_at);
+      const hourRow = deltas.hourly.get(hour) ?? { turns: 0, toolCalls: 0 };
+      hourRow.toolCalls += 1;
+      deltas.hourly.set(hour, hourRow);
     } else if (event.kind === "model_request") {
       bumpModel(
         deltas.modelDaily,
