@@ -1,6 +1,6 @@
 # Slopwatch v2 Plan — Team Rollout
 
-**Status: PLANNED (2026-09-13).** Position and scope settled in a design interview; implementation not started. Decision numbering continues the ledger in [`v1-architecture-decisions.md`](./v1-architecture-decisions.md), which ends at 19. Companions: [`../CONTEXT.md`](../CONTEXT.md) (glossary — `Team` is defined there), ADR 0003 (authenticated reads) and ADR 0004 (team attribution) in [`../docs/adr/`](../docs/adr).
+**Status: SHIPPED (2026-09-13).** M0–M3 implemented, tested, and verified end-to-end on the dev deployment (real ZCode session captured through the new pipeline; live dashboard verified in the browser). Decisions 20–27 as settled in the design interview; implementation refinements recorded in "Landed" notes per decision and in the amendment list at the bottom. Decision numbering continues the ledger in [`v1-architecture-decisions.md`](./v1-architecture-decisions.md), which ends at 19. Companions: [`../CONTEXT.md`](../CONTEXT.md) (glossary — `Team` is defined there), ADR 0003 (authenticated reads) and ADR 0004 (team attribution) in [`../docs/adr/`](../docs/adr), and [`../docs/deploy.md`](../docs/deploy.md) (compose deployment).
 
 Goal: turn Slopwatch from a single-operator deployment into something a real team can be onboarded onto — protected reads, team-shaped reporting, retention policy, a deployable artifact, and capture that does not silently lose data.
 
@@ -96,3 +96,17 @@ Each milestone ends runnable and observable; `bun run ci` green before any of it
 
 - **Scope**: Docker Compose (Server + Postgres + MinIO) and deployment doc (decision 26); org-level webhook push (decision 25).
 - **Done when**: `compose up` on an intranet host serves the dashboard to a second machine; a finished session fires a webhook message; the offline buffer survives a Server restart from a client machine.
+
+---
+
+## Implementation notes (landed 2026-09-13, dev deployment)
+
+Refinements settled while building, consistent with the decisions above:
+
+- **Quarantine transport.** Quarantined lines ride the existing `POST /events` batch as a new `QuarantineEvent` (`kind: "quarantine"`, verbatim line byte-capped at 128 KB) and land in a `quarantine` table — never the event log. Inspectable at `GET /admin/quarantine`; the health page shows total/24h counters plus the latest verbatim lines.
+- **Buffer overflow is reported as quarantine.** Queue-cap drops (corrupt lines, age, size) surface on the next successful send as a quarantine event with reason `buffer-overflow` and a `{dropped_events}` body, so loss is always visible on the health page.
+- **The queue sweep only drains orphans.** E2E on the dev deployment caught the sweep replaying a live sidecar's queue file and tearing lines against its concurrent appends (visible as spurious `buffer-overflow` reports). The sweep now skips queue files whose sidecar is alive (pid + fresh heartbeat on ZCode, pid signal-0 on Claude Code); a live sidecar replays its own queue on every flush.
+- **Roster endpoint.** `GET /teams` (any authenticated user) returns `{id, name, members[]}` from the _current_ org chart — the leaderboard's team column is a current-roster grouping of all-time totals, while per-session `team_id` keeps the ADR 0004 accounting snapshot for any future team-timeseries.
+- **`user_hourly_rollup` added** (decision 27 groundwork): hourly turn/tool buckets fed at ingest alongside the daily table and recomputed from truth on delete/backfill; returned in `GET /rollups` as `user_hourly`. Local-day display re-buckets UTC hour rows in the browser.
+- **Webhook shape.** One operator-configured URL (settings table, admin UI under a new settings tab) receiving `{text}` per finished session; `webhook_format` adapts the body to feishu/dingtalk dialects. `POST /admin/webhook/test` pushes a real delivery so setup errors surface immediately. Delivery is fire-and-forget off the ingest path.
+- **SPA identity.** One user token (`localStorage`, legacy review-token key migrated) powers reads, review actions, and comments; the gate verifies via `GET /me` before rendering anything. The admin plane keeps its separate token and gained a settings tab.
