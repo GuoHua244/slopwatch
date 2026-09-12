@@ -6,7 +6,7 @@
  * (capped at --max-lifetime-ms).
  *
  * Usage: bun live.ts (--file <rollout> | --session-id <id>)
- *        [--idle-ms 120000] [--max-lifetime-ms 14400000]
+ *        [--idle-ms 300000] [--max-lifetime-ms 14400000]
  *        [--server-url http://host:port --token <bearer>] [--cwd <dir>]
  */
 import { execSync } from "node:child_process";
@@ -62,7 +62,7 @@ const file =
         `model-io-${sessionIdArg}.jsonl`,
       )
     : undefined);
-const idleMs = numArg("idle-ms", 120_000);
+const idleMs = numArg("idle-ms", 300_000);
 const maxLifetimeMs = numArg("max-lifetime-ms", 4 * 60 * 60 * 1000);
 // argv pair wins for manual runs; otherwise the central config written by
 // `slopwatch install` (the installed hook carries no credentials at all)
@@ -85,9 +85,10 @@ const sessionId =
 
 /**
  * Send a batch. In server mode a failed POST exits the process WITHOUT
- * advancing the cursor: the UserPromptSubmit re-spawn resumes from the last
- * committed offset and re-sends the backlog — read progress always equals
- * send progress, so nothing is lost and nothing is sent twice.
+ * advancing the cursor: a re-spawn (next user message or tool completion)
+ * resumes from the last committed offset and re-sends the backlog — read
+ * progress always equals send progress, so nothing is lost and nothing is
+ * sent twice.
  */
 const flush = async (batch: NormalEvent[]): Promise<void> => {
   if (batch.length === 0) return;

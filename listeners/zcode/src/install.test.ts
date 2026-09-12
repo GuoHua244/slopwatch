@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  HOOK_EVENTS,
   defaultSpawnerPath,
   mergeHookConfig,
   removeHookConfig,
@@ -38,7 +39,7 @@ describe("slopwatchHookEntry", () => {
   test("a credential-free entry replaces a legacy embedded-token entry", () => {
     const bare = slopwatchHookEntry({ bunPath, spawnerPath: spawner });
     const merged = mergeHookConfig(mergeHookConfig(undefined, entry), bare);
-    for (const name of ["SessionStart", "UserPromptSubmit"]) {
+    for (const name of HOOK_EVENTS) {
       expect(merged.hooks.events[name]).toHaveLength(1);
       expect(merged.hooks.events[name][0].hooks).toContainEqual(bare);
     }
@@ -49,7 +50,7 @@ describe("mergeHookConfig", () => {
   test("creates the structure from nothing, on both hook events", () => {
     const merged = mergeHookConfig(undefined, entry);
     expect(merged.hooks.enabled).toBe(true);
-    for (const name of ["SessionStart", "UserPromptSubmit"]) {
+    for (const name of HOOK_EVENTS) {
       const entries = merged.hooks.events[name];
       expect(entries).toHaveLength(1);
       expect(entries[0].hooks).toContainEqual(entry);
@@ -90,8 +91,9 @@ describe("mergeHookConfig", () => {
   test("re-running install replaces our entry instead of duplicating it", () => {
     const once = mergeHookConfig(undefined, entry);
     const twice = mergeHookConfig(once, entry);
-    expect(twice.hooks.events.SessionStart).toHaveLength(1);
-    expect(twice.hooks.events.UserPromptSubmit).toHaveLength(1);
+    for (const name of HOOK_EVENTS) {
+      expect(twice.hooks.events[name]).toHaveLength(1);
+    }
     // and with changed settings the entry is updated, not appended
     const entry2 = slopwatchHookEntry({
       bunPath,
@@ -100,8 +102,9 @@ describe("mergeHookConfig", () => {
       token: "tok-2",
     });
     const updated = mergeHookConfig(once, entry2);
-    expect(updated.hooks.events.SessionStart).toHaveLength(1);
-    expect(updated.hooks.events.UserPromptSubmit).toHaveLength(1);
+    for (const name of HOOK_EVENTS) {
+      expect(updated.hooks.events[name]).toHaveLength(1);
+    }
     expect(JSON.stringify(updated)).toContain("tok-2");
     expect(JSON.stringify(updated)).not.toContain("tok-1");
   });
@@ -141,8 +144,9 @@ describe("removeHookConfig", () => {
       events: Record<string, unknown[]>;
     };
     expect(hooks.enabled).toBe(true);
-    // ours was the only SessionStart entry — the emptied key is deleted
-    expect(hooks.events.SessionStart).toBeUndefined();
+    for (const name of HOOK_EVENTS) {
+      expect(hooks.events[name]).toBeUndefined();
+    }
     expect(hooks.events.PreToolUse).toHaveLength(1);
   });
 
@@ -153,8 +157,9 @@ describe("removeHookConfig", () => {
       enabled: boolean;
       events: Record<string, unknown[]>;
     };
-    expect(hooks.events.SessionStart).toBeUndefined();
-    expect(hooks.events.UserPromptSubmit).toBeUndefined();
+    for (const name of HOOK_EVENTS) {
+      expect(hooks.events[name]).toBeUndefined();
+    }
   });
 
   test("is a no-op on a config without our hooks", () => {

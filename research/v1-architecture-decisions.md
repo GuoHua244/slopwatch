@@ -147,6 +147,15 @@ The leaderboard's per-session N+1 (ADR 0002) was fine at prototype scale and wro
 - **One snapshot feeds both surfaces**: the leaderboard table (all-time columns from totals, sparkline from the hourly window, delta from today + the trailing week) and the developer drill-down — clicking a row opens `#/leaderboard/:user`, a 30-day spend chart plus that developer's sessions deep-linking into the existing detail view. The per-session event-fetching hook is deleted.
 - **Still open**: the team/avatar column waits for the Team entity (decision 10, v2); hourly-row retention is "keep for now" — the rows are tiny, revisit with real volume.
 
+### 19. Capture recovery: PostToolUse re-spawn and a wider idle window
+
+A post-mortem over the local census (2026-09-12: 446 ZCode sessions on the machine vs 21 captured) showed the hooks never miss a user message — the losses happen after the sidecar exits. ZCode has no SessionEnd, so the sidecar ends itself after 2 minutes without new rollout records, and a long tool call (test suite, build) routinely exceeds that: the sidecar ships `session:end` mid-turn while the agent keeps working, and with both hooks firing only on user messages nothing brings it back until the user's next prompt — if the session ends first, the tail is lost with the deleted rollout. The 12-hour acceptance session froze its cursor at 2.67 MB of a 25.27 MB rollout right after a clean `session end / idle-timeout`; its final 41 minutes are gone.
+
+- **PostToolUse joins `HOOK_EVENTS` (2026-09-12)**: tool completions are the one signal ZCode emits mid-turn, so the spawner hangs there too and re-spawns the sidecar as soon as the starving tool call finishes; the heartbeat liveness check keeps every fire a cheap no-op while the sidecar is alive.
+- **Idle window 2 min → 5 min (2026-09-12)**: a long tool call is normal, not an ended session; 5 minutes still restarts a dead sidecar promptly on the next fire.
+- **The spawner refuses an unexpanded `${ZCODE_SESSION_ID}` (2026-09-12)**: a literal template would spawn a sidecar polling a rollout path that never exists.
+- **Still open**: whole-session loss when the server stays down — every flush fails, and the backlog dies with the deleted rollout; the cursor guarantees a later re-spawn re-sends it, but only while the file exists. A retry-with-backoff sidecar is the future fix.
+
 ---
 
 ## Open questions — pick up here

@@ -106,11 +106,17 @@ export const removeHookConfig = (
 
 /**
  * Our hook events: SessionStart spawns the sidecar; UserPromptSubmit re-spawns
- * it if an idle timeout killed it mid-session (messages in an already-open
- * session fire no SessionStart — the spawner's liveness check makes this a
- * cheap no-op when the sidecar is alive).
+ * it when the next user message arrives; PostToolUse re-spawns it mid-turn —
+ * a long tool call can outlast the sidecar's idle window, so the sidecar may
+ * declare idle and exit while the agent keeps working, and tool completions
+ * fire no user prompt to bring it back. The spawner's liveness check makes
+ * every fire a cheap no-op while the sidecar is alive.
  */
-export const HOOK_EVENTS = ["SessionStart", "UserPromptSubmit"] as const;
+export const HOOK_EVENTS = [
+  "SessionStart",
+  "UserPromptSubmit",
+  "PostToolUse",
+] as const;
 
 /**
  * Merge our hooks into an existing workspace config (or create one).

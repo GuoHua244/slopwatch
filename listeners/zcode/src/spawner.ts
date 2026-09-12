@@ -27,7 +27,9 @@ const arg = (name: string): string | undefined => {
 };
 
 const sessionId = arg("session-id");
-if (!sessionId) {
+if (!sessionId || sessionId.includes("${")) {
+  // an unexpanded ${ZCODE_SESSION_ID} would spawn a sidecar polling a
+  // rollout path that never exists — refuse instead
   console.error(
     "usage: bun spawner.ts --session-id <id> [--server-url U --token T] ...",
   );
