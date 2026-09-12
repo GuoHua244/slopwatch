@@ -9,6 +9,7 @@ import {
 import { clock } from "../lib/format";
 import { createPoller } from "../lib/poller";
 import { AdminSessionsPanel } from "./AdminSessionsPanel";
+import { AdminSettingsPanel } from "./AdminSettingsPanel";
 import { AdminTeamsPanel } from "./AdminTeamsPanel";
 import { AdminUsersPanel } from "./AdminUsersPanel";
 
@@ -173,7 +174,7 @@ const HealthPanel = ({
   </>
 );
 
-type AdminTab = "users" | "teams" | "sessions" | "health";
+type AdminTab = "users" | "teams" | "sessions" | "settings" | "health";
 
 const AdminHome = ({
   api,
@@ -209,6 +210,12 @@ const AdminHome = ({
           sessions
         </button>
         <button
+          className={tab === "settings" ? "active" : ""}
+          onClick={() => setTab("settings")}
+        >
+          settings
+        </button>
+        <button
           className={tab === "health" ? "active" : ""}
           onClick={() => setTab("health")}
         >
@@ -224,6 +231,12 @@ const AdminHome = ({
         <AdminTeamsPanel api={api} refreshKey={refreshKey} refresh={refresh} />
       ) : tab === "sessions" ? (
         <AdminSessionsPanel
+          api={api}
+          refreshKey={refreshKey}
+          refresh={refresh}
+        />
+      ) : tab === "settings" ? (
+        <AdminSettingsPanel
           api={api}
           refreshKey={refreshKey}
           refresh={refresh}

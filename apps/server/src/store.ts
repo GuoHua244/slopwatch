@@ -267,6 +267,10 @@ export type Store = {
   ): Promise<AdminUserRow | null>;
   /** Roster for authenticated readers: teams with their member user names. */
   teamsWithMembers(): Promise<TeamInfo[]>;
+  /** v2 decision 25: the operator settings plane. */
+  getSetting(key: string): Promise<string | null>;
+  setSetting(key: string, value: string): Promise<void>;
+  listSettings(): Promise<Record<string, string>>;
   close(): Promise<void>;
 };
 
@@ -389,6 +393,12 @@ ALTER TABLE sessions ADD COLUMN IF NOT EXISTS team_id UUID;
 -- v2 decision 24: archive bookkeeping for the raw-payload cold store
 ALTER TABLE events ADD COLUMN IF NOT EXISTS raw_archived BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS archive_key TEXT;
+-- v2 decision 25: operator-set configuration (the org webhook lives here)
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;
 
 const USER_SELECT = `
@@ -1187,6 +1197,28 @@ export const createPgStore = (databaseUrl: string): Store => {
         occurred_at: new Date(r.occurred_at as string).toISOString(),
         created_at: new Date(r.created_at as string).toISOString(),
       }));
+    },
+
+    async getSetting(key) {
+      const { rows } = await pool.query(
+        "SELECT value FROM settings WHERE key = $1",
+        [key],
+      );
+      return (rows[0]?.value as string | undefined) ?? null;
+    },
+
+    async setSetting(key, value) {
+      await pool.query(
+        "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+        [key, value],
+      );
+    },
+
+    async listSettings() {
+      const { rows } = await pool.query("SELECT key, value FROM settings");
+      const out: Record<string, string> = {};
+      for (const row of rows) out[row.key as string] = row.value as string;
+      return out;
     },
 
     async close() {

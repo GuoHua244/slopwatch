@@ -11,6 +11,13 @@ import {
   UserExistsError,
   type Store,
 } from "./store";
+import {
+  SETTING_KEYS,
+  loadWebhookConfig,
+  postWebhook,
+  pushSessionEnds,
+  webhookBody,
+} from "./webhook";
 
 export type App = { fetch: (req: Request) => Promise<Response> };
 
@@ -191,6 +198,9 @@ export const createApp = ({
         events.push(candidate);
       }
       const { accepted } = await store.appendEvents(events, user);
+      // v2 decision 25: finished sessions push to the org webhook —
+      // fire-and-forget, never part of the ingest response
+      pushSessionEnds(store, events, user);
       return json(202, { accepted });
     }
 
@@ -487,6 +497,72 @@ export const createApp = ({
             : json(404, { error: "no such token" });
         } catch {
           return json(404, { error: "no such token" });
+        }
+      }
+
+      // v2 decision 25: operator settings + a webhook test push.
+      if (url.pathname === "/admin/settings") {
+        if (req.method === "GET")
+          return json(200, { settings: await store.listSettings() });
+        if (req.method === "PUT") {
+          const body = await readJson(req);
+          if (body === null) return json(400, { error: "invalid json" });
+          for (const [key, value] of Object.entries(body)) {
+            if (!(SETTING_KEYS as readonly string[]).includes(key))
+              return json(400, { error: `unknown setting ${key}` });
+            if (key === "webhook_url" && value !== null) {
+              if (typeof value !== "string" || value.length > 1000)
+                return json(400, { error: "webhook_url must be a string" });
+              try {
+                const parsed = new URL(value);
+                if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+                  return json(400, { error: "webhook_url must be http(s)" });
+              } catch {
+                return json(400, { error: "webhook_url must be a valid URL" });
+              }
+            }
+            if (
+              key === "webhook_enabled" &&
+              value !== "true" &&
+              value !== "false"
+            )
+              return json(400, {
+                error: 'webhook_enabled must be "true" or "false"',
+              });
+            if (key === "webhook_format") {
+              if (
+                typeof value !== "string" ||
+                !["slack", "feishu", "dingtalk"].includes(value)
+              )
+                return json(400, {
+                  error: "webhook_format must be slack, feishu, or dingtalk",
+                });
+            }
+          }
+          for (const [key, value] of Object.entries(body)) {
+            if (value === null || value === undefined) continue;
+            await store.setSetting(key, String(value));
+          }
+          return json(200, { settings: await store.listSettings() });
+        }
+      }
+
+      if (url.pathname === "/admin/webhook/test" && req.method === "POST") {
+        const cfg = await loadWebhookConfig(store);
+        if (cfg === null)
+          return json(400, { error: "webhook is not configured" });
+        try {
+          await postWebhook(
+            cfg.url,
+            webhookBody(cfg.format, "slopwatch webhook test — delivery works"),
+          );
+          return json(200, { ok: true, format: cfg.format });
+        } catch (e) {
+          return json(502, {
+            error: `webhook delivery failed: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          });
         }
       }
 

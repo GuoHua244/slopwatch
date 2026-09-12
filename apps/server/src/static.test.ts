@@ -23,6 +23,9 @@ const refusingStore = (): Store => ({
   deleteSession: () => {
     throw new Error("store must not be touched");
   },
+  getSetting: async () => null,
+  setSetting: async () => {},
+  listSettings: async () => ({}),
   pruneRaw: () => {
     throw new Error("store must not be touched");
   },

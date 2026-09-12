@@ -1,0 +1,70 @@
+# Slopwatch team deployment (v2 decision 26): one Server, Postgres, and a
+# MinIO object store for the raw-payload cold archive — `docker compose up`
+# on any always-on intranet host. See docs/deploy.md.
+name: slopwatch
+
+services:
+  server:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      DATABASE_URL: postgres://slopwatch:slopwatch@db:5432/slopwatch
+      # v0 bootstrap tokens ("name:token"), one per member; admin-minted
+      # tokens (decision 6) take over once you create users via /admin.
+      SLOPWATCH_TOKENS: ${SLOPWATCH_TOKENS:?set SLOPWATCH_TOKENS in .env}
+      SLOPWATCH_ADMIN_TOKEN: ${SLOPWATCH_ADMIN_TOKEN:?set SLOPWATCH_ADMIN_TOKEN in .env}
+      RAW_TTL_DAYS: ${RAW_TTL_DAYS:-90}
+      SLOPWATCH_S3_ENDPOINT: http://minio:9000
+      SLOPWATCH_S3_REGION: us-east-1
+      SLOPWATCH_S3_BUCKET: slopwatch-archive
+      SLOPWATCH_S3_ACCESS_KEY_ID: slopwatch
+      SLOPWATCH_S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: slopwatch
+      POSTGRES_PASSWORD: slopwatch
+      POSTGRES_DB: slopwatch
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U slopwatch"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: slopwatch
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 slopwatch \"$$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1; do sleep 1; done;
+      mc mb -p local/slopwatch-archive 2>/dev/null || true"
+    environment:
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+
+volumes:
+  db-data:
+  minio-data:

@@ -12,6 +12,9 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
   eventsSince: async () => [],
   deleteSession: async () => false,
   pruneRaw: async () => ({ archived: 0, pruned: 0 }),
+  getSetting: async () => null,
+  setSetting: async () => {},
+  listSettings: async () => ({}),
   backfillTokenTotals: async () => 0,
   listRollups: async () => ({
     totals: [],

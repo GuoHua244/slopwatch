@@ -196,6 +196,9 @@ export type AdminApi = {
   health(): Promise<AdminHealth>;
   quarantine(limit?: number): Promise<QuarantineRow[]>;
   teams(): Promise<AdminTeamRow[]>;
+  settings(): Promise<Record<string, string>>;
+  updateSettings(patch: Record<string, string>): Promise<void>;
+  testWebhook(): Promise<void>;
   createTeam(
     name: string,
     rawRetentionDays: number | null,
@@ -460,6 +463,19 @@ export const createAdminApi = (
           auth({ method: "GET" }),
         )
       ).teams,
+    settings: async () =>
+      (
+        await unwrap<{ settings: Record<string, string> }>(
+          "/admin/settings",
+          auth({ method: "GET" }),
+        )
+      ).settings,
+    updateSettings: async (patch) => {
+      await unwrap("/admin/settings", authedJson("PUT", patch));
+    },
+    testWebhook: async () => {
+      await unwrap("/admin/webhook/test", auth({ method: "POST" }));
+    },
     createTeam: async (name, rawRetentionDays) =>
       unwrap<{ team: AdminTeamRow }>(
         "/admin/teams",

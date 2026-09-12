@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+.git
+.gitattributes
+.github
+.husky
+.env
+.env.*
+!.env.example
+apps/web/dist
+doc_local
+research/spikes
+spikes
+**/*.log
+**/.DS_Store
