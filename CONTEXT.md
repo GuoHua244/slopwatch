@@ -36,6 +36,10 @@ _Avoid_: backend, hub, daemon, collector.
 A person with an identity in one Slopwatch organization — may run coding agents, review sessions, administer the Server, or any combination.
 _Avoid_: developer, member, account. ("Developer" is a role a **User** plays when running a coding agent; not every **User** is a developer.)
 
+**Team**:
+A named group of **Users** within one Slopwatch organization; each **User** belongs to exactly one **Team**.
+_Avoid_: group, squad, project, org.
+
 **DRI (Directly Responsible Individual)**:
 A role a **User** plays: reviews other users' **Sessions** by pulling from a filterable firehose; the only DRI-exclusive action is marking a session as reviewed.
 _Avoid_: reviewer, assignee, approver, inbox owner.
@@ -46,6 +50,8 @@ _Avoid_: message, payload, wire format, record.
 
 ## Relationships
 
+- A **User** belongs to exactly one **Team**; membership can change over time.
+- A **Session** is attributed to the **Team** its **User** belonged to when the Session was created; later membership changes do not move existing Sessions.
 - A **Session** contains a DAG of **Turns**; most agents produce a linear DAG, Pi can branch.
 - A **Turn** contains zero or more **Model requests**.
 - A **Subagent** is a **Session** whose `parent_session_id` points to the spawning **Session** and whose `spawned_by_turn_id` points to the **Turn** that launched it.
@@ -66,3 +72,4 @@ _Avoid_: message, payload, wire format, record.
 - "listener" collides with in-agent event-listener terminology (Pi `pi.on(...)`, OpenCode plugin events). Accepted for now; revisit if docs get confusing.
 - "user" vs "developer" — resolved: the entity is **User**; "developer" is a role (the subset of **Users** who run coding agents observed by Slopwatch). The prototype leaderboard column labelled "Developer" is a role-filtered view of **Users**, not a separate entity.
 - "wire" vs "events" — resolved: the Listener↔Server channel is described in terms of **Events**, not "wire." `packages/wire` has been renamed `packages/events` (package name `@slopwatch/events`). The TypeScript type stays `NormalEvent` to avoid colliding with the global DOM `Event` type.
+- "which team does a session belong to" — resolved: the **Team** its **User** belonged to at session creation (usage counts where it happened); a live join against the current org chart is explicitly rejected. **DRI** stays org-wide when **Teams** land.
