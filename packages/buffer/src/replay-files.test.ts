@@ -46,12 +46,37 @@ describe("replayQueueFiles", () => {
     expect(other.stats().entries).toBe(1); // other pattern untouched
   });
 
+  test("skip callback leaves live sidecars' queues untouched", async () => {
+    const kept = createDiskQueue({
+      file: join(dir, "zcode-sess_live.queue.jsonl"),
+    });
+    kept.enqueue([event("sess_live")]);
+    const swept = createDiskQueue({
+      file: join(dir, "zcode-sess_dead.queue.jsonl"),
+    });
+    swept.enqueue([event("sess_dead")]);
+
+    const seen: string[] = [];
+    const result = await replayQueueFiles({
+      dir,
+      pattern: /^zcode-.*.queue.jsonl$/,
+      send: async (events) => {
+        for (const e of events) seen.push((e as SessionEndEvent).session_id);
+      },
+      skip: (name) => name.includes("sess_live"),
+    });
+    expect(result.skipped).toBe(1);
+    expect(seen).toEqual(["sess_dead"]);
+    expect(kept.stats().entries).toBe(1); // live queue untouched
+    expect(swept.stats().entries).toBe(0);
+  });
+
   test("missing directory is a clean no-op", async () => {
     const result = await replayQueueFiles({
       dir: join(dir, "does-not-exist"),
       pattern: /.*/,
       send: async () => {},
     });
-    expect(result).toEqual({ files: 0, sentEvents: 0 });
+    expect(result).toEqual({ files: 0, sentEvents: 0, skipped: 0 });
   });
 });
