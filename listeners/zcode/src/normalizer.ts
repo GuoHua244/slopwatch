@@ -200,6 +200,42 @@ export const turnStartFromRecord = (
 };
 
 /**
+ * The rollout manifest (v2 decision 21): the record types this adapter
+ * handles, from real machine files — model-io rollout files carry only
+ * `model_io` records today. Any other type (or a typeless record) is schema
+ * drift: it goes to the quarantine instead of vanishing silently.
+ */
+export const KNOWN_RECORD_TYPES = ["model_io"] as const;
+
+/**
+ * Drift detector for one rollout record: a reason string when the record is
+ * outside the supported manifest (quarantine it), null when it is a known
+ * type (normalize it as today — within-type variance stays lenient, the
+ * strict guard in eventsFromRecord already skips empty parses).
+ */
+export const driftFromRecord = (record: unknown): string | null => {
+  if (!isObject(record)) return "record is not an object";
+  if (record.type === undefined) return "record without a type field";
+  if (record.type !== "model_io") {
+    return `unknown record type: ${String(record.type)}`;
+  }
+  const model = isObject(record.model) ? record.model : null;
+  if (!model || !isNonEmptyString(model.modelId)) {
+    return "model_io record without model.modelId";
+  }
+  if (typeof record.durationMs !== "number") {
+    return "model_io record without durationMs";
+  }
+  if (
+    !isNonEmptyString(record.startedAt) &&
+    !isNonEmptyString(record.completedAt)
+  ) {
+    return "model_io record without a timestamp";
+  }
+  return null;
+};
+
+/**
  * One ZCode rollout record → normalized events: always a model_request, plus a
  * tool call event per response.toolCalls entry. Turn boundaries ride along as
  * `turn_id` (ZCode exposes turnId per record; the turn's start event with the

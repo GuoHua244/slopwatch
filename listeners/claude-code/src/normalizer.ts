@@ -109,6 +109,40 @@ export const metaFromRecord = (
 };
 
 /**
+ * The transcript manifest (v2 decision 21): record types this adapter knows
+ * about, inventoried from real machine transcripts. `user`/`assistant`/
+ * `summary` are normalized; the rest are client bookkeeping that yields no
+ * events by design. Anything else is schema drift → quarantine.
+ */
+export const IGNORED_RECORD_TYPES = [
+  "queue-operation",
+  "attachment",
+  "atis-latch",
+  "last-prompt",
+  "mode",
+  "file-history-snapshot",
+  "file-history-delta",
+  "system",
+  "cost-state",
+  "permission-mode",
+  "ai-title",
+] as const;
+
+/**
+ * Drift detector for one transcript record: a reason string when the record
+ * is outside the supported manifest (quarantine it), null when it is known.
+ */
+export const driftFromRecord = (record: unknown): string | null => {
+  if (!isObject(record)) return "record is not an object";
+  if (record.type === undefined) return "record without a type field";
+  const type = String(record.type);
+  if (type === "user" || type === "assistant" || type === "summary")
+    return null;
+  if ((IGNORED_RECORD_TYPES as readonly string[]).includes(type)) return null;
+  return `unknown record type: ${type}`;
+};
+
+/**
  * One transcript record → normalized events:
  * - real user prompt  → turn:start (+ one task_preview meta, first only)
  * - assistant message → model_request (once per message.id) + tool:call per

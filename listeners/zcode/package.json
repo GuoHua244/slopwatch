@@ -9,6 +9,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@slopwatch/buffer": "workspace:*",
     "@slopwatch/config": "workspace:*",
     "@slopwatch/events": "workspace:*",
     "@slopwatch/summary": "workspace:*"

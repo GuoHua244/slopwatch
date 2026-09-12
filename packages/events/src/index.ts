@@ -107,6 +107,56 @@ export type ToolResultEvent = Envelope & {
   error?: string;
 };
 
+/**
+ * A captured line the adapter could not normalize — an unknown record type,
+ * a known type missing required fields, or unparsable JSON (v2 decision 21).
+ * Fail open, but visible: the verbatim line rides to the Server's quarantine
+ * store so schema drift shows up as a counter, not as silently missing data.
+ */
+export type QuarantineEvent = Envelope & {
+  kind: "quarantine";
+  event: "line";
+  /** Why the line could not be normalized, e.g. "unknown record type: x". */
+  reason: string;
+  /** The verbatim line text, byte-capped (see quarantineLine). */
+  line: string;
+};
+
+/** Verbatim-line budget per quarantine event; raw lines can be hundreds of KB. */
+export const QUARANTINE_MAX_LINE_BYTES = 128 * 1024;
+
+const TRUNCATION_MARKER = "…[truncated]";
+
+export const quarantineLine = (input: {
+  agent: string;
+  session_id: string;
+  occurred_at?: string;
+  reason: string;
+  line: string;
+  maxLineBytes?: number;
+}): QuarantineEvent => {
+  const max = input.maxLineBytes ?? QUARANTINE_MAX_LINE_BYTES;
+  let line = input.line;
+  if (Buffer.byteLength(line, "utf8") > max) {
+    // trim by chars until the utf8 encoding fits, then mark the cut
+    let chars = line.length;
+    while (chars > 0 && Buffer.byteLength(line.slice(0, chars), "utf8") > max) {
+      chars = Math.floor(chars * 0.9);
+    }
+    line = `${line.slice(0, chars)}${TRUNCATION_MARKER}`;
+  }
+  return {
+    schema_version: SCHEMA_VERSION,
+    agent: input.agent,
+    session_id: input.session_id,
+    occurred_at: input.occurred_at ?? new Date().toISOString(),
+    kind: "quarantine",
+    event: "line",
+    reason: input.reason,
+    line,
+  };
+};
+
 export type NormalEvent =
   | SessionStartEvent
   | SessionEndEvent
@@ -116,7 +166,8 @@ export type NormalEvent =
   | TurnEndEvent
   | ModelRequestEvent
   | ToolCallEvent
-  | ToolResultEvent;
+  | ToolResultEvent
+  | QuarantineEvent;
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -219,6 +270,12 @@ export const isNormalEvent = (value: unknown): value is NormalEvent => {
       if (!isOptional(value.duration_ms, isNonNegativeNumber)) return false;
       if (!isOptional(value.ok, (v) => typeof v === "boolean")) return false;
       if (!isOptional(value.error, isNonEmptyString)) return false;
+      return true;
+    }
+    case "quarantine": {
+      if (value.event !== "line") return false;
+      if (!isNonEmptyString(value.reason)) return false;
+      if (!isNonEmptyString(value.line)) return false;
       return true;
     }
     default:

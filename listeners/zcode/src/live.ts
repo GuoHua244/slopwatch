@@ -22,17 +22,21 @@ import {
 } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   SCHEMA_VERSION,
   isNormalEvent,
+  quarantineLine,
   sendEvents,
   type NormalEvent,
   type SessionEndEvent,
 } from "@slopwatch/events";
 import { resolveShipConfig, loadConfig } from "@slopwatch/config";
 import { foldSummary, summaryStore } from "@slopwatch/summary";
+import { createDiskQueue, createFlusher } from "@slopwatch/buffer";
 import { readCursor, writeCursor } from "./cursor";
 import {
+  driftFromRecord,
   eventsFromRecord,
   metaFromRecord,
   sessionIdFromFilename,
@@ -84,34 +88,60 @@ const sessionId =
   sessionIdArg ?? sessionIdFromFilename(basename(file)) ?? "unknown-session";
 
 /**
- * Send a batch. In server mode a failed POST exits the process WITHOUT
- * advancing the cursor: a re-spawn (next user message or tool completion)
- * resumes from the last committed offset and re-sends the backlog — read
- * progress always equals send progress, so nothing is lost and nothing is
- * sent twice.
+ * Send a batch (v2 decision 21). In server mode a failed POST queues the
+ * batch to a disk file beside the cursor and the caller advances the cursor:
+ * the data now lives in the queue, so capture no longer depends on the
+ * rollout file surviving the outage. Queued batches replay oldest-first on
+ * the next flush; the spawner also sweeps all queue files on every hook fire.
+ * Only a failed queue write itself falls back to exit-without-advancing.
  */
-const flush = async (batch: NormalEvent[]): Promise<void> => {
-  if (batch.length === 0) return;
-  const valid = batch.filter(isNormalEvent);
-  for (const event of batch) {
-    if (!isNormalEvent(event)) {
-      console.error(
-        "live: skipping invalid event:",
-        JSON.stringify(event).slice(0, 200),
-      );
-    }
-  }
-  if (serverUrl && token) {
+const flush = async (
+  batch: NormalEvent[],
+): Promise<"sent" | "queued" | "stdout"> => {
+  if (batch.length === 0) return "sent";
+  if (shipFlush) {
+    let result: "sent" | "queued";
     try {
-      await sendEvents(valid, { serverUrl, token });
+      result = await shipFlush.flush(batch);
     } catch (e) {
+      // the queue write itself failed (disk full?) — the old contract: exit
+      // so a re-spawn replays everything from the un-advanced cursor
       console.error(
-        `live: server unreachable (${e instanceof Error ? e.message : String(e)}) — exiting; re-spawn resumes from cursor`,
+        `live: could not queue batch (${e instanceof Error ? e.message : String(e)}) — exiting; re-spawn resumes from cursor`,
       );
       process.exit(1);
     }
-  } else {
-    for (const event of valid) console.log(JSON.stringify(event));
+    if (result === "queued") {
+      console.error(
+        "live: server unreachable — batch queued to disk for replay",
+      );
+      spawnDrainSweep();
+    }
+    return result;
+  }
+  for (const event of batch.filter(isNormalEvent)) {
+    console.log(JSON.stringify(event));
+  }
+  return "stdout";
+};
+
+/**
+ * Fire-and-forget sweep of every stuck queue file — when the session truly
+ * ends with the server still down, no sidecar respawns, so the sweep is what
+ * eventually ships the queued batches (including this session's end event).
+ */
+const spawnDrainSweep = (): void => {
+  try {
+    const drainTs = fileURLToPath(new URL("./drain.ts", import.meta.url));
+    const child = Bun.spawn([process.execPath, drainTs], {
+      detached: true,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    child.unref?.();
+  } catch {
+    // best effort — the next hook fire sweeps again
   }
 };
 
@@ -195,6 +225,24 @@ mkdirSync(join(homedir(), ".slopwatch", "listeners"), { recursive: true });
 const stateBase = cursorFile.slice(0, -".cursor".length);
 const summaries = summaryStore(stateBase);
 
+// The disk queue (v2 decision 21) lives beside the cursor and survives
+// rollout deletion; the flusher owns backlog replay + overflow reporting.
+const shipFlush =
+  serverUrl && token
+    ? createFlusher({
+        agent: "zcode",
+        sessionId,
+        send: (events) =>
+          sendEvents(events, { serverUrl: serverUrl!, token: token! }),
+        queue: createDiskQueue({ file: `${stateBase}.queue.jsonl` }),
+        onInvalid: (event) =>
+          console.error(
+            "live: skipping invalid event:",
+            JSON.stringify(event).slice(0, 200),
+          ),
+      })
+    : null;
+
 // Liveness heartbeat for the spawner's respawn decision: Windows reuses PIDs,
 // so signal-0 alone can mistake a dead sidecar for a live one — the freshness
 // of this file is what actually proves we are running.
@@ -268,8 +316,29 @@ const drain = async (): Promise<void> => {
       try {
         record = JSON.parse(line);
       } catch {
-        console.error("live: skipping unparsable line");
+        // v2 decision 21: unparsable lines are quarantined, not dropped —
+        // the verbatim text reaches the Server's quarantine store
+        batch.push(
+          quarantineLine({
+            agent: "zcode",
+            session_id: sessionId,
+            reason: "unparsable json",
+            line,
+          }),
+        );
+        resetIdle();
         continue;
+      }
+      const drift = driftFromRecord(record);
+      if (drift !== null) {
+        batch.push(
+          quarantineLine({
+            agent: "zcode",
+            session_id: sessionId,
+            reason: drift,
+            line,
+          }),
+        );
       }
       const meta = metaFromRecord(record, sessionId);
       if (meta) batch.push(meta);

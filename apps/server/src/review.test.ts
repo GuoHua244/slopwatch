@@ -47,7 +47,15 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
   listComments: async () => [],
   isDri: async () => false,
   setUserDri: async () => null,
-  health: async () => ({ sessions: 0, events: 0, last_event_at: null }),
+  health: async () => ({
+    sessions: 0,
+    events: 0,
+    last_event_at: null,
+    quarantine_total: 0,
+    quarantine_24h: 0,
+    last_quarantine_at: null,
+  }),
+  listQuarantine: async () => [],
   close: async () => {},
   ...overrides,
 });

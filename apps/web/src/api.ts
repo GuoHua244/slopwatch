@@ -131,11 +131,25 @@ export type AdminTokenRow = {
 /** Payload of POST /admin/users/:name/tokens — the plaintext shows once. */
 export type MintedToken = { token_id: string; hint: string; token: string };
 
+/** Row of GET /admin/quarantine — one unparseable listener line, verbatim. */
+export type QuarantineRow = {
+  seq: number;
+  agent: string;
+  session_id: string;
+  reason: string;
+  line: string;
+  occurred_at: string;
+  created_at: string;
+};
+
 export type AdminHealth = {
   ok: boolean;
   sessions: number;
   events: number;
   last_event_at: string | null;
+  quarantine_total: number;
+  quarantine_24h: number;
+  last_quarantine_at: string | null;
 };
 
 export type AdminApi = {
@@ -149,6 +163,7 @@ export type AdminApi = {
   revokeToken(tokenId: string): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
   health(): Promise<AdminHealth>;
+  quarantine(limit?: number): Promise<QuarantineRow[]>;
 };
 
 /**
@@ -355,5 +370,12 @@ export const createAdminApi = (
     },
     health: async () =>
       unwrap<AdminHealth>("/admin/health", auth({ method: "GET" })),
+    quarantine: async (limit = 50) =>
+      (
+        await unwrap<{ rows: QuarantineRow[] }>(
+          `/admin/quarantine?limit=${limit}`,
+          auth({ method: "GET" }),
+        )
+      ).rows,
   };
 };

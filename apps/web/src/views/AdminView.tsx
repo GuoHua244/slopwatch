@@ -3,6 +3,7 @@ import {
   createAdminApi,
   type AdminApi,
   type AdminHealth,
+  type QuarantineRow,
   ApiError,
 } from "../api";
 import { clock } from "../lib/format";
@@ -85,8 +86,10 @@ const TokenGate = ({ onSave }: { onSave: (token: string) => void }) => {
 
 const HealthPanel = ({
   health,
+  quarantine,
 }: {
   health: { data: AdminHealth | null; error: PollError | null };
+  quarantine: { data: QuarantineRow[] | null; error: PollError | null };
 }) => (
   <>
     <h2>system health</h2>
@@ -111,8 +114,61 @@ const HealthPanel = ({
             {health.data.last_event_at ? clock(health.data.last_event_at) : "—"}
           </dd>
         </div>
+        <div>
+          <dt>quarantined lines</dt>
+          <dd>
+            {health.data.quarantine_total}
+            {health.data.quarantine_24h > 0
+              ? ` (${health.data.quarantine_24h} in 24h)`
+              : ""}
+          </dd>
+        </div>
+        <div>
+          <dt>last quarantine</dt>
+          <dd>
+            {health.data.last_quarantine_at
+              ? clock(health.data.last_quarantine_at)
+              : "—"}
+          </dd>
+        </div>
       </dl>
     )}
+    <h3>recent quarantined lines</h3>
+    <p className="dim">
+      Listener lines that could not be normalized (v2 schema-drift quarantine).
+      A nonzero count means an agent wrote something the adapter does not know.
+    </p>
+    {quarantine.error && (
+      <p className="banner-error">{quarantine.error.message}</p>
+    )}
+    {quarantine.data !== null &&
+      (quarantine.data.length === 0 ? (
+        <p className="dim">nothing quarantined — capture is clean</p>
+      ) : (
+        <table className="data">
+          <thead>
+            <tr>
+              <th>when</th>
+              <th>agent</th>
+              <th>reason</th>
+              <th>line (capped)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {quarantine.data.map((row) => (
+              <tr key={row.seq}>
+                <td>{clock(row.created_at)}</td>
+                <td>{row.agent}</td>
+                <td>
+                  {row.reason}
+                  <span className="dim"> · {row.session_id}</span>
+                </td>
+                <td className="raw-line">{row.line.slice(0, 240)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ))}
   </>
 );
 
@@ -129,6 +185,7 @@ const AdminHome = ({
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = () => setRefreshKey((k) => k + 1);
   const health = usePolled(() => api.health(), refreshKey);
+  const quarantine = usePolled(() => api.quarantine(50), refreshKey);
   return (
     <section className="admin">
       <nav className="tabs">
@@ -163,7 +220,7 @@ const AdminHome = ({
           refresh={refresh}
         />
       ) : (
-        <HealthPanel health={health} />
+        <HealthPanel health={health} quarantine={quarantine} />
       )}
     </section>
   );

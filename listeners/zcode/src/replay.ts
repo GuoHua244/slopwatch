@@ -11,11 +11,13 @@ import { hostname } from "node:os";
 import { basename } from "node:path";
 import {
   SCHEMA_VERSION,
+  quarantineLine,
   type NormalEvent,
   type SessionEndEvent,
   type SessionStartEvent,
 } from "@slopwatch/events";
 import {
+  driftFromRecord,
   eventsFromRecord,
   metaFromRecord,
   resolveSessionId,
@@ -29,10 +31,16 @@ if (!file) {
   process.exit(1);
 }
 
-const records = readFileSync(file, "utf8")
-  .split("\n")
-  .filter((l) => l.trim())
-  .map((l) => JSON.parse(l));
+const records: unknown[] = [];
+const unparsable: string[] = [];
+for (const line of readFileSync(file, "utf8").split("\n")) {
+  if (!line.trim()) continue;
+  try {
+    records.push(JSON.parse(line));
+  } catch {
+    unparsable.push(line);
+  }
+}
 
 let sessionId: string | null = null;
 for (const record of records) {
@@ -76,7 +84,28 @@ const sessionEnd: SessionEndEvent = {
 const events: NormalEvent[] = [sessionStart];
 let taskPreviewSent = false;
 const seenTurns = new Set<string>();
+for (const line of unparsable) {
+  events.push(
+    quarantineLine({
+      agent: "zcode",
+      session_id: sessionId,
+      reason: "unparsable json",
+      line,
+    }),
+  );
+}
 for (const record of records) {
+  const drift = driftFromRecord(record);
+  if (drift !== null) {
+    events.push(
+      quarantineLine({
+        agent: "zcode",
+        session_id: sessionId,
+        reason: drift,
+        line: JSON.stringify(record),
+      }),
+    );
+  }
   const meta = metaFromRecord(record, sessionId);
   if (meta) events.push(meta);
   if (!taskPreviewSent) {

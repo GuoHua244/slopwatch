@@ -281,6 +281,12 @@ export const createApp = ({
       if (url.pathname === "/admin/health" && req.method === "GET")
         return json(200, { ok: true, ...(await store.health()) });
 
+      // v2 decision 21: inspect the quarantine — the verbatim drift evidence.
+      if (url.pathname === "/admin/quarantine" && req.method === "GET") {
+        const limit = windowParam(url.searchParams.get("limit"), 500, 50);
+        return json(200, { rows: await store.listQuarantine(limit) });
+      }
+
       if (url.pathname === "/admin/users") {
         if (req.method === "GET")
           return json(200, { users: await store.listUsers() });

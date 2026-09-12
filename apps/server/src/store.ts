@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Pool } from "pg";
-import type { NormalEvent } from "@slopwatch/events";
+import type { NormalEvent, QuarantineEvent } from "@slopwatch/events";
 import { rollupDeltas, type ModelDelta } from "./rollups";
 
 export type SessionRow = {
@@ -58,6 +58,21 @@ export type HealthInfo = {
   sessions: number;
   events: number;
   last_event_at: string | null;
+  /** Quarantine counters (v2 decision 21): schema drift must be visible. */
+  quarantine_total: number;
+  quarantine_24h: number;
+  last_quarantine_at: string | null;
+};
+
+/** Row of GET /admin/quarantine — one unparseable listener line, verbatim. */
+export type QuarantineRow = {
+  seq: number;
+  agent: string;
+  session_id: string;
+  reason: string;
+  line: string;
+  occurred_at: string;
+  created_at: string;
 };
 
 /** Per-day turn/tool counts for one developer (decision 18). */
@@ -179,6 +194,8 @@ export type Store = {
   isDri(name: string): Promise<boolean>;
   setUserDri(name: string, isDri: boolean): Promise<AdminUserRow | null>;
   health(): Promise<HealthInfo>;
+  /** v2 decision 21: recent quarantined lines, newest first. */
+  listQuarantine(limit: number): Promise<QuarantineRow[]>;
   close(): Promise<void>;
 };
 
@@ -271,6 +288,16 @@ CREATE TABLE IF NOT EXISTS model_hourly_rollup (
   cache_write_tokens BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, hour, model)
 );
+CREATE TABLE IF NOT EXISTS quarantine (
+  seq         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  agent       TEXT NOT NULL,
+  session_id  TEXT NOT NULL,
+  reason      TEXT NOT NULL,
+  line        TEXT NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS quarantine_created_at ON quarantine (created_at);
 `;
 
 const pgUserRow = (r: Record<string, unknown>): AdminUserRow => ({
@@ -391,11 +418,32 @@ export const createPgStore = (databaseUrl: string): Store => {
 
     async appendEvents(events, userId) {
       if (events.length === 0) return { accepted: 0 };
+      // v2 decision 21: quarantine events bypass the event log entirely —
+      // they record lines that could not be normalized, not session history.
+      const normal = events.filter(
+        (e): e is Exclude<NormalEvent, QuarantineEvent> =>
+          e.kind !== "quarantine",
+      );
+      const quarantined = events.filter(
+        (e): e is QuarantineEvent => e.kind === "quarantine",
+      );
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        for (const event of quarantined) {
+          await client.query(
+            "INSERT INTO quarantine (agent, session_id, reason, line, occurred_at) VALUES ($1, $2, $3, $4, $5)",
+            [
+              event.agent,
+              event.session_id,
+              event.reason,
+              event.line,
+              event.occurred_at,
+            ],
+          );
+        }
         const bySession = new Map<string, NormalEvent[]>();
-        for (const event of events) {
+        for (const event of normal) {
           const group = bySession.get(event.session_id) ?? [];
           group.push(event);
           bySession.set(event.session_id, group);
@@ -451,9 +499,9 @@ export const createPgStore = (databaseUrl: string): Store => {
         }
         // Decision 18: fold the batch into the usage rollups in the same
         // transaction, so the aggregates can never drift from the events.
-        if (userId !== null) {
+        if (userId !== null && normal.length > 0) {
           const rollupUser: string = userId;
-          const deltas = rollupDeltas(events);
+          const deltas = rollupDeltas(normal);
           for (const [day, d] of deltas.daily) {
             if (d.turns === 0 && d.toolCalls === 0) continue;
             await client.query(
@@ -825,7 +873,12 @@ export const createPgStore = (databaseUrl: string): Store => {
 
     async health() {
       const { rows } = await pool.query(
-        "SELECT (SELECT COUNT(*) FROM sessions) AS sessions, (SELECT COUNT(*) FROM events) AS events, (SELECT MAX(received_at) FROM events) AS last_event_at",
+        `SELECT (SELECT COUNT(*) FROM sessions) AS sessions,
+                (SELECT COUNT(*) FROM events) AS events,
+                (SELECT MAX(received_at) FROM events) AS last_event_at,
+                (SELECT COUNT(*) FROM quarantine) AS quarantine_total,
+                (SELECT COUNT(*) FROM quarantine WHERE created_at > now() - interval '24 hours') AS quarantine_24h,
+                (SELECT MAX(created_at) FROM quarantine) AS last_quarantine_at`,
       );
       return {
         sessions: Number(rows[0]!.sessions),
@@ -833,7 +886,28 @@ export const createPgStore = (databaseUrl: string): Store => {
         last_event_at: rows[0]!.last_event_at
           ? new Date(rows[0]!.last_event_at as string).toISOString()
           : null,
+        quarantine_total: Number(rows[0]!.quarantine_total),
+        quarantine_24h: Number(rows[0]!.quarantine_24h),
+        last_quarantine_at: rows[0]!.last_quarantine_at
+          ? new Date(rows[0]!.last_quarantine_at as string).toISOString()
+          : null,
       };
+    },
+
+    async listQuarantine(limit) {
+      const { rows } = await pool.query(
+        "SELECT seq, agent, session_id, reason, line, occurred_at, created_at FROM quarantine ORDER BY seq DESC LIMIT $1",
+        [limit],
+      );
+      return rows.map((r) => ({
+        seq: Number(r.seq),
+        agent: r.agent as string,
+        session_id: r.session_id as string,
+        reason: r.reason as string,
+        line: r.line as string,
+        occurred_at: new Date(r.occurred_at as string).toISOString(),
+        created_at: new Date(r.created_at as string).toISOString(),
+      }));
     },
 
     async close() {

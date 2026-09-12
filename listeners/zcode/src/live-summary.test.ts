@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdtempSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "@slopwatch/config";
@@ -208,9 +213,18 @@ describe("zcode live.ts rolling summaries", () => {
       new Response(proc.stderr).text(),
     ]);
     dying.stop(true);
-    expect(code).not.toBe(0); // the end POST fails — that is the point
+    expect(code).toBe(0); // v2 decision 21: the end POST failing queues the batch — graceful exit
     expect(stderr).toContain("summary fold skipped");
+    expect(stderr).toContain("batch queued to disk");
     expect(llmCalls.length).toBe(callsBefore);
+    // the queued data outlives the rollout file — that is the whole point
+    const queueFile = join(
+      downHome,
+      ".slopwatch",
+      "listeners",
+      "zcode-sess_live-sum-down.queue.jsonl",
+    );
+    expect(existsSync(queueFile)).toBe(true);
   }, 30000);
 
   test("cleanup", () => {

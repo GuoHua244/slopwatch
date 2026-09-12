@@ -161,7 +161,11 @@ const memStore = () => {
       sessions,
       events,
       last_event_at: events > 0 ? new Date().toISOString() : null,
+      quarantine_total: 0,
+      quarantine_24h: 0,
+      last_quarantine_at: null,
     }),
+    listQuarantine: async () => [],
     close: async () => {},
   };
   return { store, tokens, users };

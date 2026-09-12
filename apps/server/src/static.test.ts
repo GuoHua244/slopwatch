@@ -80,6 +80,7 @@ const refusingStore = (): Store => ({
   health: () => {
     throw new Error("store must not be touched");
   },
+  listQuarantine: async () => [],
   close: async () => {},
 });
 

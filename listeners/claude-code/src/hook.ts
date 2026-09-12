@@ -26,6 +26,27 @@ import {
   type SessionEndEvent,
 } from "@slopwatch/events";
 import { resolveShipConfig } from "@slopwatch/config";
+import { createDiskQueue } from "@slopwatch/buffer";
+
+/** The per-session disk queue (v2 decision 21), beside the pid/log files. */
+const queueFile = (sessionId: string): string =>
+  join(logDir, `claude-code-${sessionId}.queue.jsonl`);
+
+/** Detached sweep of every stuck queue file in the state dir. */
+const spawnDrainSweep = (): void => {
+  try {
+    const drainTs = fileURLToPath(new URL("./drain.ts", import.meta.url));
+    const child = Bun.spawn([process.execPath, drainTs], {
+      detached: true,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    child.unref?.();
+  } catch {
+    // best effort — the next hook fire sweeps again
+  }
+};
 
 export type HookPlan =
   | {
@@ -150,9 +171,28 @@ const main = async (): Promise<void> => {
       try {
         await sendEvents([end], { serverUrl, token });
       } catch (e) {
+        // v2 decision 21: the end event queues to disk instead of dying —
+        // the hook is the ONLY sender of this event and the sidecar is being
+        // torn down, so a sweep is spawned to ship it once the server answers
         console.error(
-          `hook: session:end not delivered (${e instanceof Error ? e.message : String(e)})`,
+          `hook: session:end not delivered (${e instanceof Error ? e.message : String(e)}) — queueing`,
         );
+        try {
+          const queue = createDiskQueue({
+            file: queueFile(plan.sessionId),
+          });
+          const { droppedEvents } = queue.enqueue([end]);
+          if (droppedEvents > 0) {
+            console.error(
+              `hook: queue overflow dropped ${droppedEvents} events`,
+            );
+          }
+          spawnDrainSweep();
+        } catch (e2) {
+          console.error(
+            `hook: session:end lost — queueing failed (${e2 instanceof Error ? e2.message : String(e2)})`,
+          );
+        }
       }
     } else {
       console.log(JSON.stringify(end));
@@ -210,6 +250,8 @@ const main = async (): Promise<void> => {
   });
   child.unref?.();
   writeFileSync(pidFile(plan.sessionId), String(child.pid));
+  // sweep any queue files stuck since earlier outages (v2 decision 21)
+  spawnDrainSweep();
   console.error(
     `slopwatch listener spawned: pid=${child.pid} log=${logFile} transcript=${plan.transcriptPath}`,
   );

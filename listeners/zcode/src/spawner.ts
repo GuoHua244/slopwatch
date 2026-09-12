@@ -116,6 +116,20 @@ writeFileSync(pidFile, String(child.pid));
 // make the newborn visible to the next spawner invocation before the
 // sidecar's own first heartbeat lands (bun start can lag seconds under AV scans)
 writeFileSync(heartbeatFile, String(Date.now()));
+// sweep any queue files stuck since earlier outages (v2 decision 21) —
+// including sessions that ended with the server down and have no sidecar
+try {
+  const drainTs = fileURLToPath(new URL("./drain.ts", import.meta.url));
+  const drain = Bun.spawn([process.execPath, drainTs], {
+    detached: true,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  drain.unref?.();
+} catch {
+  // best effort — the next hook fire sweeps again
+}
 console.error(
   `slopwatch listener spawned: pid=${child.pid} log=${logFile} rollout=${rolloutFile}`,
 );

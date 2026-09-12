@@ -175,6 +175,8 @@ export const describeEvent = (event: StoredEvent["event"]): string => {
       return event.usage
         ? `${event.usage.input_tokens ?? 0}in/${event.usage.output_tokens ?? 0}out`
         : "";
+    case "quarantine":
+      return `quarantined · ${event.reason}`;
     case "model_request":
       return [
         `${event.provider}/${event.model}`,
