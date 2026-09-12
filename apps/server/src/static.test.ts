@@ -81,6 +81,24 @@ const refusingStore = (): Store => ({
     throw new Error("store must not be touched");
   },
   listQuarantine: async () => [],
+  createTeam: () => {
+    throw new Error("store must not be touched");
+  },
+  listTeams: () => {
+    throw new Error("store must not be touched");
+  },
+  updateTeam: () => {
+    throw new Error("store must not be touched");
+  },
+  deleteTeam: () => {
+    throw new Error("store must not be touched");
+  },
+  setUserTeam: () => {
+    throw new Error("store must not be touched");
+  },
+  teamsWithMembers: () => {
+    throw new Error("store must not be touched");
+  },
   close: async () => {},
 });
 

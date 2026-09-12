@@ -1,4 +1,5 @@
 import type { NormalEvent } from "@slopwatch/events";
+import { storedToken } from "./auth";
 
 /** One row of GET /sessions — mirrors the Server's SessionRow. */
 export type SessionSummary = {
@@ -108,9 +109,11 @@ export type Api = {
    * default 24). Totals always cover all history.
    */
   rollups(params?: { days?: number; hours?: number }): Promise<RollupsSnapshot>;
+  /** Decision 23: the roster, for the leaderboard's team grouping. */
+  teams(): Promise<TeamInfo[]>;
 };
 
-/** Row of GET /admin/users — mirrors the Server's AdminUserRow. */
+/** One row of GET /admin/users — mirrors the Server's AdminUserRow. */
 export type AdminUserRow = {
   name: string;
   email: string | null;
@@ -118,6 +121,24 @@ export type AdminUserRow = {
   is_dri: boolean;
   created_at: string;
   active_tokens: number;
+  team_id: string | null;
+  team_name: string | null;
+};
+
+/** Row of GET /teams — the roster grouping for the leaderboard (decision 23). */
+export type TeamInfo = {
+  id: string;
+  name: string;
+  members: string[];
+};
+
+/** Row of GET /admin/teams — mirrors the Server's TeamRow. */
+export type AdminTeamRow = {
+  id: string;
+  name: string;
+  raw_retention_days: number | null;
+  created_at: string;
+  member_count: number;
 };
 
 /** Row of GET /admin/users/:name/tokens — plaintext secrets never come back. */
@@ -164,6 +185,17 @@ export type AdminApi = {
   deleteSession(sessionId: string): Promise<void>;
   health(): Promise<AdminHealth>;
   quarantine(limit?: number): Promise<QuarantineRow[]>;
+  teams(): Promise<AdminTeamRow[]>;
+  createTeam(
+    name: string,
+    rawRetentionDays: number | null,
+  ): Promise<AdminTeamRow>;
+  updateTeam(
+    id: string,
+    patch: { name?: string; raw_retention_days?: number | null },
+  ): Promise<void>;
+  deleteTeam(id: string): Promise<void>;
+  setUserTeam(name: string, teamId: string | null): Promise<void>;
 };
 
 /**
@@ -175,8 +207,12 @@ export type FetchLike = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-const getJson = async <T>(doFetch: FetchLike, path: string): Promise<T> => {
-  const res = await doFetch(path);
+const getJson = async <T>(
+  doFetch: FetchLike,
+  path: string,
+  init: RequestInit = {},
+): Promise<T> => {
+  const res = await doFetch(path, init);
   if (!res.ok) throw new ApiError(res.status, path);
   return (await res.json()) as T;
 };
@@ -193,34 +229,62 @@ const unwrapJson = async <T = void>(
   return (await res.json()) as T;
 };
 
-/** Dashboard client over the Server's read-only endpoints (same-origin). */
-export const createApi = (doFetch: FetchLike = fetch): Api => ({
-  listSessions: async () =>
-    (await getJson<{ sessions: SessionSummary[] }>(doFetch, "/sessions"))
-      .sessions,
-  eventsSince: async (sessionId, sinceSeq) =>
-    (
-      await getJson<{ events: StoredEvent[] }>(
+/**
+ * Dashboard client over the Server's read endpoints (same-origin). Every
+ * call carries the browser's user token (v2 decision 22 / ADR 0003) — the
+ * token is read per request, so a sign-in anywhere applies everywhere.
+ */
+export const createApi = (
+  doFetch: FetchLike = fetch,
+  getToken: () => string | null = storedToken,
+): Api => {
+  const auth = (init: RequestInit = {}): RequestInit => {
+    const token = getToken();
+    return {
+      ...init,
+      headers: {
+        ...(init.headers as Record<string, string> | undefined),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+    };
+  };
+  return {
+    listSessions: async () =>
+      (
+        await getJson<{ sessions: SessionSummary[] }>(
+          doFetch,
+          "/sessions",
+          auth(),
+        )
+      ).sessions,
+    eventsSince: async (sessionId, sinceSeq) =>
+      (
+        await getJson<{ events: StoredEvent[] }>(
+          doFetch,
+          `/sessions/${encodeURIComponent(sessionId)}/events?since_seq=${sinceSeq}`,
+          auth(),
+        )
+      ).events,
+    rollups: async (params = {}) => {
+      const search = new URLSearchParams();
+      if (params.days !== undefined) search.set("days", String(params.days));
+      if (params.hours !== undefined) search.set("hours", String(params.hours));
+      const query = search.toString();
+      return getJson<RollupsSnapshot>(
         doFetch,
-        `/sessions/${encodeURIComponent(sessionId)}/events?since_seq=${sinceSeq}`,
-      )
-    ).events,
-  rollups: async (params = {}) => {
-    const search = new URLSearchParams();
-    if (params.days !== undefined) search.set("days", String(params.days));
-    if (params.hours !== undefined) search.set("hours", String(params.hours));
-    const query = search.toString();
-    return getJson<RollupsSnapshot>(
-      doFetch,
-      `/rollups${query ? `?${query}` : ""}`,
-    );
-  },
-});
+        `/rollups${query ? `?${query}` : ""}`,
+        auth(),
+      );
+    },
+    teams: async () =>
+      (await getJson<{ teams: TeamInfo[] }>(doFetch, "/teams", auth())).teams,
+  };
+};
 
 /**
- * Review-plane client (decision 10). Reads are org-wide (no token); writes
- * carry the reader's own user token — the review marker additionally requires
- * the DRI role, enforced server-side.
+ * Review-plane client (decision 10). Reads and writes both carry the
+ * reader's user token (v2 decision 22); the review marker additionally
+ * requires the DRI role, enforced server-side.
  */
 export const createReviewApi = (
   userToken: () => string | null,
@@ -250,6 +314,7 @@ export const createReviewApi = (
         await getJson<{ review: ReviewRow | null }>(
           doFetch,
           `/sessions/${encodeURIComponent(sessionId)}/review`,
+          auth(),
         )
       ).review,
     markReviewed: async (sessionId) =>
@@ -274,6 +339,7 @@ export const createReviewApi = (
         await getJson<{ comments: CommentRow[] }>(
           doFetch,
           `/sessions/${encodeURIComponent(sessionId)}/comments`,
+          auth(),
         )
       ).comments,
     addComment: async (sessionId, turnId, body) =>
@@ -377,5 +443,40 @@ export const createAdminApi = (
           auth({ method: "GET" }),
         )
       ).rows,
+    teams: async () =>
+      (
+        await unwrap<{ teams: AdminTeamRow[] }>(
+          "/admin/teams",
+          auth({ method: "GET" }),
+        )
+      ).teams,
+    createTeam: async (name, rawRetentionDays) =>
+      unwrap<{ team: AdminTeamRow }>(
+        "/admin/teams",
+        authedJson("POST", {
+          name,
+          ...(rawRetentionDays !== null
+            ? { raw_retention_days: rawRetentionDays }
+            : {}),
+        }),
+      ).then((r) => r.team),
+    updateTeam: async (id, patch) => {
+      await unwrap(
+        `/admin/teams/${encodeURIComponent(id)}`,
+        authedJson("PATCH", patch),
+      );
+    },
+    deleteTeam: async (id) => {
+      await unwrap(
+        `/admin/teams/${encodeURIComponent(id)}`,
+        auth({ method: "DELETE" }),
+      );
+    },
+    setUserTeam: async (name, teamId) => {
+      await unwrap(
+        `/admin/users/${encodeURIComponent(name)}`,
+        authedJson("PATCH", { team_id: teamId }),
+      );
+    },
   };
 };

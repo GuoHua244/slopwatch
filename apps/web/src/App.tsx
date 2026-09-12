@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { createReviewApi } from "./api";
+import { clearToken, saveToken, storedToken } from "./auth";
 import { useSessions } from "./hooks/useSessions";
 import { clock } from "./lib/format";
 import { DeveloperDetail } from "./views/DeveloperDetail";
@@ -49,7 +51,74 @@ const useHashRoute = (): {
   return state;
 };
 
+/**
+ * Sign-in gate (v2 decision 22 / ADR 0003): the dashboard renders nothing
+ * until a user token verifies against GET /me — reads are no longer anonymous.
+ */
+const SignInGate = ({ onSignedIn }: { onSignedIn: (user: string) => void }) => {
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  return (
+    <section className="admin">
+      <h2>sign in</h2>
+      <p className="dim">
+        Paste your Slopwatch user token — the same one your listener uses. It is
+        kept in this browser's localStorage only.
+      </p>
+      <form
+        className="admin-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const token = value.trim();
+          if (!token) return;
+          setChecking(true);
+          setError(null);
+          void createReviewApi(() => token)
+            .me()
+            .then((info) => {
+              saveToken(token);
+              onSignedIn(info.user);
+            })
+            .catch(() => {
+              setError("that token did not verify — check it and try again");
+            })
+            .finally(() => setChecking(false));
+        }}
+      >
+        <input
+          type="password"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="user token"
+          autoFocus
+        />
+        <button type="submit" disabled={checking}>
+          {checking ? "checking…" : "sign in"}
+        </button>
+      </form>
+      {error && <p className="banner-error">{error}</p>}
+    </section>
+  );
+};
+
 export const App = () => {
+  // The admin route keeps its own separate gate; everything else needs a
+  // verified user token first.
+  const [user, setUser] = useState<string | null>(() =>
+    storedToken() ? "" : null,
+  );
+  // verify the persisted token once on load; a stale token falls back to the gate
+  useEffect(() => {
+    if (!storedToken()) return;
+    void createReviewApi(storedToken)
+      .me()
+      .then((info) => setUser(info.user))
+      .catch(() => {
+        clearToken();
+        setUser(null);
+      });
+  }, []);
   const feed = useSessions();
   const { route, sessionId, userId } = useHashRoute();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -64,6 +133,12 @@ export const App = () => {
   useEffect(() => {
     if (sessionId !== null) setSelectedId(sessionId);
   }, [sessionId]);
+
+  // After every hook: the gate renders instead of the dashboard (the admin
+  // route keeps its own separate gate).
+  if (user === null && route !== "admin") {
+    return <SignInGate onSignedIn={setUser} />;
+  }
 
   const selected =
     feed.sessions.find((s) => s.session_id === selectedId) ?? null;
@@ -93,6 +168,20 @@ export const App = () => {
               ? `connection lost${feed.lastError ? ` · ${feed.lastError}` : ""}`
               : "connecting…"}
         </span>
+        {user !== null && (
+          <span className="dim">
+            {user || "…"}
+            <button
+              className="signout"
+              onClick={() => {
+                clearToken();
+                setUser(null);
+              }}
+            >
+              sign out
+            </button>
+          </span>
+        )}
       </header>
       {route === "leaderboard" ? (
         <main className="full">

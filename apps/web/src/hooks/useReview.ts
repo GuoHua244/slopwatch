@@ -9,18 +9,10 @@ import {
 import { createPoller } from "../lib/poller";
 import type { FeedStatus } from "./useSessions";
 
-const TOKEN_KEY = "slopwatch.review-token";
-
-/** The reader's own user token, persisted in this browser only. */
-export const storedToken = (): string | null => localStorage.getItem(TOKEN_KEY);
-
-export const saveToken = (token: string): void => {
-  localStorage.setItem(TOKEN_KEY, token);
-};
-
-export const clearToken = (): void => {
-  localStorage.removeItem(TOKEN_KEY);
-};
+// The user token now lives in the shared auth module (v2 decision 22) —
+// re-exported here for the existing review sign-in UI.
+import { storedToken, saveToken, clearToken } from "../auth";
+export { storedToken, saveToken, clearToken };
 
 export type ReviewState = {
   api: ReviewApi;

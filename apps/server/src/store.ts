@@ -7,6 +7,8 @@ export type SessionRow = {
   session_id: string;
   agent: string;
   user_id: string | null;
+  /** Team snapshot from session creation (ADR 0004); never backfilled. */
+  team_id: string | null;
   first_seen_at: string;
   last_seq: number;
   title: string | null;
@@ -27,6 +29,26 @@ export type AdminUserRow = {
   is_dri: boolean;
   created_at: string;
   active_tokens: number;
+  /** The user's one team (v2 decision 23); null until the admin assigns one. */
+  team_id: string | null;
+  team_name: string | null;
+};
+
+/** Row of GET /admin/teams (v2 decision 23). */
+export type TeamRow = {
+  id: string;
+  name: string;
+  /** Team-specific raw-payload retention override (v2 decision 24); days. */
+  raw_retention_days: number | null;
+  created_at: string;
+  member_count: number;
+};
+
+/** GET /teams for authenticated readers: roster grouping for the leaderboard. */
+export type TeamInfo = {
+  id: string;
+  name: string;
+  members: string[];
 };
 
 /** Row of GET /admin/users/:name/tokens — the plaintext is never stored. */
@@ -118,6 +140,22 @@ export class UserExistsError extends Error {
   }
 }
 
+/** Thrown when a unique team name collides (HTTP 409). */
+export class TeamExistsError extends Error {
+  constructor(name: string) {
+    super(`team "${name}" already exists`);
+    this.name = "TeamExistsError";
+  }
+}
+
+/** Thrown when a team id does not exist (HTTP 404). */
+export class NoSuchTeamError extends Error {
+  constructor() {
+    super("no such team");
+    this.name = "NoSuchTeamError";
+  }
+}
+
 /** Bearer tokens are stored only as SHA-256 hashes (decision 6). */
 export const hashToken = (token: string): string =>
   createHash("sha256").update(token).digest("hex");
@@ -196,6 +234,21 @@ export type Store = {
   health(): Promise<HealthInfo>;
   /** v2 decision 21: recent quarantined lines, newest first. */
   listQuarantine(limit: number): Promise<QuarantineRow[]>;
+  /** v2 decision 23: the team plane. */
+  createTeam(name: string, rawRetentionDays: number | null): Promise<TeamRow>;
+  listTeams(): Promise<TeamRow[]>;
+  updateTeam(
+    id: string,
+    patch: { name?: string; raw_retention_days?: number | null },
+  ): Promise<TeamRow | null>;
+  deleteTeam(id: string): Promise<boolean>;
+  /** Assign a user to a team; null when the user is unknown. */
+  setUserTeam(
+    name: string,
+    teamId: string | null,
+  ): Promise<AdminUserRow | null>;
+  /** Roster for authenticated readers: teams with their member user names. */
+  teamsWithMembers(): Promise<TeamInfo[]>;
   close(): Promise<void>;
 };
 
@@ -298,7 +351,23 @@ CREATE TABLE IF NOT EXISTS quarantine (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS quarantine_created_at ON quarantine (created_at);
+CREATE TABLE IF NOT EXISTS teams (
+  id                 UUID PRIMARY KEY,
+  name               TEXT NOT NULL UNIQUE,
+  raw_retention_days INTEGER,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams (id) ON DELETE SET NULL;
+-- ADR 0004: the session's team is a snapshot from creation time — no FK, so
+-- a later team delete (or reorg) can never rewrite captured history.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS team_id UUID;
 `;
+
+const USER_SELECT = `
+  SELECT u.name, u.email, u.disabled, u.is_dri, u.created_at,
+         u.team_id, t.name AS team_name,
+         (SELECT COUNT(*) FROM tokens t2 WHERE t2.user_name = u.name AND t2.revoked_at IS NULL) AS active_tokens
+  FROM users u LEFT JOIN teams t ON t.id = u.team_id`;
 
 const pgUserRow = (r: Record<string, unknown>): AdminUserRow => ({
   name: r.name as string,
@@ -307,6 +376,19 @@ const pgUserRow = (r: Record<string, unknown>): AdminUserRow => ({
   is_dri: r.is_dri === true,
   created_at: new Date(r.created_at as string).toISOString(),
   active_tokens: Number(r.active_tokens ?? 0),
+  team_id: (r.team_id as string | null) ?? null,
+  team_name: (r.team_name as string | null) ?? null,
+});
+
+const pgTeamRow = (r: Record<string, unknown>): TeamRow => ({
+  id: r.id as string,
+  name: r.name as string,
+  raw_retention_days:
+    r.raw_retention_days === null || r.raw_retention_days === undefined
+      ? null
+      : Number(r.raw_retention_days),
+  created_at: new Date(r.created_at as string).toISOString(),
+  member_count: Number(r.member_count ?? 0),
 });
 
 const pgReviewRow = (r: Record<string, unknown>): ReviewRow => ({
@@ -411,6 +493,16 @@ const recomputeRollups = async (
 export const createPgStore = (databaseUrl: string): Store => {
   const pool = new Pool({ connectionString: databaseUrl });
 
+  const getTeamRow = async (id: string): Promise<TeamRow | null> => {
+    const { rows } = await pool.query(
+      `SELECT t.id, t.name, t.raw_retention_days, t.created_at,
+              (SELECT COUNT(*) FROM users u WHERE u.team_id = t.id) AS member_count
+      FROM teams t WHERE t.id = $1`,
+      [id],
+    );
+    return rows[0] ? pgTeamRow(rows[0]) : null;
+  };
+
   return {
     async migrate() {
       await pool.query(DDL);
@@ -448,10 +540,20 @@ export const createPgStore = (databaseUrl: string): Store => {
           group.push(event);
           bySession.set(event.session_id, group);
         }
+        // ADR 0004: the creating user's team AT INGEST TIME is snapshotted
+        // onto a new session; reassignments never move captured history.
+        let ingestTeamId: string | null = null;
+        if (userId !== null) {
+          const owned = await client.query(
+            "SELECT team_id FROM users WHERE name = $1",
+            [userId],
+          );
+          ingestTeamId = (owned.rows[0]?.team_id as string | null) ?? null;
+        }
         for (const [sessionId, group] of bySession) {
           await client.query(
-            "INSERT INTO sessions (session_id, agent, user_id) VALUES ($1, $2, $3) ON CONFLICT (session_id) DO NOTHING",
-            [sessionId, group[0]!.agent, userId],
+            "INSERT INTO sessions (session_id, agent, user_id, team_id) VALUES ($1, $2, $3, $4) ON CONFLICT (session_id) DO NOTHING",
+            [sessionId, group[0]!.agent, userId, ingestTeamId],
           );
           // row lock on the session serializes concurrent writers
           const { rows } = await client.query(
@@ -566,12 +668,13 @@ export const createPgStore = (databaseUrl: string): Store => {
 
     async listSessions() {
       const { rows } = await pool.query(
-        "SELECT session_id, agent, user_id, first_seen_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions ORDER BY first_seen_at DESC",
+        "SELECT session_id, agent, user_id, team_id, first_seen_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions ORDER BY first_seen_at DESC",
       );
       return rows.map((r) => ({
         session_id: r.session_id as string,
         agent: r.agent as string,
         user_id: r.user_id as string | null,
+        team_id: (r.team_id as string | null) ?? null,
         first_seen_at: new Date(r.first_seen_at as string).toISOString(),
         last_seq: Number(r.last_seq),
         title: (r.title as string | null) ?? null,
@@ -717,7 +820,7 @@ export const createPgStore = (databaseUrl: string): Store => {
           "INSERT INTO users (name, email) VALUES ($1, $2) RETURNING name, email, disabled, created_at",
           [name, email],
         );
-        return pgUserRow(rows[0]!);
+        return pgUserRow({ ...rows[0]!, active_tokens: 0 });
       } catch (e) {
         if ((e as { code?: string }).code === "23505")
           throw new UserExistsError(name);
@@ -726,38 +829,113 @@ export const createPgStore = (databaseUrl: string): Store => {
     },
 
     async getUser(name) {
-      const { rows } = await pool.query(
-        "SELECT name, email, disabled, created_at FROM users WHERE name = $1",
-        [name],
-      );
+      const { rows } = await pool.query(`${USER_SELECT} WHERE u.name = $1`, [
+        name,
+      ]);
       return rows[0] ? pgUserRow(rows[0]) : null;
     },
 
     async listUsers() {
-      const { rows } = await pool.query(`
-        SELECT u.name, u.email, u.disabled, u.is_dri, u.created_at,
-               COUNT(t.token_id) FILTER (WHERE t.revoked_at IS NULL) AS active_tokens
-        FROM users u LEFT JOIN tokens t ON t.user_name = u.name
-        GROUP BY u.name, u.email, u.disabled, u.is_dri, u.created_at
-        ORDER BY u.created_at ASC
-      `);
+      const { rows } = await pool.query(
+        `${USER_SELECT} ORDER BY u.created_at ASC`,
+      );
       return rows.map((r) => pgUserRow(r));
     },
 
     async setUserDri(name, isDri) {
-      const { rows } = await pool.query(
-        "UPDATE users SET is_dri = $2 WHERE name = $1 RETURNING name, email, disabled, is_dri, created_at",
-        [name, isDri],
-      );
-      return rows[0] ? pgUserRow(rows[0]) : null;
+      await pool.query("UPDATE users SET is_dri = $2 WHERE name = $1", [
+        name,
+        isDri,
+      ]);
+      return this.getUser(name);
     },
 
     async setUserDisabled(name, disabled) {
-      const { rows } = await pool.query(
-        "UPDATE users SET disabled = $2 WHERE name = $1 RETURNING name, email, disabled, created_at",
-        [name, disabled],
+      await pool.query("UPDATE users SET disabled = $2 WHERE name = $1", [
+        name,
+        disabled,
+      ]);
+      return this.getUser(name);
+    },
+
+    async setUserTeam(name, teamId) {
+      if (teamId !== null) {
+        const team = await pool.query("SELECT id FROM teams WHERE id = $1", [
+          teamId,
+        ]);
+        if (team.rowCount === 0) throw new NoSuchTeamError();
+      }
+      const updated = await pool.query(
+        "UPDATE users SET team_id = $2 WHERE name = $1",
+        [name, teamId],
       );
-      return rows[0] ? pgUserRow(rows[0]) : null;
+      if ((updated.rowCount ?? 0) === 0) return null;
+      return this.getUser(name);
+    },
+
+    async createTeam(name, rawRetentionDays) {
+      const id = crypto.randomUUID();
+      try {
+        const { rows } = await pool.query(
+          "INSERT INTO teams (id, name, raw_retention_days) VALUES ($1, $2, $3) RETURNING id, name, raw_retention_days, created_at",
+          [id, name, rawRetentionDays],
+        );
+        return pgTeamRow({ ...rows[0]!, member_count: 0 });
+      } catch (e) {
+        if ((e as { code?: string }).code === "23505")
+          throw new TeamExistsError(name);
+        throw e;
+      }
+    },
+
+    async listTeams() {
+      const { rows } = await pool.query(`
+        SELECT t.id, t.name, t.raw_retention_days, t.created_at,
+               (SELECT COUNT(*) FROM users u WHERE u.team_id = t.id) AS member_count
+        FROM teams t ORDER BY t.created_at ASC
+      `);
+      return rows.map((r) => pgTeamRow(r));
+    },
+
+    async updateTeam(id, patch) {
+      const sets: string[] = [];
+      const args: unknown[] = [];
+      if (patch.name !== undefined) {
+        args.push(patch.name);
+        sets.push(`name = $${args.length}`);
+      }
+      if (patch.raw_retention_days !== undefined) {
+        args.push(patch.raw_retention_days);
+        sets.push(`raw_retention_days = $${args.length}`);
+      }
+      if (sets.length === 0) return getTeamRow(id);
+      args.push(id);
+      const { rows } = await pool.query(
+        `UPDATE teams SET ${sets.join(", ")} WHERE id = $${args.length} RETURNING id`,
+        args,
+      );
+      if (rows.length === 0) return null;
+      return getTeamRow(id);
+    },
+
+    async deleteTeam(id) {
+      const { rowCount } = await pool.query("DELETE FROM teams WHERE id = $1", [
+        id,
+      ]);
+      return (rowCount ?? 0) > 0;
+    },
+
+    async teamsWithMembers() {
+      const { rows } = await pool.query(`
+        SELECT t.id, t.name, COALESCE(array_agg(u.name) FILTER (WHERE u.name IS NOT NULL), '{}') AS members
+        FROM teams t LEFT JOIN users u ON u.team_id = t.id
+        GROUP BY t.id, t.name ORDER BY t.created_at ASC
+      `);
+      return rows.map((r) => ({
+        id: r.id as string,
+        name: r.name as string,
+        members: (r.members as string[]) ?? [],
+      }));
     },
 
     async deleteUser(name) {

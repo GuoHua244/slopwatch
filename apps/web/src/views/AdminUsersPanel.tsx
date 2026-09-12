@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type {
   AdminApi,
+  AdminTeamRow,
   AdminTokenRow,
   AdminUserRow,
   MintedToken,
@@ -23,6 +24,10 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
     error,
   }: { data: AdminUserRow[] | null; error: PollError | null } = usePolled(
     () => api.users(),
+    refreshKey,
+  );
+  const { data: teams }: { data: AdminTeamRow[] | null } = usePolled(
+    () => api.teams(),
     refreshKey,
   );
   const [name, setName] = useState("");
@@ -106,6 +111,7 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
           <tr>
             <th>user</th>
             <th>email</th>
+            <th>team</th>
             <th>status</th>
             <th>role</th>
             <th>tokens</th>
@@ -118,6 +124,26 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
             <tr key={u.name}>
               <td>{u.name}</td>
               <td>{u.email ?? "—"}</td>
+              <td>
+                <select
+                  value={u.team_id ?? ""}
+                  onChange={(e) =>
+                    run(() =>
+                      api.setUserTeam(
+                        u.name,
+                        e.target.value === "" ? null : e.target.value,
+                      ),
+                    )
+                  }
+                >
+                  <option value="">unassigned</option>
+                  {(teams ?? []).map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </td>
               <td className={u.disabled ? "cell-down" : "cell-live"}>
                 {u.disabled ? "disabled" : "active"}
               </td>
@@ -155,7 +181,7 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
             ...(openTokens[u.name]
               ? [
                   <tr key={`${u.name}-tokens`} className="token-row">
-                    <td colSpan={6}>
+                    <td colSpan={7}>
                       {openTokens[u.name]!.length === 0
                         ? "no tokens minted"
                         : openTokens[u.name]!.map((t) => (

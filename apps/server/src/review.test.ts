@@ -28,6 +28,14 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
   listUsers: async () => [],
   setUserDisabled: async () => null,
   deleteUser: async () => false,
+  setUserTeam: async () => null,
+  createTeam: async () => {
+    throw new Error("not scripted");
+  },
+  listTeams: async () => [],
+  updateTeam: async () => null,
+  deleteTeam: async () => false,
+  teamsWithMembers: async () => [],
   mintToken: async () => {
     throw new Error("not scripted");
   },
@@ -166,14 +174,20 @@ describe("review plane authorization (in memory)", () => {
     expect(forbidden.status).toBe(403);
   });
 
-  test("GET review and GET comments are org-wide (no token needed)", async () => {
+  test("GET review and GET comments need a token (decision 22), then answer org-wide", async () => {
     const store = scriptedStore({
       reviewFor: async () => null,
       listComments: async () => [],
     });
-    const app = appWith(store, {});
-    expect((await req(app, "/sessions/sess_1/review")).status).toBe(200);
-    expect((await req(app, "/sessions/sess_1/comments")).status).toBe(200);
+    const app = appWith(store, { "tok-dev": "dev" });
+    expect((await req(app, "/sessions/sess_1/review")).status).toBe(401);
+    expect((await req(app, "/sessions/sess_1/comments")).status).toBe(401);
+    expect(
+      (await req(app, "/sessions/sess_1/review", {}, "tok-dev")).status,
+    ).toBe(200);
+    expect(
+      (await req(app, "/sessions/sess_1/comments", {}, "tok-dev")).status,
+    ).toBe(200);
   });
 
   test("POST comment: 401 unauthenticated, 400 empty body, 201 with the comment", async () => {
@@ -248,6 +262,8 @@ describe("review plane authorization (in memory)", () => {
       is_dri: true,
       created_at: "2026-09-10T00:00:00.000Z",
       active_tokens: 0,
+      team_id: null,
+      team_name: null,
     };
     let called: boolean | undefined;
     const store = scriptedStore({

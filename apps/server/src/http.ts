@@ -5,7 +5,12 @@ import {
 } from "@slopwatch/events";
 import { existsSync, statSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
-import { UserExistsError, type Store } from "./store";
+import {
+  NoSuchTeamError,
+  TeamExistsError,
+  UserExistsError,
+  type Store,
+} from "./store";
 
 export type App = { fetch: (req: Request) => Promise<Response> };
 
@@ -189,8 +194,13 @@ export const createApp = ({
       return json(202, { accepted });
     }
 
+    // --- Read plane (v2 decision 22, ADR 0003): every read requires a
+    // bearer token — an intranet visitor must never read prompt payloads.
+    // /healthz above stays anonymous as the ops probe. ---
     const eventsMatch = url.pathname.match(/^\/sessions\/([^/]+)\/events$/);
     if (eventsMatch && req.method === "GET") {
+      const user = await resolveUser();
+      if (user === null) return json(401, { error: "unauthorized" });
       const sinceSeq = Number(url.searchParams.get("since_seq") ?? 0);
       const events = await store.eventsSince(
         decodeURIComponent(eventsMatch[1]!),
@@ -203,11 +213,15 @@ export const createApp = ({
     }
 
     if (url.pathname === "/sessions" && req.method === "GET") {
+      const user = await resolveUser();
+      if (user === null) return json(401, { error: "unauthorized" });
       return json(200, { sessions: await store.listSessions() });
     }
 
     // Decision 18: per-developer usage rollups (org-wide read like /sessions).
     if (url.pathname === "/rollups" && req.method === "GET") {
+      const user = await resolveUser();
+      if (user === null) return json(401, { error: "unauthorized" });
       const days = windowParam(url.searchParams.get("days"), 3650, 30);
       const hours = windowParam(url.searchParams.get("hours"), 168, 24);
       const now = Date.now();
@@ -220,8 +234,16 @@ export const createApp = ({
       return json(200, await store.listRollups(sinceDay, sinceHour));
     }
 
-    // --- Review plane (decision 10): reads are org-wide, writes are authed;
-    // the review marker itself is DRI-exclusive. ---
+    // v2 decision 23: the roster, for the leaderboard's team grouping.
+    if (url.pathname === "/teams" && req.method === "GET") {
+      const user = await resolveUser();
+      if (user === null) return json(401, { error: "unauthorized" });
+      return json(200, { teams: await store.teamsWithMembers() });
+    }
+
+    // --- Review plane (decision 10): reads are org-wide for token holders;
+    // writes carry the reader's user token; the review marker itself is
+    // DRI-exclusive. ---
     if (url.pathname === "/me" && req.method === "GET") {
       const user = await resolveUser();
       if (user === null) return json(401, { error: "unauthorized" });
@@ -231,8 +253,11 @@ export const createApp = ({
     const reviewMatch = url.pathname.match(/^\/sessions\/([^/]+)\/review$/);
     if (reviewMatch) {
       const sessionId = decodeURIComponent(reviewMatch[1]!);
-      if (req.method === "GET")
+      if (req.method === "GET") {
+        const user = await resolveUser();
+        if (user === null) return json(401, { error: "unauthorized" });
         return json(200, { review: await store.reviewFor(sessionId) });
+      }
       if (req.method === "POST" || req.method === "DELETE") {
         const user = await resolveUser();
         if (user === null) return json(401, { error: "unauthorized" });
@@ -253,8 +278,11 @@ export const createApp = ({
     const commentsMatch = url.pathname.match(/^\/sessions\/([^/]+)\/comments$/);
     if (commentsMatch) {
       const sessionId = decodeURIComponent(commentsMatch[1]!);
-      if (req.method === "GET")
+      if (req.method === "GET") {
+        const user = await resolveUser();
+        if (user === null) return json(401, { error: "unauthorized" });
         return json(200, { comments: await store.listComments(sessionId) });
+      }
       if (req.method === "POST") {
         const user = await resolveUser();
         if (user === null) return json(401, { error: "unauthorized" });
@@ -287,6 +315,85 @@ export const createApp = ({
         return json(200, { rows: await store.listQuarantine(limit) });
       }
 
+      // v2 decision 23: team management.
+      if (url.pathname === "/admin/teams") {
+        if (req.method === "GET")
+          return json(200, { teams: await store.listTeams() });
+        if (req.method === "POST") {
+          const body = await readJson(req);
+          if (body === null) return json(400, { error: "invalid json" });
+          const name = trimField(body.name, 100);
+          if (name === null)
+            return json(400, { error: "name must be a non-empty string" });
+          let retention: number | null = null;
+          if (body.raw_retention_days !== undefined) {
+            if (
+              body.raw_retention_days !== null &&
+              (typeof body.raw_retention_days !== "number" ||
+                !Number.isInteger(body.raw_retention_days) ||
+                body.raw_retention_days < 1)
+            ) {
+              return json(400, {
+                error: "raw_retention_days must be null or a positive integer",
+              });
+            }
+            retention = body.raw_retention_days;
+          }
+          try {
+            return json(201, { team: await store.createTeam(name, retention) });
+          } catch (e) {
+            if (e instanceof TeamExistsError)
+              return json(409, { error: e.message });
+            throw e;
+          }
+        }
+      }
+
+      const teamMatch = url.pathname.match(/^\/admin\/teams\/([^/]+)$/);
+      if (teamMatch) {
+        const id = decodeURIComponent(teamMatch[1]!);
+        if (req.method === "PATCH") {
+          const body = await readJson(req);
+          if (body === null) return json(400, { error: "invalid json" });
+          const { name, raw_retention_days } = body;
+          if (name !== undefined && trimField(name, 100) === null)
+            return json(400, { error: "name must be a non-empty string" });
+          if (
+            raw_retention_days !== undefined &&
+            raw_retention_days !== null &&
+            (typeof raw_retention_days !== "number" ||
+              !Number.isInteger(raw_retention_days) ||
+              raw_retention_days < 1)
+          ) {
+            return json(400, {
+              error: "raw_retention_days must be null or a positive integer",
+            });
+          }
+          if (name === undefined && raw_retention_days === undefined)
+            return json(400, { error: "nothing to update" });
+          try {
+            const team = await store.updateTeam(id, {
+              ...(name !== undefined ? { name: trimField(name, 100)! } : {}),
+              ...(raw_retention_days !== undefined
+                ? { raw_retention_days }
+                : {}),
+            });
+            return team === null
+              ? json(404, { error: "no such team" })
+              : json(200, { team });
+          } catch (e) {
+            if (e instanceof TeamExistsError)
+              return json(409, { error: e.message });
+            throw e;
+          }
+        }
+        if (req.method === "DELETE") {
+          return (await store.deleteTeam(id))
+            ? json(200, { ok: true })
+            : json(404, { error: "no such team" });
+        }
+      }
+
       if (url.pathname === "/admin/users") {
         if (req.method === "GET")
           return json(200, { users: await store.listUsers() });
@@ -313,20 +420,41 @@ export const createApp = ({
         if (req.method === "PATCH") {
           const body = await readJson(req);
           if (body === null) return json(400, { error: "invalid json" });
-          const { disabled, is_dri } = body;
+          const { disabled, is_dri, team_id } = body;
           if (disabled !== undefined && typeof disabled !== "boolean")
             return json(400, { error: "disabled must be a boolean" });
           if (is_dri !== undefined && typeof is_dri !== "boolean")
             return json(400, { error: "is_dri must be a boolean" });
-          if (disabled === undefined && is_dri === undefined)
+          if (
+            team_id !== undefined &&
+            team_id !== null &&
+            typeof team_id !== "string"
+          )
+            return json(400, { error: "team_id must be a string or null" });
+          if (
+            disabled === undefined &&
+            is_dri === undefined &&
+            team_id === undefined
+          ) {
             return json(400, { error: "nothing to update" });
-          if (disabled !== undefined) {
-            const user = await store.setUserDisabled(name, disabled);
-            if (user === null) return json(404, { error: "no such user" });
           }
-          if (is_dri !== undefined) {
-            const user = await store.setUserDri(name, is_dri);
-            if (user === null) return json(404, { error: "no such user" });
+          try {
+            if (disabled !== undefined) {
+              const user = await store.setUserDisabled(name, disabled);
+              if (user === null) return json(404, { error: "no such user" });
+            }
+            if (is_dri !== undefined) {
+              const user = await store.setUserDri(name, is_dri);
+              if (user === null) return json(404, { error: "no such user" });
+            }
+            if (team_id !== undefined) {
+              const user = await store.setUserTeam(name, team_id);
+              if (user === null) return json(404, { error: "no such user" });
+            }
+          } catch (e) {
+            if (e instanceof NoSuchTeamError)
+              return json(404, { error: e.message });
+            throw e;
           }
           return json(200, { user: await store.getUser(name) });
         }

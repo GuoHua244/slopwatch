@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { createApp, type App } from "./http";
 import {
   hashToken,
+  NoSuchTeamError,
+  TeamExistsError,
   UserExistsError,
   type AdminTokenRow,
   type AdminUserRow,
@@ -23,6 +25,8 @@ const memStore = () => {
       disabled: boolean;
       is_dri: boolean;
       created_at: string;
+      team_id?: string | null;
+      team_name?: string | null;
     }
   >();
   const tokens = new Map<
@@ -37,6 +41,14 @@ const memStore = () => {
   >();
   let sessions = 0;
   let events = 0;
+  const teams = new Map<
+    string,
+    {
+      name: string;
+      raw_retention_days: number | null;
+      created_at: string;
+    }
+  >();
   const seenSessions = new Set<string>();
   const sessionEvents = new Map<string, number>();
   const row = (name: string): AdminUserRow => ({
@@ -48,6 +60,8 @@ const memStore = () => {
     active_tokens: [...tokens.values()].filter(
       (t) => t.user === name && t.revoked_at === null,
     ).length,
+    team_id: users.get(name)!.team_id ?? null,
+    team_name: users.get(name)!.team_name ?? null,
   });
   const store: Store = {
     migrate: async () => {},
@@ -92,6 +106,8 @@ const memStore = () => {
         disabled: false,
         is_dri: false,
         created_at: new Date().toISOString(),
+        team_id: null,
+        team_name: null,
       });
       return row(name);
     },
@@ -107,6 +123,60 @@ const memStore = () => {
       users.get(name)!.is_dri = isDri;
       return row(name);
     },
+    setUserTeam: async (name, teamId) => {
+      if (!users.has(name)) return null;
+      const team = teamId === null ? null : teams.get(teamId);
+      if (teamId !== null && !team) throw new NoSuchTeamError();
+      users.get(name)!.team_id = teamId;
+      users.get(name)!.team_name = team?.name ?? null;
+      return row(name);
+    },
+    createTeam: async (name2, rawRetentionDays) => {
+      if ([...teams.values()].some((t) => t.name === name2))
+        throw new TeamExistsError(name2);
+      const id = crypto.randomUUID();
+      teams.set(id, {
+        name: name2,
+        raw_retention_days: rawRetentionDays,
+        created_at: new Date().toISOString(),
+      });
+      return {
+        id,
+        name: name2,
+        raw_retention_days: rawRetentionDays,
+        created_at: teams.get(id)!.created_at,
+        member_count: 0,
+      };
+    },
+    listTeams: async () =>
+      [...teams.entries()].map(([id, t]) => ({
+        ...t,
+        id,
+        member_count: [...users.values()].filter((u) => u.team_id === id)
+          .length,
+      })),
+    updateTeam: async (id, patch) => {
+      const t = teams.get(id);
+      if (!t) return null;
+      if (patch.name !== undefined) t.name = patch.name;
+      if (patch.raw_retention_days !== undefined)
+        t.raw_retention_days = patch.raw_retention_days;
+      return {
+        ...t,
+        id,
+        member_count: [...users.values()].filter((u) => u.team_id === id)
+          .length,
+      };
+    },
+    deleteTeam: async (id) => teams.delete(id),
+    teamsWithMembers: async () =>
+      [...teams.entries()].map(([id, t]) => ({
+        id,
+        name: t.name,
+        members: [...users.entries()]
+          .filter(([, u]) => u.team_id === id)
+          .map(([n]) => n),
+      })),
     deleteUser: async (name) => {
       if (!users.has(name)) return false;
       users.delete(name);
@@ -543,5 +613,126 @@ describe.skipIf(!dbTests())("admin store semantics against Postgres", () => {
 
   test("cleanup", async () => {
     if (store) await store.close();
+  });
+});
+
+describe("admin team plane (decision 23)", () => {
+  const { store } = memStore();
+  const app = createApp({
+    tokens: new Map([["tok-alice", "alice"]]),
+    adminToken: "admin-tok",
+    store,
+  });
+  const alice = (method: string, path: string, body?: unknown) =>
+    app.fetch(
+      new Request(`http://x${path}`, {
+        method,
+        headers: {
+          authorization: "Bearer tok-alice",
+          ...(body !== undefined ? { "content-type": "application/json" } : {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      }),
+    );
+
+  test("create → duplicate → list → rename → retention → delete", async () => {
+    const created = await admin(app, "POST", "/admin/teams", {
+      name: "platform",
+      raw_retention_days: 30,
+    });
+    expect(created.status).toBe(201);
+    const { team } = (await created.json()) as {
+      team: { id: string; name: string; raw_retention_days: number | null };
+    };
+    expect(team.name).toBe("platform");
+    expect(team.raw_retention_days).toBe(30);
+
+    expect(
+      (await admin(app, "POST", "/admin/teams", { name: "platform" })).status,
+    ).toBe(409);
+    expect(
+      (await admin(app, "POST", "/admin/teams", { name: "" })).status,
+    ).toBe(400);
+    expect(
+      (
+        await admin(app, "POST", "/admin/teams", {
+          name: "bad",
+          raw_retention_days: 0,
+        })
+      ).status,
+    ).toBe(400);
+
+    const list = await admin(app, "GET", "/admin/teams");
+    expect(
+      ((await list.json()) as { teams: { name: string }[] }).teams.some(
+        (t) => t.name === "platform",
+      ),
+    ).toBe(true);
+
+    const renamed = await admin(app, "PATCH", `/admin/teams/${team.id}`, {
+      name: "infra",
+      raw_retention_days: null,
+    });
+    const renamedTeam = (
+      (await renamed.json()) as {
+        team: { name: string; raw_retention_days: number | null };
+      }
+    ).team;
+    expect(renamedTeam.name).toBe("infra");
+    expect(renamedTeam.raw_retention_days).toBeNull();
+
+    expect(
+      (await admin(app, "PATCH", "/admin/teams/no-such-id", { name: "x" }))
+        .status,
+    ).toBe(404);
+    expect((await admin(app, "DELETE", "/admin/teams/no-such-id")).status).toBe(
+      404,
+    );
+    expect((await admin(app, "DELETE", `/admin/teams/${team.id}`)).status).toBe(
+      200,
+    );
+  });
+
+  test("assign a user via PATCH team_id; unknown team 404", async () => {
+    await admin(app, "POST", "/admin/users", { name: "teamy" });
+    const { team } = (await (
+      await admin(app, "POST", "/admin/teams", { name: "web" })
+    ).json()) as { team: { id: string } };
+
+    const patched = await admin(app, "PATCH", "/admin/users/teamy", {
+      team_id: team.id,
+    });
+    const { user } = (await patched.json()) as {
+      user: { team_id: string; team_name: string };
+    };
+    expect(user.team_id).toBe(team.id);
+    expect(user.team_name).toBe("web");
+
+    const off = await admin(app, "PATCH", "/admin/users/teamy", {
+      team_id: null,
+    });
+    expect(
+      ((await off.json()) as { user: { team_id: null } }).user.team_id,
+    ).toBe(null);
+
+    expect(
+      (
+        await admin(app, "PATCH", "/admin/users/teamy", {
+          team_id: "00000000-0000-0000-0000-000000000000",
+        })
+      ).status,
+    ).toBe(404);
+  });
+
+  test("GET /teams is authenticated and returns the roster", async () => {
+    await admin(app, "POST", "/admin/teams", { name: "roster-team" });
+    expect((await alice("GET", "/teams")).status).toBe(200);
+    expect((await app.fetch(new Request("http://x/teams"))).status).toBe(401);
+    const adminTeams = await admin(app, "GET", "/admin/teams");
+    expect(
+      ((await adminTeams.json()) as { teams: { name: string }[] }).teams.some(
+        (t) => t.name === "roster-team",
+      ),
+    ).toBe(true);
   });
 });

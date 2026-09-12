@@ -85,6 +85,24 @@ const refusingStore = (): Store => ({
     throw new Error("store must not be touched");
   },
   listQuarantine: async () => [],
+  createTeam: () => {
+    throw new Error("store must not be touched");
+  },
+  listTeams: () => {
+    throw new Error("store must not be touched");
+  },
+  updateTeam: () => {
+    throw new Error("store must not be touched");
+  },
+  deleteTeam: () => {
+    throw new Error("store must not be touched");
+  },
+  setUserTeam: () => {
+    throw new Error("store must not be touched");
+  },
+  teamsWithMembers: () => {
+    throw new Error("store must not be touched");
+  },
   close: async () => {},
 });
 
@@ -170,8 +188,14 @@ describe("GET /rollups", () => {
         };
       },
     };
-    const res = await createApp({ tokens: new Map(), store: spyStore }).fetch(
-      new Request("http://x/rollups?days=99999&hours=not-a-number"),
+    // reads are token-gated since decision 22 — the request carries a token
+    const res = await createApp({
+      tokens: new Map([["tok-alice", "alice"]]),
+      store: spyStore,
+    }).fetch(
+      new Request("http://x/rollups?days=99999&hours=not-a-number", {
+        headers: { authorization: "Bearer tok-alice" },
+      }),
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({

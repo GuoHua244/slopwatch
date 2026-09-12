@@ -10,6 +10,9 @@ export default defineConfig({
     proxy: {
       "/sessions": "http://localhost:8787",
       "/healthz": "http://localhost:8787",
+      "/rollups": "http://localhost:8787",
+      "/teams": "http://localhost:8787",
+      "/me": "http://localhost:8787",
       "/admin": "http://localhost:8787",
     },
   },

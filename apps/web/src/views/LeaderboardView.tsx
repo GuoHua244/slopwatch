@@ -1,5 +1,6 @@
 import type { SessionSummary } from "../api";
 import { useRollups } from "../hooks/useRollups";
+import { useTeams } from "../hooks/useTeams";
 import { clock, fmtCost, fmtDelta, fmtTokens } from "../lib/format";
 import { aggregateLeaderboard } from "../lib/leaderboard";
 import { sparklinePoints } from "../lib/sparkline";
@@ -10,7 +11,8 @@ const rank = (index: number): string => String(index + 1).padStart(2, "0");
  * The developer leaderboard, served from the decision-18 rollups — one
  * rollups call plus the session list, no per-session event fetching. Clicking
  * a row drills into that developer (the "(unknown)" bucket has no identity to
- * drill into).
+ * drill into). The team column is the user's current team (decision 23);
+ * "unassigned" users render as "—" until the admin files them.
  */
 export const LeaderboardView = ({
   sessions,
@@ -18,8 +20,13 @@ export const LeaderboardView = ({
   sessions: SessionSummary[];
 }) => {
   const rollups = useRollups({ days: 8 });
+  const teams = useTeams();
   const rows = aggregateLeaderboard(sessions, rollups);
   if (rows.length === 0) return <p className="empty">no sessions yet</p>;
+  const teamByUser = new Map<string, string>();
+  for (const team of teams) {
+    for (const member of team.members) teamByUser.set(member, team.name);
+  }
   const maxCost = Math.max(...rows.map((row) => row.costUsd ?? 0), 0);
   return (
     <table className="usage leaderboard">
@@ -27,6 +34,7 @@ export const LeaderboardView = ({
         <tr>
           <th>#</th>
           <th>developer</th>
+          <th>team</th>
           <th>sessions</th>
           <th>turns</th>
           <th>requests</th>
@@ -48,6 +56,7 @@ export const LeaderboardView = ({
             row.userId !== "(unknown)" && row.sessions > 0
               ? `#/leaderboard/${encodeURIComponent(row.userId)}`
               : null;
+          const teamName = teamByUser.get(row.userId);
           return (
             <tr
               key={row.userId}
@@ -62,6 +71,9 @@ export const LeaderboardView = ({
             >
               <td className="num dim">{rank(index)}</td>
               <td>{row.userId}</td>
+              <td className={teamName ? undefined : "dim"}>
+                {teamName ?? "unassigned"}
+              </td>
               <td className="num">{row.sessions}</td>
               <td className="num">{row.turns}</td>
               <td className="num">{row.requests}</td>

@@ -37,5 +37,5 @@ describe("spawner refuses an unexpanded session-id template", () => {
       new Response(proc.stderr).text(),
     ]);
     expect(code).toBe(1);
-  });
+  }, 20_000); // bun cold start ~3s on this machine; CI parallelism adds more
 });
