@@ -15,6 +15,8 @@ export type Config = {
     accessKeyId: string;
     secretAccessKey: string;
   } | null;
+  /** ADR 0005: the org IdP as a second token issuer; null = minted only. */
+  oidc: { issuer: string; audience: string } | null;
 };
 
 export const loadConfig = (
@@ -54,6 +56,22 @@ export const loadConfig = (
         }
       : null;
 
+  // ADR 0005, the same fail-visible ethos as the S3 block above: half an
+  // OIDC config would 401 every IdP-issued login with no hint why.
+  const oidcValues = [env.SLOPWATCH_OIDC_ISSUER, env.SLOPWATCH_OIDC_AUDIENCE];
+  const oidcMissing = oidcValues.filter((v) => !v).length;
+  if (oidcMissing > 0 && oidcMissing < oidcValues.length)
+    throw new Error(
+      "OIDC partially configured — set both SLOPWATCH_OIDC_ISSUER and SLOPWATCH_OIDC_AUDIENCE, or none",
+    );
+  const oidc =
+    oidcMissing === 0
+      ? {
+          issuer: env.SLOPWATCH_OIDC_ISSUER!,
+          audience: env.SLOPWATCH_OIDC_AUDIENCE!,
+        }
+      : null;
+
   return {
     port: Number(env.PORT ?? 8787),
     databaseUrl,
@@ -61,5 +79,6 @@ export const loadConfig = (
     adminToken: env.SLOPWATCH_ADMIN_TOKEN,
     rawTtlDays: Number(env.RAW_TTL_DAYS ?? 90),
     s3,
+    oidc,
   };
 };

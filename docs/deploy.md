@@ -56,6 +56,24 @@ command, not a procedure.
    `slopwatch install` (or `slopwatch login <token>`) against this server.
    The same token signs into the dashboard in the browser.
 
+### OIDC instead of minted tokens (optional)
+
+If the org runs an identity provider, set both variables in the compose
+`.env` and restart:
+
+```sh
+SLOPWATCH_OIDC_ISSUER=https://idp.internal/realms/your-org
+SLOPWATCH_OIDC_AUDIENCE=slopwatch
+```
+
+The server then also accepts RS256 JWTs the IdP issued (verified against its
+published JWKS, ADR 0005). Identity maps onto users by the `email` claim,
+then `preferred_username`/`sub`; a first sighting through the IdP provisions
+the user row automatically — steps 1–3 shrink to assigning teams and DRIs in
+the admin panel. Listeners keep sending a plain bearer token either way; an
+IdP-issued token works for `slopwatch login` and the dashboard sign-in too.
+Minted tokens remain valid alongside, so existing setups change nothing.
+
 ## Retention and archive
 
 - Raw payloads expire on the ingesting session's team TTL override (the team
@@ -75,8 +93,11 @@ command, not a procedure.
 - **Tokens**: rotating a bootstrap token means editing `.env` and
   `docker compose up -d`; admin-minted tokens rotate per user from the admin
   panel without a restart.
-- **OIDC** is deliberately not in v2 — the first post-launch increment swaps
-  the token issuer only (decision 6's upgrade path); nothing here changes.
+- **OIDC**: when `SLOPWATCH_OIDC_ISSUER`/`SLOPWATCH_OIDC_AUDIENCE` are set,
+  the Server fetches the IdP's discovery document and JWKS lazily and caches
+  them ~10 minutes — keep those URLs reachable from the container. A partial
+  OIDC config fails the boot; a wrong issuer/audience surfaces as 401s on
+  IdP-issued tokens only (ADR 0005).
 - The compose Postgres credentials are intentionally simple defaults for the
   isolated compose network; change them if you attach the database to any
   other network.

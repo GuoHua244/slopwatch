@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import type { NormalEvent, QuarantineEvent } from "@slopwatch/events";
 import { rollupDeltas, type FlatDelta, type ModelDelta } from "./rollups";
+import type { OidcIdentity } from "./oidc";
 
 export type SessionRow = {
   session_id: string;
@@ -235,6 +236,12 @@ export type Store = {
   revokeToken(tokenId: string): Promise<boolean>;
   /** Bearer token → user name; null for unknown, revoked, or disabled. */
   resolveTokenUser(token: string): Promise<string | null>;
+  /**
+   * ADR 0005: map a verified OIDC identity onto a user — the email claim
+   * first, then preferred_username/subject, provisioning the row on first
+   * sight. Null for disabled users and irreconcilable name collisions.
+   */
+  resolveOidcUser(identity: OidcIdentity): Promise<string | null>;
   /** Decision 10: mark a session reviewed (upsert). Null when the session is unknown. */
   markReviewed(
     sessionId: string,
@@ -1108,6 +1115,39 @@ export const createPgStore = (databaseUrl: string): Store => {
         [hashToken(token)],
       );
       return (rows[0]?.user_name as string | undefined) ?? null;
+    },
+
+    async resolveOidcUser(identity) {
+      if (identity.email !== null) {
+        const byEmail = await pool.query(
+          "SELECT name FROM users WHERE email = $1 AND NOT disabled LIMIT 1",
+          [identity.email],
+        );
+        if (byEmail.rows[0] !== undefined)
+          return byEmail.rows[0]!.name as string;
+      }
+      const candidate = identity.preferredUsername ?? identity.subject;
+      const byName = await pool.query(
+        "SELECT name FROM users WHERE name = $1 AND NOT disabled",
+        [candidate],
+      );
+      if (byName.rows[0] !== undefined) return byName.rows[0]!.name as string;
+      try {
+        // First sighting through the issuer: provision the row so OIDC
+        // onboarding needs no admin-minted token. Team and DRI stay admin
+        // decisions, so they start unset.
+        await pool.query("INSERT INTO users (name, email) VALUES ($1, $2)", [
+          candidate,
+          identity.email,
+        ]);
+        return candidate;
+      } catch (e) {
+        // The name exists but did not resolve above — a disabled user, or a
+        // row whose email claims a different person. Refuse rather than
+        // merge two identities into one account.
+        if ((e as { code?: string }).code === "23505") return null;
+        throw e;
+      }
     },
 
     async markReviewed(sessionId, reviewerId) {

@@ -69,6 +69,7 @@ const refusingStore = (): Store => ({
     throw new Error("store must not be touched");
   },
   resolveTokenUser: async () => null,
+  resolveOidcUser: async () => null,
   markReviewed: () => {
     throw new Error("store must not be touched");
   },

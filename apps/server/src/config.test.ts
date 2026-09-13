@@ -37,3 +37,29 @@ describe("loadConfig S3 archive wiring", () => {
     ).toThrow(/partially configured/);
   });
 });
+
+// ADR 0005: the IdP as a second token issuer, all-or-none like the S3 block.
+describe("loadConfig OIDC issuer wiring", () => {
+  test("no OIDC vars → minted tokens only", () => {
+    expect(loadConfig(base).oidc).toBeNull();
+  });
+
+  test("both vars → issuer on", () => {
+    expect(
+      loadConfig({
+        ...base,
+        SLOPWATCH_OIDC_ISSUER: "https://idp.example.com",
+        SLOPWATCH_OIDC_AUDIENCE: "slopwatch",
+      }).oidc,
+    ).toEqual({ issuer: "https://idp.example.com", audience: "slopwatch" });
+  });
+
+  test("a partial OIDC config throws instead of silently failing logins", () => {
+    expect(() =>
+      loadConfig({
+        ...base,
+        SLOPWATCH_OIDC_ISSUER: "https://idp.example.com",
+      }),
+    ).toThrow(/partially configured/);
+  });
+});

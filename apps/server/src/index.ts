@@ -2,6 +2,7 @@ import { loadConfig } from "./config";
 import { createApp } from "./http";
 import { createPgStore } from "./store";
 import { createS3Client } from "./s3";
+import { createOidcVerifier } from "./oidc";
 import { fileURLToPath } from "node:url";
 
 const config = loadConfig();
@@ -38,6 +39,14 @@ const prune = () =>
 void prune();
 setInterval(prune, 24 * 60 * 60 * 1000);
 
+// ADR 0005: the org IdP as a second token issuer. JWKS fetches happen lazily
+// on first use, so boot never blocks on the IdP being reachable.
+const oidc = config.oidc ? createOidcVerifier(config.oidc) : undefined;
+if (config.oidc)
+  console.log(
+    `OIDC enabled — accepting RS256 tokens from ${config.oidc.issuer} (audience ${config.oidc.audience})`,
+  );
+
 // Decision 12: serve the built SPA same-origin from the single process.
 const staticRoot = fileURLToPath(new URL("../../web/dist", import.meta.url));
 
@@ -47,6 +56,7 @@ const app = createApp({
   staticRoot,
   adminToken: config.adminToken,
   archive,
+  oidc,
 });
 
 Bun.serve({ port: config.port, fetch: (req) => app.fetch(req) });

@@ -53,6 +53,7 @@ const scriptedStore = (): Store & { calls: string[] } => {
     listTokens: async () => [],
     revokeToken: async () => false,
     resolveTokenUser: async () => null,
+    resolveOidcUser: async () => null,
     markReviewed: async () => null,
     unmarkReviewed: async () => false,
     reviewFor: async () => {
@@ -157,5 +158,39 @@ describe("read-plane authentication (decision 22)", () => {
       "listSessions:unassigned",
       "listSessions",
     ]);
+  });
+
+  test("an IdP-issued bearer resolves through the OIDC verifier (ADR 0005)", async () => {
+    const store = scriptedStore();
+    store.resolveOidcUser = async (identity) =>
+      identity.subject === "carol" ? "carol" : null;
+    const a = createApp({
+      tokens: new Map(),
+      store,
+      oidc: {
+        verify: async (token) =>
+          token === "oidc-jwt"
+            ? {
+                subject: "carol",
+                email: null,
+                preferredUsername: null,
+                name: null,
+              }
+            : null,
+      },
+    });
+    expect((await get(a, "/sessions", "oidc-jwt")).status).toBe(200);
+    expect((await get(a, "/me", "oidc-jwt")).status).toBe(200);
+    expect((await get(a, "/sessions", "not-the-token")).status).toBe(401);
+  });
+
+  test("minted tokens still win when the OIDC verifier is present", async () => {
+    const store = scriptedStore();
+    const a = createApp({
+      tokens: new Map([["tok-alice", "alice"]]),
+      store,
+      oidc: { verify: async () => null },
+    });
+    expect((await get(a, "/sessions", "tok-alice")).status).toBe(200);
   });
 });

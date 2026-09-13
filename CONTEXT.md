@@ -48,6 +48,10 @@ _Avoid_: reviewer, assignee, approver, inbox owner.
 A normalized record a **Listener** produces and ships to the **Server** — the unit of communication between them. Sessions, Turns, and Model requests are all carried as Events. The shared package that defines the Event schema and the typed Listener→Server client is `@slopwatch/events`; the TypeScript type is `NormalEvent` (to avoid colliding with the global DOM `Event`).
 _Avoid_: message, payload, wire format, record.
 
+**Issuer**:
+Whoever minted a bearer token: the **Server** (admin-minted, stored hashed in `tokens`) or the org's OIDC IdP (verified against its published JWKS, ADR 0005). The token's wire shape is the same either way — a Listener can never tell which Issuer stood behind it.
+_Avoid_: SSO, identity provider without naming which Issuer.
+
 ## Relationships
 
 - A **User** belongs to exactly one **Team**; membership can change over time.

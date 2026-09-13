@@ -18,6 +18,7 @@ import {
   pushSessionEnds,
   webhookBody,
 } from "./webhook";
+import type { OidcVerifier } from "./oidc";
 
 export type App = { fetch: (req: Request) => Promise<Response> };
 
@@ -38,6 +39,12 @@ export type AppOptions = {
    * route answers 400.
    */
   archive?: { getObject(key: string): Promise<string> };
+  /**
+   * ADR 0005: the org IdP as a second token issuer. Present, an RS256 bearer
+   * JWT it signs resolves to a user alongside minted tokens; absent, minted
+   * tokens only.
+   */
+  oidc?: OidcVerifier;
 };
 
 const json = (status: number, body: unknown): Response =>
@@ -162,15 +169,22 @@ export const createApp = ({
   staticRoot,
   adminToken,
   archive,
+  oidc,
 }: AppOptions): App => ({
   async fetch(req) {
     const url = new URL(req.url);
 
-    // Env tokens first (v0 bootstrap), then admin-minted tokens (decision 6).
+    // Env tokens first (v0 bootstrap), then admin-minted tokens (decision 6),
+    // then IdP-issued JWTs (ADR 0005).
     const resolveUser = async (): Promise<string | null> => {
       const bearer = bearerToken(req);
       if (bearer === null) return null;
-      return tokens.get(bearer) ?? (await store.resolveTokenUser(bearer));
+      const minted =
+        tokens.get(bearer) ?? (await store.resolveTokenUser(bearer));
+      if (minted !== null) return minted;
+      const identity = oidc === undefined ? null : await oidc.verify(bearer);
+      if (identity === null) return null;
+      return store.resolveOidcUser(identity);
     };
 
     if (url.pathname === "/healthz") return json(200, { ok: true });

@@ -61,7 +61,11 @@ Storage and rollup buckets stay UTC (v1 decision 18 stands). Daily aggregates re
 
 ## Out of scope for v2
 
-- **OIDC** — the first post-launch increment; the token shape does not change (v1 decision 6).
+- **OIDC** — shipped 2026-09-14 as ADR 0005: the server accepts RS256 JWTs
+  from a configured issuer alongside minted tokens; the token shape did not
+  change (v1 decision 6). The team filter the plan called a trivial later
+  increment shipped the same day — `GET /sessions?team_id=` on the stored
+  session snapshot.
 - **New listeners** — Codex, Pi, OpenCode, Copilot stay deferred (decision 20).
 - **Cross-provider cost normalization** — reaffirmed deferred (v1 open question 12): token totals are stored and serve relative comparison; a price table would be a permanently maintained asset the rollout does not depend on.
 - **Resident helper process, sub-5s spectate, proxy capture path, resumes/compaction modeling** — unchanged deferrals; revisit triggers unchanged.

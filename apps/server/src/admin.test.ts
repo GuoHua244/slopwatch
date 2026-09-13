@@ -226,6 +226,7 @@ const memStore = () => {
       }
       return null;
     },
+    resolveOidcUser: async () => null,
     markReviewed: async () => null,
     unmarkReviewed: async () => false,
     reviewFor: async () => null,

@@ -47,6 +47,7 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
   listTokens: async () => [],
   revokeToken: async () => false,
   resolveTokenUser: async () => null,
+  resolveOidcUser: async () => null,
   markReviewed: async () => {
     throw new Error("not scripted");
   },
