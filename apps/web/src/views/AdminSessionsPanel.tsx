@@ -1,10 +1,7 @@
 import { useState } from "react";
 import { createApi, type AdminApi, type SessionSummary } from "../api";
-import { clock, fmtTokens, shortId } from "../lib/format";
+import { clock, errorMessage, fmtTokens, shortId } from "../lib/format";
 import { usePolled, type PollError } from "./AdminView";
-
-const errorMessage = (e: unknown): string =>
-  e instanceof Error ? e.message : String(e);
 
 const readApi = createApi();
 

@@ -92,6 +92,7 @@ const memStore = () => {
     pruneRaw: async () => ({ archived: 0, pruned: 0 }),
     getSetting: async () => null,
     setSetting: async () => {},
+    clearSetting: async () => {},
     listSettings: async () => ({}),
     backfillTokenTotals: async () => 0,
     listRollups: async () => ({
@@ -245,8 +246,11 @@ const memStore = () => {
   return { store, tokens, users };
 };
 
-const appWith = (opts: { adminToken?: string; store: Store }): App =>
-  createApp({ tokens: new Map(), ...opts });
+const appWith = (opts: {
+  adminToken?: string;
+  store: Store;
+  archive?: { getObject(key: string): Promise<string> };
+}): App => createApp({ tokens: new Map(), ...opts });
 
 const admin = (
   a: App,
@@ -512,6 +516,106 @@ describe("admin session deletion (decision 13)", () => {
     expect(
       (await admin(app, "DELETE", "/admin/sessions/sess_leak")).status,
     ).toBe(404);
+  });
+});
+
+describe("operator settings (decision 25)", () => {
+  const settings = new Map<string, string>();
+  const { store } = memStore();
+  const settingsStore: Store = {
+    ...store,
+    getSetting: async (key) => settings.get(key) ?? null,
+    setSetting: async (key, value) => void settings.set(key, value),
+    clearSetting: async (key) => void settings.delete(key),
+    listSettings: async () => Object.fromEntries(settings),
+  };
+  const app = appWith({ adminToken: "admin-tok", store: settingsStore });
+
+  test("PUT sets a url; an explicit null clears it", async () => {
+    const put = await admin(app, "PUT", "/admin/settings", {
+      webhook_url: "https://hooks.example.com/x",
+    });
+    expect(put.status).toBe(200);
+    expect(
+      ((await put.json()) as { settings: Record<string, string> }).settings
+        .webhook_url,
+    ).toBe("https://hooks.example.com/x");
+
+    const cleared = await admin(app, "PUT", "/admin/settings", {
+      webhook_url: null,
+    });
+    expect(cleared.status).toBe(200);
+    expect(
+      ((await cleared.json()) as { settings: Record<string, string> }).settings
+        .webhook_url,
+    ).toBeUndefined();
+  });
+
+  test("invalid values still 400", async () => {
+    expect(
+      (await admin(app, "PUT", "/admin/settings", { webhook_url: "ftp://x" }))
+        .status,
+    ).toBe(400);
+    expect(
+      (await admin(app, "PUT", "/admin/settings", { nope: "x" })).status,
+    ).toBe(400);
+  });
+});
+
+describe("admin archive retrieval (decision 21)", () => {
+  const appWithArchive = (archive?: {
+    getObject(key: string): Promise<string>;
+  }) => appWith({ adminToken: "admin-tok", store: memStore().store, archive });
+
+  const get = (a: App, path: string) => admin(a, "GET", path);
+
+  test("fetches an archived payload by key", async () => {
+    const app = appWithArchive({
+      getObject: async (key) => `{"blob":"payload","key":"${key}"}`,
+    });
+    const res = await get(app, "/admin/archive?key=raw/zcode/sess_ok/7.json");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect((await res.json()) as Record<string, string>).toEqual({
+      blob: "payload",
+      key: "raw/zcode/sess_ok/7.json",
+    });
+  });
+
+  test("400 on a key outside the server's namespace", async () => {
+    const app = appWithArchive({
+      getObject: async () => "{}",
+    });
+    for (const bad of [
+      "/admin/archive?key=../secret",
+      "/admin/archive?key=other/zcode/sess_x/1.json",
+      "/admin/archive?key=raw/zcode/sess_x/not-a-seq.json",
+      "/admin/archive",
+    ]) {
+      expect((await get(app, bad)).status).toBe(400);
+    }
+  });
+
+  test("502 when the store misses, 400 when unconfigured", async () => {
+    const app = appWithArchive({
+      getObject: async () => {
+        throw new Error("NoSuchKey");
+      },
+    });
+    const res = await get(app, "/admin/archive?key=raw/zcode/sess_gone/1.json");
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as { error: string }).error).toContain(
+      "NoSuchKey",
+    );
+
+    expect(
+      (
+        await get(
+          appWithArchive(),
+          "/admin/archive?key=raw/zcode/sess_x/1.json",
+        )
+      ).status,
+    ).toBe(400);
   });
 });
 

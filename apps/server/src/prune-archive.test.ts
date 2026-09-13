@@ -3,9 +3,11 @@ import { randomUUID } from "node:crypto";
 import type { NormalEvent } from "@slopwatch/events";
 import type { Store } from "./store";
 
-// v2 decision 24: raw payloads expire on the owning user's current team TTL
-// (else the global default), and each payload lands in the archive sink
-// before the column is nulled. A failing upload keeps the row for retry.
+// v2 decision 24: raw payloads expire on the ingesting session's team TTL
+// (snapshot at ingest, per ADR 0004; legacy sessions fall back to the owner's
+// current team), else the global default — and each payload lands in the
+// archive sink before the column is nulled. A failing upload keeps the row
+// for retry.
 const dbTests = () =>
   (process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL) !== undefined;
 const testDsn = () =>
@@ -85,6 +87,30 @@ describe.skipIf(!dbTests())("per-team retention and archive", () => {
       },
     });
     expect(second.some((k) => k.includes(shortId))).toBe(false);
+  });
+
+  test("retention follows the session's team snapshot, not the owner's current team", async () => {
+    const s = await ensure();
+    const user = `u-${randomUUID().slice(0, 8)}`;
+    await s.createUser(user, null);
+    const team = await s.createTeam(`ttl-${randomUUID().slice(0, 8)}`, 1);
+    await s.setUserTeam(user, team.id);
+    const sessionId = `sess_ttl-${randomUUID()}`;
+    await s.appendEvents([eventWithRaw(sessionId)], user);
+    // the member then leaves the team — history keeps the TTL ingested with it
+    await s.setUserTeam(user, null);
+    await backdate(sessionId, 2);
+    const keys: string[] = [];
+    const result = await s.pruneRaw({
+      defaultDays: 90,
+      archive: {
+        putObject: async (key) => {
+          keys.push(key);
+        },
+      },
+    });
+    expect(keys.some((k) => k.includes(sessionId))).toBe(true);
+    expect(result.pruned).toBeGreaterThanOrEqual(1);
   });
 
   test("a failing archive upload keeps the payload for the next run", async () => {

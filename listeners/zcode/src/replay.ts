@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename } from "node:path";
 import {
-  SCHEMA_VERSION,
+  envelope,
   quarantineLine,
   type NormalEvent,
   type SessionEndEvent,
@@ -61,10 +61,7 @@ try {
 
 const now = new Date().toISOString();
 const sessionStart: SessionStartEvent = {
-  schema_version: SCHEMA_VERSION,
-  agent: "zcode",
-  session_id: sessionId,
-  occurred_at: now,
+  ...envelope("zcode", sessionId, now),
   kind: "session",
   event: "start",
   cwd: process.cwd(),
@@ -72,10 +69,7 @@ const sessionStart: SessionStartEvent = {
   git_remote: gitRemote,
 };
 const sessionEnd: SessionEndEvent = {
-  schema_version: SCHEMA_VERSION,
-  agent: "zcode",
-  session_id: sessionId,
-  occurred_at: now,
+  ...envelope("zcode", sessionId, now),
   kind: "session",
   event: "end",
   reason: "replay",

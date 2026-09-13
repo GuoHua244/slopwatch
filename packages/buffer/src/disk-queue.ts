@@ -1,7 +1,7 @@
 /**
- * Disk-backed event queue for the Listener sidecars (v2 decision 21). When
+ * Disk-backed event queue for the per-session listeners (v2 decision 21). When
  * the Server is unreachable, flushes append batches to a JSONL queue file
- * beside the sidecar's cursor; once the Server answers again, batches replay
+ * beside the listener's cursor; once the Server answers again, batches replay
  * oldest-first. The queue decouples capture from the agent's rollout file —
  * ZCode deletes rollouts after a session ends, so "exit and resume from the
  * cursor" loses everything when the outage outlives the file.

@@ -117,4 +117,89 @@ describe("chatCompletion", () => {
       server.stop(true);
     }
   });
+
+  test("a reasoning budget blowout retries once at four times the cap", async () => {
+    const caps: number[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        const body = (await req.json()) as { max_tokens: number };
+        caps.push(body.max_tokens);
+        if (caps.length === 1) {
+          // the whole budget went to reasoning — no visible content at all
+          return Response.json({
+            choices: [{ finish_reason: "length", message: { content: "" } }],
+          });
+        }
+        return Response.json({
+          choices: [{ message: { content: "Recovered summary." } }],
+        });
+      },
+    });
+    try {
+      const text = await chatCompletion({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+      });
+      expect(text).toBe("Recovered summary.");
+      expect(caps).toEqual([4096, 16384]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a blowout that blows again yields null after the retry", async () => {
+    let calls = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        calls += 1;
+        return Response.json({
+          choices: [{ finish_reason: "length", message: { content: " " } }],
+        });
+      },
+    });
+    try {
+      const text = await chatCompletion({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+      });
+      expect(text).toBeNull();
+      expect(calls).toBe(2);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("an empty answer without the length signature is not retried", async () => {
+    let calls = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        calls += 1;
+        return Response.json({
+          choices: [{ finish_reason: "stop", message: { content: "" } }],
+        });
+      },
+    });
+    try {
+      const text = await chatCompletion({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+      });
+      expect(text).toBeNull();
+      expect(calls).toBe(1);
+    } finally {
+      server.stop(true);
+    }
+  });
 });

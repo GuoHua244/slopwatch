@@ -29,6 +29,7 @@ const refusingStore = (): Store => ({
   },
   getSetting: async () => null,
   setSetting: async () => {},
+  clearSetting: async () => {},
   listSettings: async () => ({}),
   pruneRaw: () => {
     throw new Error("store must not be touched");
@@ -273,7 +274,9 @@ describe.skipIf(!dbTests())("events endpoint against Postgres", () => {
     expect(res2.status).toBe(202);
 
     const since0 = await dbApp!.fetch(
-      new Request(`http://x/sessions/${sessionId}/events`),
+      new Request(`http://x/sessions/${sessionId}/events`, {
+        headers: { authorization: "Bearer tok-alice" },
+      }),
     );
     expect(since0.status).toBe(200);
     const page0 = (await since0.json()) as {
@@ -286,12 +289,18 @@ describe.skipIf(!dbTests())("events endpoint against Postgres", () => {
     expect(page0.events[1]!.event.kind).toBe("model_request");
 
     const since2 = await dbApp!.fetch(
-      new Request(`http://x/sessions/${sessionId}/events?since_seq=1`),
+      new Request(`http://x/sessions/${sessionId}/events?since_seq=1`, {
+        headers: { authorization: "Bearer tok-alice" },
+      }),
     );
     const page1 = (await since2.json()) as { events: { event_seq: number }[] };
     expect(page1.events.map((e) => e.event_seq)).toEqual([2, 3]);
 
-    const sessions = await dbApp!.fetch(new Request("http://x/sessions"));
+    const sessions = await dbApp!.fetch(
+      new Request("http://x/sessions", {
+        headers: { authorization: "Bearer tok-alice" },
+      }),
+    );
     const list = (await sessions.json()) as {
       sessions: {
         session_id: string;
@@ -314,7 +323,9 @@ describe.skipIf(!dbTests())("events endpoint against Postgres", () => {
 
   test("rollups reflect appended events", async () => {
     const res = await dbApp!.fetch(
-      new Request("http://x/rollups?days=1&hours=1"),
+      new Request("http://x/rollups?days=1&hours=1", {
+        headers: { authorization: "Bearer tok-alice" },
+      }),
     );
     expect(res.status).toBe(200);
     const snap = (await res.json()) as {

@@ -108,6 +108,7 @@ describe("pushSessionEnds over HTTP", () => {
             ? `http://127.0.0.1:${webhookServer.port}`
             : null,
         setSetting: async () => {},
+        clearSetting: async () => {},
         listSettings: async () => ({}),
       } as unknown as Store;
       const app: App = createApp({

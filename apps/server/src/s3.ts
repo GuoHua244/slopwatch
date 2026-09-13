@@ -42,6 +42,10 @@ export const deriveSigningKey = (
   return hmac(kService, "aws4_request");
 };
 
+/** Object key URI-encoded per path segment (path-style /bucket/key URLs). */
+const encodeKey = (key: string): string =>
+  key.split("/").map(encodeURIComponent).join("/");
+
 const amzDates = (now: Date): { amzDate: string; dateStamp: string } => {
   const iso = now
     .toISOString()
@@ -65,10 +69,7 @@ export const signRequest = (
   const payloadHash = sha256Hex(payload);
   const host = new URL(cfg.endpoint).host;
   // path-style virtual hosting: /bucket/key, key URI-encoded per segment
-  const canonicalUri = `/${cfg.bucket}/${key
-    .split("/")
-    .map(encodeURIComponent)
-    .join("/")}`;
+  const canonicalUri = `/${cfg.bucket}/${encodeKey(key)}`;
   const canonicalHeaders =
     `content-type:application/octet-stream\n` +
     `host:${host}\n` +
@@ -122,10 +123,7 @@ export const createS3Client = (cfg: S3Config): S3Client => {
       payload,
       new Date(),
     );
-    const url = `${cfg.endpoint.replace(/\/+$/, "")}/${cfg.bucket}/${key
-      .split("/")
-      .map(encodeURIComponent)
-      .join("/")}`;
+    const url = `${cfg.endpoint.replace(/\/+$/, "")}/${cfg.bucket}/${encodeKey(key)}`;
     return fetch(url, {
       method,
       headers: {

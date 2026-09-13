@@ -51,3 +51,13 @@ Layered, not blanket TDD:
 ## Dependency note
 
 M1 and M2 need nothing external. M3 blocks on a reachable Postgres (connection string from the operator) — everything else can proceed while it is provisioned.
+
+## Post-hoc amendments (recorded 2026-09-13, after the full v1+v2 review)
+
+The plan text above is the original v1 writing. The shipped work pivoted in a few places; they are recorded here so the plan and the code agree:
+
+- **M2 pipes → rollout tailing.** ZCode offered no usable per-session pipe, so capture tails the rollout file with a persisted byte cursor instead; the spike evidence lives in `spikes/` and `research/coding-agent-ingestion.md`.
+- **M2 "Stop + idle-timeout exit" → idle-timeout exit + respawn.** The Stop hook is not wired; the listener exits on idle (plus a max-lifetime cap) and SessionStart/UserPromptSubmit/PostToolUse hooks respawn a generation as needed.
+- **M5 "hand-written page" → built SPA.** The served page became the built React/Vite bundle when the dashboard grew (decision 12) — the plan's own "the API is identical either way" held.
+- **"Next up" items landed without a plan revision.** The React SPA, admin plane, the claude-code listener, cost aggregation, usage rollups and the leaderboard (decision 18), summary folds, the review plane, and CLI hardening all shipped inside the v1 window; v2 planning (`research/v2-plan.md`) picked the thread up from there.
+- **Dev log.** The milestone dev log never existed as a file; the smoke evidence it was meant to hold lives in the milestone test suites (e.g. the listener E2E tests) and in commit messages instead.

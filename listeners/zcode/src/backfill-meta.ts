@@ -8,17 +8,14 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { sendEvents, type SessionMetaEvent } from "@slopwatch/events";
+import { argvHelpers } from "@slopwatch/listener-shared";
 import {
   metaFromRecord,
   resolveSessionId,
   taskPreviewFromRecord,
 } from "./normalizer";
 
-const args = process.argv.slice(2);
-const arg = (name: string): string | undefined => {
-  const i = args.indexOf(`--${name}`);
-  return i >= 0 ? args[i + 1] : undefined;
-};
+const { arg } = argvHelpers(process.argv.slice(2));
 const file = arg("file");
 const serverUrl = arg("server-url");
 const token = arg("token");

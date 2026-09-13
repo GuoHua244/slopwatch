@@ -38,6 +38,16 @@ export type RollupDeltas = {
   modelHourly: Map<string, Map<string, ModelDelta>>;
 };
 
+const bumpFlat = (
+  byBucket: Map<string, FlatDelta>,
+  bucket: string,
+  key: keyof FlatDelta,
+): void => {
+  const row = byBucket.get(bucket) ?? { turns: 0, toolCalls: 0 };
+  row[key] += 1;
+  byBucket.set(bucket, row);
+};
+
 const emptyModelDelta = (): ModelDelta => ({
   modelRequests: 0,
   inputTokens: 0,
@@ -80,23 +90,11 @@ export const rollupDeltas = (events: NormalEvent[]): RollupDeltas => {
   };
   for (const event of events) {
     if (event.kind === "turn" && event.event === "start") {
-      const day = utcDay(event.occurred_at);
-      const row = deltas.daily.get(day) ?? { turns: 0, toolCalls: 0 };
-      row.turns += 1;
-      deltas.daily.set(day, row);
-      const hour = utcHour(event.occurred_at);
-      const hourRow = deltas.hourly.get(hour) ?? { turns: 0, toolCalls: 0 };
-      hourRow.turns += 1;
-      deltas.hourly.set(hour, hourRow);
+      bumpFlat(deltas.daily, utcDay(event.occurred_at), "turns");
+      bumpFlat(deltas.hourly, utcHour(event.occurred_at), "turns");
     } else if (event.kind === "tool" && event.event === "call") {
-      const day = utcDay(event.occurred_at);
-      const row = deltas.daily.get(day) ?? { turns: 0, toolCalls: 0 };
-      row.toolCalls += 1;
-      deltas.daily.set(day, row);
-      const hour = utcHour(event.occurred_at);
-      const hourRow = deltas.hourly.get(hour) ?? { turns: 0, toolCalls: 0 };
-      hourRow.toolCalls += 1;
-      deltas.hourly.set(hour, hourRow);
+      bumpFlat(deltas.daily, utcDay(event.occurred_at), "toolCalls");
+      bumpFlat(deltas.hourly, utcHour(event.occurred_at), "toolCalls");
     } else if (event.kind === "model_request") {
       bumpModel(
         deltas.modelDaily,

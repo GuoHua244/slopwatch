@@ -2,7 +2,7 @@
  * Live-tail a ZCode rollout file and emit normalized events — NDJSON on stdout,
  * or POST batches to a Slopwatch server when --server-url/--token are given.
  * Backfills the existing file first, then watches for appends. ZCode has no
- * SessionEnd hook, so the sidecar exits after --idle-ms without new records
+ * SessionEnd hook, so the listener exits after --idle-ms without new records
  * (capped at --max-lifetime-ms).
  *
  * Usage: bun live.ts (--file <rollout> | --session-id <id>)
@@ -10,31 +10,21 @@
  *        [--server-url http://host:port --token <bearer>] [--cwd <dir>]
  */
 import { execSync } from "node:child_process";
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readSync,
-  statSync,
-  watch,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, watch, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  SCHEMA_VERSION,
-  isNormalEvent,
-  quarantineLine,
-  sendEvents,
-  type NormalEvent,
-  type SessionEndEvent,
-} from "@slopwatch/events";
-import { resolveShipConfig, loadConfig } from "@slopwatch/config";
+import { envelope, type NormalEvent } from "@slopwatch/events";
+import { loadConfig, resolveShipConfig } from "@slopwatch/config";
 import { foldSummary, summaryStore } from "@slopwatch/summary";
-import { createDiskQueue, createFlusher } from "@slopwatch/buffer";
-import { readCursor, writeCursor } from "./cursor";
+import {
+  argvHelpers,
+  createShipPipeline,
+  createTailLoop,
+  createTurnDigest,
+  spawnDrainSweep,
+  type RecordAdapter,
+} from "@slopwatch/listener-shared";
 import {
   driftFromRecord,
   eventsFromRecord,
@@ -44,15 +34,7 @@ import {
   turnStartFromRecord,
 } from "./normalizer";
 
-const args = process.argv.slice(2);
-const arg = (name: string): string | undefined => {
-  const i = args.indexOf(`--${name}`);
-  return i >= 0 ? args[i + 1] : undefined;
-};
-const numArg = (name: string, dflt: number): number => {
-  const n = Number(arg(name));
-  return Number.isFinite(n) && n > 0 ? n : dflt;
-};
+const { arg, numArg } = argvHelpers(process.argv.slice(2));
 
 const sessionIdArg = arg("session-id");
 const file =
@@ -87,63 +69,22 @@ if (!file) {
 const sessionId =
   sessionIdArg ?? sessionIdFromFilename(basename(file)) ?? "unknown-session";
 
-/**
- * Send a batch (v2 decision 21). In server mode a failed POST queues the
- * batch to a disk file beside the cursor and the caller advances the cursor:
- * the data now lives in the queue, so capture no longer depends on the
- * rollout file surviving the outage. Queued batches replay oldest-first on
- * the next flush; the spawner also sweeps all queue files on every hook fire.
- * Only a failed queue write itself falls back to exit-without-advancing.
- */
-const flush = async (
-  batch: NormalEvent[],
-): Promise<"sent" | "queued" | "stdout"> => {
-  if (batch.length === 0) return "sent";
-  if (shipFlush) {
-    let result: "sent" | "queued";
-    try {
-      result = await shipFlush.flush(batch);
-    } catch (e) {
-      // the queue write itself failed (disk full?) — the old contract: exit
-      // so a re-spawn replays everything from the un-advanced cursor
-      console.error(
-        `live: could not queue batch (${e instanceof Error ? e.message : String(e)}) — exiting; re-spawn resumes from cursor`,
-      );
-      process.exit(1);
-    }
-    if (result === "queued") {
-      console.error(
-        "live: server unreachable — batch queued to disk for replay",
-      );
-      spawnDrainSweep();
-    }
-    return result;
-  }
-  for (const event of batch.filter(isNormalEvent)) {
-    console.log(JSON.stringify(event));
-  }
-  return "stdout";
-};
+const stateDir = join(homedir(), ".slopwatch", "listeners");
+const cursorFile = join(stateDir, `zcode-${sessionId}.cursor`);
+mkdirSync(stateDir, { recursive: true });
+const stateBase = cursorFile.slice(0, -".cursor".length);
+const summaries = summaryStore(stateBase);
 
-/**
- * Fire-and-forget sweep of every stuck queue file — when the session truly
- * ends with the server still down, no sidecar respawns, so the sweep is what
- * eventually ships the queued batches (including this session's end event).
- */
-const spawnDrainSweep = (): void => {
-  try {
-    const drainTs = fileURLToPath(new URL("./drain.ts", import.meta.url));
-    const child = Bun.spawn([process.execPath, drainTs], {
-      detached: true,
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    child.unref?.();
-  } catch {
-    // best effort — the next hook fire sweeps again
-  }
-};
+const sweep = (): void =>
+  spawnDrainSweep(fileURLToPath(new URL("./drain.ts", import.meta.url)));
+const { flush } = createShipPipeline({
+  agent: "zcode",
+  sessionId,
+  serverUrl,
+  token,
+  stateBase,
+  onQueued: sweep,
+});
 
 // Rolling summaries (open question 15): only while shipping, only with a
 // configured summary block — no key means silent skip, capture unaffected.
@@ -160,13 +101,65 @@ const serverReachable = async (url: string): Promise<boolean> => {
   }
 };
 
+// Liveness heartbeat for the spawner's respawn decision: Windows reuses PIDs,
+// so signal-0 alone can mistake a dead listener for a live one — the freshness
+// of this file is what actually proves we are running.
+const heartbeatFile = `${stateBase}.heartbeat`;
+const touchHeartbeat = (): void =>
+  writeFileSync(heartbeatFile, String(Date.now()));
+touchHeartbeat();
+const heartbeatTimer = setInterval(touchHeartbeat, 30_000);
+
+const digest = createTurnDigest(summaries);
+
+let idleTimer: ReturnType<typeof setTimeout>;
+const resetIdle = () => {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => void finish("idle-timeout"), idleMs);
+};
+
+// ZCode rollout records carry everything worth capturing: title/task preview,
+// the first record of each turn, and the model-request/tool-call stream.
+const seenTurns = new Set<string>();
+let taskPreviewSent = false;
+const adapter: RecordAdapter = {
+  driftFromRecord,
+  eventsFromRecord: (record, sessionId) => {
+    const events: NormalEvent[] = [];
+    const meta = metaFromRecord(record, sessionId);
+    if (meta) events.push(meta);
+    if (!taskPreviewSent) {
+      const preview = taskPreviewFromRecord(record, sessionId);
+      if (preview) {
+        events.push(preview);
+        taskPreviewSent = true;
+      }
+    }
+    const turnStart = turnStartFromRecord(record, sessionId, seenTurns);
+    if (turnStart) events.push(turnStart);
+    events.push(...eventsFromRecord(record, sessionId));
+    return events;
+  },
+};
+
+const { drain } = createTailLoop({
+  file,
+  cursorFile,
+  agent: "zcode",
+  sessionId,
+  adapter,
+  digest,
+  flush,
+  resetIdle,
+});
+
 let finished = false;
 const finish = async (reason: string): Promise<void> => {
   if (finished) return;
   finished = true;
   clearTimeout(idleTimer);
   clearInterval(heartbeatTimer);
-  closeTurnDigest();
+  digest.close();
   // fold the summary first so summary → end ships in one POST; an LLM
   // failure leaves the digests pending and only costs this end's summary.
   // Tokens are only worth spending when the result can actually ship:
@@ -189,6 +182,11 @@ const finish = async (reason: string): Promise<void> => {
         llm: summaryLlm,
       });
       if (summaryEvent) batch.push(summaryEvent);
+      else if (summaries.pendingDigests().length > 0) {
+        console.error(
+          "live: fold returned no summary — digests kept for the next end",
+        );
+      }
     } catch (e) {
       console.error(
         `live: summary fold skipped (${e instanceof Error ? e.message : String(e)})`,
@@ -196,10 +194,7 @@ const finish = async (reason: string): Promise<void> => {
     }
   }
   batch.push({
-    schema_version: SCHEMA_VERSION,
-    agent: "zcode",
-    session_id: sessionId,
-    occurred_at: new Date().toISOString(),
+    ...envelope("zcode", sessionId, new Date().toISOString()),
     kind: "session",
     event: "end",
     reason,
@@ -207,183 +202,6 @@ const finish = async (reason: string): Promise<void> => {
   await flush(batch);
   // grace period so in-flight POSTs can complete before exiting
   setTimeout(() => process.exit(0), serverUrl ? 1500 : 50);
-};
-
-let idleTimer: ReturnType<typeof setTimeout>;
-const resetIdle = () => {
-  clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => void finish("idle-timeout"), idleMs);
-};
-
-const cursorFile = join(
-  homedir(),
-  ".slopwatch",
-  "listeners",
-  `zcode-${sessionId}.cursor`,
-);
-mkdirSync(join(homedir(), ".slopwatch", "listeners"), { recursive: true });
-const stateBase = cursorFile.slice(0, -".cursor".length);
-const summaries = summaryStore(stateBase);
-
-// The disk queue (v2 decision 21) lives beside the cursor and survives
-// rollout deletion; the flusher owns backlog replay + overflow reporting.
-const shipFlush =
-  serverUrl && token
-    ? createFlusher({
-        agent: "zcode",
-        sessionId,
-        send: (events) =>
-          sendEvents(events, { serverUrl: serverUrl!, token: token! }),
-        queue: createDiskQueue({ file: `${stateBase}.queue.jsonl` }),
-        onInvalid: (event) =>
-          console.error(
-            "live: skipping invalid event:",
-            JSON.stringify(event).slice(0, 200),
-          ),
-      })
-    : null;
-
-// Liveness heartbeat for the spawner's respawn decision: Windows reuses PIDs,
-// so signal-0 alone can mistake a dead sidecar for a live one — the freshness
-// of this file is what actually proves we are running.
-const heartbeatFile = `${stateBase}.heartbeat`;
-const touchHeartbeat = (): void =>
-  writeFileSync(heartbeatFile, String(Date.now()));
-touchHeartbeat();
-const heartbeatTimer = setInterval(touchHeartbeat, 30_000);
-
-// Rolling digest of the turn in progress — appended to the summary log when
-// the turn closes (next turn starts, or the session ends). ZCode has no
-// turn-end record, so turn completion is inferred from turn transitions.
-const fmtTokens = (n: number): string =>
-  n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`;
-let currentTurn: {
-  user: string;
-  requests: number;
-  inTokens: number;
-  outTokens: number;
-  tools: string[];
-} | null = null;
-const closeTurnDigest = (): void => {
-  if (!currentTurn) return;
-  const t = currentTurn;
-  // cumulative ordinal: everything folded so far plus pending log entries
-  const ordinal =
-    (summaries.loadCache()?.folded ?? 0) +
-    summaries.pendingDigests().length +
-    1;
-  const parts = [
-    `turn ${ordinal}: "${t.user.slice(0, 160)}"`,
-    `${t.requests} model request${t.requests === 1 ? "" : "s"} (${fmtTokens(t.inTokens)} in / ${fmtTokens(t.outTokens)} out)`,
-    t.tools.length > 0 ? `tools: ${t.tools.join(", ")}` : "",
-  ].filter(Boolean);
-  summaries.appendDigest(parts.join(" · "));
-  currentTurn = null;
-};
-// resume from the previous sidecar generation's offset (0 on first capture)
-let size = readCursor(cursorFile);
-let partial = "";
-let taskPreviewSent = false;
-const seenTurns = new Set<string>();
-let draining = false;
-const drain = async (): Promise<void> => {
-  if (draining) return; // previous flush still in flight
-  draining = true;
-  try {
-    let current: number;
-    try {
-      current = statSync(file).size;
-    } catch {
-      return; // file vanished (rotated?) — keep waiting
-    }
-    if (current < size) {
-      size = 0; // file truncated/rotated — start over
-      partial = "";
-    }
-    if (current === size) return;
-    const fd = openSync(file, "r");
-    const buf = Buffer.alloc(current - size);
-    readSync(fd, buf, 0, buf.length, size);
-    closeSync(fd);
-    size = current;
-    partial += buf.toString("utf8");
-    const lines = partial.split("\n");
-    partial = lines.pop() ?? "";
-    const batch: NormalEvent[] = [];
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let record: unknown;
-      try {
-        record = JSON.parse(line);
-      } catch {
-        // v2 decision 21: unparsable lines are quarantined, not dropped —
-        // the verbatim text reaches the Server's quarantine store
-        batch.push(
-          quarantineLine({
-            agent: "zcode",
-            session_id: sessionId,
-            reason: "unparsable json",
-            line,
-          }),
-        );
-        resetIdle();
-        continue;
-      }
-      const drift = driftFromRecord(record);
-      if (drift !== null) {
-        batch.push(
-          quarantineLine({
-            agent: "zcode",
-            session_id: sessionId,
-            reason: drift,
-            line,
-          }),
-        );
-      }
-      const meta = metaFromRecord(record, sessionId);
-      if (meta) batch.push(meta);
-      if (!taskPreviewSent) {
-        const preview = taskPreviewFromRecord(record, sessionId);
-        if (preview) {
-          batch.push(preview);
-          taskPreviewSent = true;
-        }
-      }
-      const turnStart = turnStartFromRecord(record, sessionId, seenTurns);
-      if (turnStart) {
-        closeTurnDigest();
-        currentTurn = {
-          user: turnStart.user_message ?? "(no user message text)",
-          requests: 0,
-          inTokens: 0,
-          outTokens: 0,
-          tools: [],
-        };
-        batch.push(turnStart);
-      }
-      const recordEvents = eventsFromRecord(record, sessionId);
-      batch.push(...recordEvents);
-      if (currentTurn) {
-        for (const e of recordEvents) {
-          if (e.kind === "model_request") {
-            currentTurn.requests += 1;
-            currentTurn.inTokens += e.usage?.input_tokens ?? 0;
-            currentTurn.outTokens += e.usage?.output_tokens ?? 0;
-          } else if (e.kind === "tool" && e.event === "call") {
-            if (currentTurn.tools.length < 8) currentTurn.tools.push(e.tool);
-          }
-        }
-      }
-      resetIdle();
-    }
-    await flush(batch);
-    // committed only AFTER a successful send, and only up to the end of the
-    // last COMPLETE line — a partially-written trailing line is re-read next
-    // time so it can be stitched back together
-    writeCursor(cursorFile, size - Buffer.byteLength(partial));
-  } finally {
-    draining = false;
-  }
 };
 
 const start = () => {
@@ -404,15 +222,12 @@ try {
   // optional
 }
 
-// Every generation opens with its own start: the sidecar re-spawns after each
+// Every generation opens with its own start: the listener re-spawns after each
 // idle-timeout end, and the dashboard's last-end-wins status needs a fresh
 // start to flip the session back to live.
 void flush([
   {
-    schema_version: SCHEMA_VERSION,
-    agent: "zcode",
-    session_id: sessionId,
-    occurred_at: new Date().toISOString(),
+    ...envelope("zcode", sessionId, new Date().toISOString()),
     kind: "session",
     event: "start",
     cwd: arg("cwd") ?? process.cwd(),

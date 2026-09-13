@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import type { NormalEvent, QuarantineEvent } from "@slopwatch/events";
-import { rollupDeltas, type ModelDelta } from "./rollups";
+import { rollupDeltas, type FlatDelta, type ModelDelta } from "./rollups";
 
 export type SessionRow = {
   session_id: string;
@@ -97,7 +97,7 @@ export type QuarantineRow = {
   created_at: string;
 };
 
-/** Per-day turn/tool counts for one developer (decision 18). */
+/** Per-day turn/tool counts for one user (decision 18). */
 export type DailyRollupRow = {
   user_id: string;
   /** UTC day, "YYYY-MM-DD". */
@@ -106,7 +106,7 @@ export type DailyRollupRow = {
   tool_calls: number;
 };
 
-/** Per-hour turn/tool counts for one developer (v2 decision 27). */
+/** Per-hour turn/tool counts for one user (v2 decision 27). */
 export type UserHourlyRollupRow = {
   user_id: string;
   /** UTC hour, "YYYY-MM-DDTHH". */
@@ -270,6 +270,7 @@ export type Store = {
   /** v2 decision 25: the operator settings plane. */
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;
+  clearSetting(key: string): Promise<void>;
   listSettings(): Promise<Record<string, string>>;
   close(): Promise<void>;
 };
@@ -458,6 +459,9 @@ const modelRollupRow = (r: Record<string, unknown>): ModelRollupRow => ({
 const DAY_BUCKET_SQL = `to_char((e.payload->>'occurred_at')::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD')`;
 const HOUR_BUCKET_SQL = `to_char((e.payload->>'occurred_at')::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24')`;
 
+/** Raw rows nulled per pruneRaw sweep — bounds the per-run transaction size. */
+const PRUNE_RAW_BATCH = 200;
+
 type Queryable = {
   query: (
     sql: string,
@@ -492,28 +496,24 @@ const recomputeRollups = async (
     FROM events e
     JOIN sessions s ON s.session_id = e.session_id
     WHERE s.user_id IS NOT NULL${filter}`;
+  const flatInsert = (table: string, bucketSql: string) => `
+    INSERT INTO ${table} (user_id, ${
+      table === "user_daily_rollup" ? "day" : "hour"
+    }, turns, tool_calls)
+    SELECT s.user_id,
+           ${bucketSql},
+           COUNT(*) FILTER (WHERE e.kind = 'turn' AND e.payload->>'event' = 'start'),
+           COUNT(*) FILTER (WHERE e.kind = 'tool' AND e.payload->>'event' = 'call')
+    ${from}
+    GROUP BY s.user_id, 2
+    HAVING COUNT(*) FILTER (WHERE e.kind = 'turn' AND e.payload->>'event' = 'start') > 0
+        OR COUNT(*) FILTER (WHERE e.kind = 'tool' AND e.payload->>'event' = 'call') > 0`;
   const flat = await client.query(
-    `INSERT INTO user_daily_rollup (user_id, day, turns, tool_calls)
-     SELECT s.user_id,
-            ${DAY_BUCKET_SQL},
-            COUNT(*) FILTER (WHERE e.kind = 'turn' AND e.payload->>'event' = 'start'),
-            COUNT(*) FILTER (WHERE e.kind = 'tool' AND e.payload->>'event' = 'call')
-     ${from}
-     GROUP BY s.user_id, 2
-     HAVING COUNT(*) FILTER (WHERE e.kind = 'turn' AND e.payload->>'event' = 'start') > 0
-         OR COUNT(*) FILTER (WHERE e.kind = 'tool' AND e.payload->>'event' = 'call') > 0`,
+    flatInsert("user_daily_rollup", DAY_BUCKET_SQL),
     args,
   );
   const flatHourly = await client.query(
-    `INSERT INTO user_hourly_rollup (user_id, hour, turns, tool_calls)
-     SELECT s.user_id,
-            ${HOUR_BUCKET_SQL},
-            COUNT(*) FILTER (WHERE e.kind = 'turn' AND e.payload->>'event' = 'start'),
-            COUNT(*) FILTER (WHERE e.kind = 'tool' AND e.payload->>'event' = 'call')
-     ${from}
-     GROUP BY s.user_id, 2
-     HAVING COUNT(*) FILTER (WHERE e.kind = 'turn' AND e.payload->>'event' = 'start') > 0
-         OR COUNT(*) FILTER (WHERE e.kind = 'tool' AND e.payload->>'event' = 'call') > 0`,
+    flatInsert("user_hourly_rollup", HOUR_BUCKET_SQL),
     args,
   );
   const modelInsert = (table: string, bucketSql: string) => `
@@ -660,28 +660,25 @@ export const createPgStore = (databaseUrl: string): Store => {
         if (userId !== null && normal.length > 0) {
           const rollupUser: string = userId;
           const deltas = rollupDeltas(normal);
-          for (const [day, d] of deltas.daily) {
-            if (d.turns === 0 && d.toolCalls === 0) continue;
-            await client.query(
-              `INSERT INTO user_daily_rollup (user_id, day, turns, tool_calls)
-               VALUES ($1, $2, $3, $4)
-               ON CONFLICT (user_id, day) DO UPDATE SET
-                 turns = user_daily_rollup.turns + EXCLUDED.turns,
-                 tool_calls = user_daily_rollup.tool_calls + EXCLUDED.tool_calls`,
-              [rollupUser, day, d.turns, d.toolCalls],
-            );
-          }
-          for (const [hour, d] of deltas.hourly) {
-            if (d.turns === 0 && d.toolCalls === 0) continue;
-            await client.query(
-              `INSERT INTO user_hourly_rollup (user_id, hour, turns, tool_calls)
-               VALUES ($1, $2, $3, $4)
-               ON CONFLICT (user_id, hour) DO UPDATE SET
-                 turns = user_hourly_rollup.turns + EXCLUDED.turns,
-                 tool_calls = user_hourly_rollup.tool_calls + EXCLUDED.tool_calls`,
-              [rollupUser, hour, d.turns, d.toolCalls],
-            );
-          }
+          const bumpFlatRollup = async (
+            table: "user_daily_rollup" | "user_hourly_rollup",
+            column: "day" | "hour",
+            byBucket: Map<string, FlatDelta>,
+          ) => {
+            for (const [bucket, d] of byBucket) {
+              if (d.turns === 0 && d.toolCalls === 0) continue;
+              await client.query(
+                `INSERT INTO ${table} (user_id, ${column}, turns, tool_calls)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (user_id, ${column}) DO UPDATE SET
+                   turns = ${table}.turns + EXCLUDED.turns,
+                   tool_calls = ${table}.tool_calls + EXCLUDED.tool_calls`,
+                [rollupUser, bucket, d.turns, d.toolCalls],
+              );
+            }
+          };
+          await bumpFlatRollup("user_daily_rollup", "day", deltas.daily);
+          await bumpFlatRollup("user_hourly_rollup", "hour", deltas.hourly);
           const upsertModelRollup = async (
             table: "model_daily_rollup" | "model_hourly_rollup",
             column: "day" | "hour",
@@ -765,18 +762,20 @@ export const createPgStore = (databaseUrl: string): Store => {
     },
 
     async pruneRaw({ defaultDays, archive }) {
-      // effective TTL = the owner's current team override, else the global default;
-      // sessions without a user (or team) always fall back to the default
+      // effective TTL = the session's own team snapshot (ADR 0004: attribution
+      // is frozen at ingest, so a later team move must not re-scope history),
+      // falling back to the owner's current team for legacy sessions that
+      // predate the snapshot, else the global default
       const candidates = await pool.query(
         `SELECT e.session_id, e.event_seq, e.agent, e.raw
         FROM events e
         JOIN sessions s ON s.session_id = e.session_id
         LEFT JOIN users u ON u.name = s.user_id
-        LEFT JOIN teams t ON t.id = u.team_id
+        LEFT JOIN teams t ON t.id = COALESCE(s.team_id, u.team_id)
         WHERE e.raw IS NOT NULL
           AND e.received_at < now() - make_interval(days => COALESCE(t.raw_retention_days, $1))
-        LIMIT 200`,
-        [defaultDays],
+        LIMIT $2`,
+        [defaultDays, PRUNE_RAW_BATCH],
       );
       let archived = 0;
       let pruned = 0;
@@ -1212,6 +1211,10 @@ export const createPgStore = (databaseUrl: string): Store => {
         "INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
         [key, value],
       );
+    },
+
+    async clearSetting(key) {
+      await pool.query("DELETE FROM settings WHERE key = $1", [key]);
     },
 
     async listSettings() {

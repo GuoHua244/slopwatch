@@ -1,5 +1,5 @@
 /**
- * Per-session rolling-summary state, persisted next to the sidecar's cursor
+ * Per-session rolling-summary state, persisted next to the listener's cursor
  * (same state-file base, distinct suffixes): `<base>.summary.json` keeps the
  * last summary text plus how many digest entries it has folded in;
  * `<base>.digest.jsonl` is the log of not-yet-folded turn digests. Anything

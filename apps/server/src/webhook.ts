@@ -88,7 +88,6 @@ export const pushSessionEnds = (
       const cfg = await loadWebhookConfig(store);
       if (!cfg) return;
       for (const end of ends) {
-        if (end.kind !== "session" || end.event !== "end") continue;
         try {
           await postWebhook(
             cfg.url,

@@ -18,17 +18,15 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "@slopwatch/config";
-import { isSidecarAlive } from "./liveness";
+import { argvHelpers, spawnDrainSweep } from "@slopwatch/listener-shared";
+import { isListenerAlive } from "./liveness";
 
 const args = process.argv.slice(2);
-const arg = (name: string): string | undefined => {
-  const i = args.indexOf(`--${name}`);
-  return i >= 0 ? args[i + 1] : undefined;
-};
+const { arg } = argvHelpers(args);
 
 const sessionId = arg("session-id");
 if (!sessionId || sessionId.includes("${")) {
-  // an unexpanded ${ZCODE_SESSION_ID} would spawn a sidecar polling a
+  // an unexpanded ${ZCODE_SESSION_ID} would spawn a listener polling a
   // rollout path that never exists — refuse instead
   console.error(
     "usage: bun spawner.ts --session-id <id> [--server-url U --token T] ...",
@@ -78,22 +76,22 @@ const rolloutFile = join(
 );
 const liveTs = fileURLToPath(new URL("./live.ts", import.meta.url));
 
-// SessionStart also fires on resume/clear/compact — skip if a sidecar for
+// SessionStart also fires on resume/clear/compact — skip if a listener for
 // this session is already alive: the PID exists AND its heartbeat is fresh.
-// Signal-0 alone misreads Windows PID reuse as a live sidecar and would
+// Signal-0 alone misreads Windows PID reuse as a live listener and would
 // stall this session's capture forever.
 try {
   const pid = Number(readFileSync(pidFile, "utf8").trim());
   if (
     Number.isFinite(pid) &&
     pid > 0 &&
-    isSidecarAlive({ pid, heartbeatFile })
+    isListenerAlive({ pid, heartbeatFile })
   ) {
     console.error(`slopwatch listener already running: pid=${pid}`);
     process.exit(0);
   }
 } catch {
-  // no pid file or stale pid — spawn a fresh sidecar
+  // no pid file or stale pid — spawn a fresh listener
 }
 
 mkdirSync(logDir, { recursive: true });
@@ -114,22 +112,11 @@ child.unref?.();
 
 writeFileSync(pidFile, String(child.pid));
 // make the newborn visible to the next spawner invocation before the
-// sidecar's own first heartbeat lands (bun start can lag seconds under AV scans)
+// listener's own first heartbeat lands (bun start can lag seconds under AV scans)
 writeFileSync(heartbeatFile, String(Date.now()));
 // sweep any queue files stuck since earlier outages (v2 decision 21) —
-// including sessions that ended with the server down and have no sidecar
-try {
-  const drainTs = fileURLToPath(new URL("./drain.ts", import.meta.url));
-  const drain = Bun.spawn([process.execPath, drainTs], {
-    detached: true,
-    stdin: "ignore",
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  drain.unref?.();
-} catch {
-  // best effort — the next hook fire sweeps again
-}
+// including sessions that ended with the server down and have no listener
+spawnDrainSweep(fileURLToPath(new URL("./drain.ts", import.meta.url)));
 console.error(
   `slopwatch listener spawned: pid=${child.pid} log=${logFile} rollout=${rolloutFile}`,
 );

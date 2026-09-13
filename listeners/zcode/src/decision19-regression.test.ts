@@ -4,7 +4,7 @@ import { HOOK_EVENTS } from "./install";
 import { HEARTBEAT_TTL_MS } from "./liveness";
 
 // Regression pins for the v1 decision 19 post-mortem: the hooks never miss a
-// user message — capture died after the sidecar's idle exit, because nothing
+// user message — capture died after the listener's idle exit, because nothing
 // re-spawned it mid-turn and Windows PID reuse defeated signal-0 checks.
 
 describe("decision 19 capture-recovery wiring", () => {

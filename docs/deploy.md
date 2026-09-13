@@ -58,11 +58,15 @@ command, not a procedure.
 
 ## Retention and archive
 
-- Raw payloads expire on the owner's current team TTL override, else
-  `RAW_TTL_DAYS` (decision 11 + 24); the prune job runs at boot and daily.
+- Raw payloads expire on the ingesting session's team TTL override (the team
+  is snapshotted at ingest per ADR 0004, so moving a member between teams
+  never re-scopes their history), falling back to the owner's current team
+  for sessions captured before v2, else `RAW_TTL_DAYS` (decision 11 + 24);
+  the prune job runs at boot and daily.
 - Expired payloads are archived to MinIO's `slopwatch-archive` bucket before
   deletion; each event row keeps `archive_key` so a payload stays fetchable
-  by key. Back up the `minio-data` volume next to `db-data`.
+  by key — `GET /admin/archive?key=<archive_key>` (admin token) returns the
+  stored payload verbatim. Back up the `minio-data` volume next to `db-data`.
 
 ## Operations notes
 

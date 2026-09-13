@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { argvHelpers } from "@slopwatch/listener-shared";
 
 export type HookProcess = {
   type: "process";
@@ -20,7 +21,7 @@ export type HookProcess = {
 };
 
 /** The hook entry our installer registers. `serverUrl`/`token` are optional:
- * the `slopwatch install` CLI omits them and the sidecar reads
+ * the `slopwatch install` CLI omits them and the listener reads
  * `~/.slopwatch/config.json` at fire time instead (the standalone script
  * below still embeds them for a self-contained smoke setup). */
 export const slopwatchHookEntry = (opts: {
@@ -105,12 +106,12 @@ export const removeHookConfig = (
 };
 
 /**
- * Our hook events: SessionStart spawns the sidecar; UserPromptSubmit re-spawns
+ * Our hook events: SessionStart spawns the listener; UserPromptSubmit re-spawns
  * it when the next user message arrives; PostToolUse re-spawns it mid-turn —
- * a long tool call can outlast the sidecar's idle window, so the sidecar may
+ * a long tool call can outlast the listener's idle window, so the listener may
  * declare idle and exit while the agent keeps working, and tool completions
  * fire no user prompt to bring it back. The spawner's liveness check makes
- * every fire a cheap no-op while the sidecar is alive.
+ * every fire a cheap no-op while the listener is alive.
  */
 export const HOOK_EVENTS = [
   "SessionStart",
@@ -164,11 +165,7 @@ export const mergeHookConfig = (
 };
 
 if (import.meta.main) {
-  const args = process.argv.slice(2);
-  const arg = (name: string): string | undefined => {
-    const i = args.indexOf(`--${name}`);
-    return i >= 0 ? args[i + 1] : undefined;
-  };
+  const { arg } = argvHelpers(process.argv.slice(2));
   const dir = arg("dir") ?? process.cwd();
   const serverUrl = arg("server-url") ?? "http://localhost:8787";
   const token = arg("token");

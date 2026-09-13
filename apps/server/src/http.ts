@@ -32,6 +32,12 @@ export type AppOptions = {
   staticRoot?: string;
   /** Admin plane bearer token (decision 13). Unset disables /admin/*. */
   adminToken?: string;
+  /**
+   * The S3-compatible cold archive (v2 decision 21). Present, GET
+   * /admin/archive can fetch an archived raw payload back by key; absent the
+   * route answers 400.
+   */
+  archive?: { getObject(key: string): Promise<string> };
 };
 
 const json = (status: number, body: unknown): Response =>
@@ -131,6 +137,14 @@ const trimField = (value: unknown, maxLen: number): string | null => {
   return trimmed.length > 0 && trimmed.length <= maxLen ? trimmed : null;
 };
 
+/** Team retention override (decision 23): absent passes through, null inherits
+ * the global default, otherwise a positive integer. */
+const isRetention = (value: unknown): value is number | null | undefined =>
+  value === undefined ||
+  value === null ||
+  (typeof value === "number" && Number.isInteger(value) && value >= 1);
+const RETENTION_ERROR = "raw_retention_days must be null or a positive integer";
+
 /** Positive int query param clamped to 1..max; fallback when absent/garbage. */
 const windowParam = (
   raw: string | null,
@@ -147,6 +161,7 @@ export const createApp = ({
   store,
   staticRoot,
   adminToken,
+  archive,
 }: AppOptions): App => ({
   async fetch(req) {
     const url = new URL(req.url);
@@ -233,7 +248,9 @@ export const createApp = ({
       const user = await resolveUser();
       if (user === null) return json(401, { error: "unauthorized" });
       const days = windowParam(url.searchParams.get("days"), 3650, 30);
-      const hours = windowParam(url.searchParams.get("hours"), 168, 24);
+      // hourly ceiling = 31 days so the local-calendar-day charts (decision 27)
+      // can re-bucket a full month of UTC hours
+      const hours = windowParam(url.searchParams.get("hours"), 31 * 24, 24);
       const now = Date.now();
       const sinceDay = new Date(now - (days - 1) * 86_400_000)
         .toISOString()
@@ -325,6 +342,29 @@ export const createApp = ({
         return json(200, { rows: await store.listQuarantine(limit) });
       }
 
+      // v2 decision 21: fetch an archived raw payload back by key — the
+      // retrieval half of archive-before-prune. Only keys this server writes
+      // (raw/<agent>/<sessionId>/<seq>.json) are legal, so the cold store
+      // stays unreachable outside that namespace.
+      if (url.pathname === "/admin/archive" && req.method === "GET") {
+        if (!archive) return json(400, { error: "archive is not configured" });
+        const key = url.searchParams.get("key") ?? "";
+        if (!/^raw\/[a-z0-9_-]+\/[a-z0-9_-]+\/\d+\.json$/.test(key))
+          return json(400, { error: "bad archive key" });
+        try {
+          return new Response(await archive.getObject(key), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        } catch (e) {
+          return json(502, {
+            error: `archive fetch failed: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          });
+        }
+      }
+
       // v2 decision 23: team management.
       if (url.pathname === "/admin/teams") {
         if (req.method === "GET")
@@ -335,20 +375,9 @@ export const createApp = ({
           const name = trimField(body.name, 100);
           if (name === null)
             return json(400, { error: "name must be a non-empty string" });
-          let retention: number | null = null;
-          if (body.raw_retention_days !== undefined) {
-            if (
-              body.raw_retention_days !== null &&
-              (typeof body.raw_retention_days !== "number" ||
-                !Number.isInteger(body.raw_retention_days) ||
-                body.raw_retention_days < 1)
-            ) {
-              return json(400, {
-                error: "raw_retention_days must be null or a positive integer",
-              });
-            }
-            retention = body.raw_retention_days;
-          }
+          if (!isRetention(body.raw_retention_days))
+            return json(400, { error: RETENTION_ERROR });
+          const retention = body.raw_retention_days ?? null;
           try {
             return json(201, { team: await store.createTeam(name, retention) });
           } catch (e) {
@@ -368,17 +397,8 @@ export const createApp = ({
           const { name, raw_retention_days } = body;
           if (name !== undefined && trimField(name, 100) === null)
             return json(400, { error: "name must be a non-empty string" });
-          if (
-            raw_retention_days !== undefined &&
-            raw_retention_days !== null &&
-            (typeof raw_retention_days !== "number" ||
-              !Number.isInteger(raw_retention_days) ||
-              raw_retention_days < 1)
-          ) {
-            return json(400, {
-              error: "raw_retention_days must be null or a positive integer",
-            });
-          }
+          if (!isRetention(raw_retention_days))
+            return json(400, { error: RETENTION_ERROR });
           if (name === undefined && raw_retention_days === undefined)
             return json(400, { error: "nothing to update" });
           try {
@@ -540,7 +560,13 @@ export const createApp = ({
             }
           }
           for (const [key, value] of Object.entries(body)) {
-            if (value === null || value === undefined) continue;
+            // explicit null clears the setting (e.g. unset webhook_url);
+            // JSON bodies can't carry undefined, but stay defensive
+            if (value === null) {
+              await store.clearSetting(key);
+              continue;
+            }
+            if (value === undefined) continue;
             await store.setSetting(key, String(value));
           }
           return json(200, { settings: await store.listSettings() });

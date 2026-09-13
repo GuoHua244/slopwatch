@@ -1,24 +1,17 @@
 import { useMemo, useState } from "react";
 import type { CommentRow } from "../api";
 import type { SessionSummary } from "../api";
+import { clearToken, saveToken, storedToken } from "../auth";
 import { useEventStream } from "../hooks/useEventStream";
-import {
-  clearToken,
-  saveToken,
-  storedToken,
-  useReview,
-} from "../hooks/useReview";
+import { useReview } from "../hooks/useReview";
 import { sessionTotals } from "../lib/aggregate";
-import { clock, fmtTokens } from "../lib/format";
+import { clock, errorMessage, fmtTokens } from "../lib/format";
 import { buildTimeline, isEnded } from "../lib/timeline";
 import { RawEventsView } from "./RawEventsView";
 import { TurnsView } from "./TurnsView";
 import { UsageView } from "./UsageView";
 
 type Tab = "turns" | "raw";
-
-const errorMessage = (e: unknown): string =>
-  e instanceof Error ? e.message : String(e);
 
 /** One review note line: who, where it points, what they said. */
 const CommentLine = ({ comment }: { comment: CommentRow }) => (

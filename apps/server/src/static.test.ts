@@ -25,6 +25,7 @@ const refusingStore = (): Store => ({
   },
   getSetting: async () => null,
   setSetting: async () => {},
+  clearSetting: async () => {},
   listSettings: async () => ({}),
   pruneRaw: () => {
     throw new Error("store must not be touched");

@@ -46,6 +46,7 @@ const app = createApp({
   store,
   staticRoot,
   adminToken: config.adminToken,
+  archive,
 });
 
 Bun.serve({ port: config.port, fetch: (req) => app.fetch(req) });

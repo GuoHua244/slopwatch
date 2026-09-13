@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { argvHelpers } from "@slopwatch/listener-shared";
 
 export const HOOK_EVENTS = [
   "SessionStart",
@@ -130,11 +131,7 @@ export const mergeHookConfig = (
 };
 
 if (import.meta.main) {
-  const args = process.argv.slice(2);
-  const arg = (name: string): string | undefined => {
-    const i = args.indexOf(`--${name}`);
-    return i >= 0 ? args[i + 1] : undefined;
-  };
+  const { arg } = argvHelpers(process.argv.slice(2));
   const dir = arg("dir");
   const serverUrl = arg("server-url") ?? "http://localhost:8787";
   const token = arg("token");
@@ -165,6 +162,6 @@ if (import.meta.main) {
   console.log(`installed slopwatch hooks → ${settingsPath}`);
   console.log(JSON.stringify(merged, null, 2).replaceAll(token, "***"));
   console.log(
-    "\nNEXT: start a Claude Code session in any project — the first prompt spawns the capture sidecar.",
+    "\nNEXT: start a Claude Code session in any project — the first prompt spawns the capture listener.",
   );
 }

@@ -9,7 +9,7 @@ const base = {
 };
 
 describe("planHook", () => {
-  test("SessionStart spawns a sidecar bound to the transcript", () => {
+  test("SessionStart spawns a listener bound to the transcript", () => {
     const plan = planHook(base);
     expect(plan).toEqual({
       kind: "spawn",

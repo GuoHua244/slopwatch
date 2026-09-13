@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import type { SessionSummary } from "../api";
 import { useRollups } from "../hooks/useRollups";
 import { useTeams } from "../hooks/useTeams";
@@ -59,19 +60,72 @@ const COLUMNS: Column[] = [
 
 type RowWithTeam = LeaderboardRow & { teamName: string | null };
 
-const cellValue = (row: RowWithTeam, key: Column["key"]): string | number => {
-  switch (key) {
-    case "team":
-      return row.teamName ?? "unassigned";
-    case "lastSeen":
-      return row.lastActiveAt;
-    case "trend":
-    case "delta":
-      return 0;
-    default:
-      // costUsd is the only nullable sortable value; null sorts as 0
-      return (row[key] ?? 0) as string | number;
-  }
+/** Sort value for a sortable column; costUsd is the only nullable one and sorts as 0. */
+const sortValue = (row: RowWithTeam, key: SortKey): string | number =>
+  (row[key] ?? 0) as string | number;
+
+/**
+ * Body cells, keyed by column — COLUMNS is the single source of truth for
+ * column order in both the header and the body.
+ */
+const CELL_RENDERERS: Record<
+  Column["key"],
+  (row: RowWithTeam, maxCost: number) => ReactNode
+> = {
+  team: (row) => (
+    <td className={row.teamName ? undefined : "dim"}>
+      {row.teamName ?? "unassigned"}
+    </td>
+  ),
+  userId: (row) => <td>{row.userId}</td>,
+  sessions: (row) => <td className="num">{row.sessions}</td>,
+  turns: (row) => <td className="num">{row.turns}</td>,
+  requests: (row) => <td className="num">{row.requests}</td>,
+  inputTokens: (row) => <td className="num">{fmtTokens(row.inputTokens)}</td>,
+  outputTokens: (row) => <td className="num">{fmtTokens(row.outputTokens)}</td>,
+  cacheReadTokens: (row) => (
+    <td className="num">{fmtTokens(row.cacheReadTokens)}</td>
+  ),
+  topAgent: (row) => <td>{row.topAgent}</td>,
+  lastSeen: (row) => (
+    <td className="dim">{row.lastActiveAt ? clock(row.lastActiveAt) : "—"}</td>
+  ),
+  trend: (row) => (
+    <td className="spark">
+      <svg viewBox="0 0 96 24" width="96" height="24" aria-hidden>
+        <polyline points={sparklinePoints(row.trend, 96, 24)} />
+      </svg>
+    </td>
+  ),
+  delta: (row) => (
+    <td
+      className="num dim"
+      title={
+        row.todayCostUsd === null
+          ? undefined
+          : `today ${fmtCost(row.todayCostUsd)}`
+      }
+    >
+      {fmtDelta(row.deltaVsWeek)}
+    </td>
+  ),
+  costUsd: (row, maxCost) => (
+    <td className="num">
+      {row.costUsd === null ? (
+        "—"
+      ) : (
+        <span className="cost-cell">
+          <span>{fmtCost(row.costUsd)}</span>
+          <span
+            className="share"
+            style={{
+              width: maxCost > 0 ? `${(row.costUsd / maxCost) * 100}%` : "0",
+            }}
+          />
+        </span>
+      )}
+    </td>
+  ),
 };
 
 /**
@@ -115,8 +169,8 @@ export const LeaderboardView = ({
           : row.teamName === teamFilter),
     )
     .sort((a, b) => {
-      const va = cellValue(a, sortKey);
-      const vb = cellValue(b, sortKey);
+      const va = sortValue(a, sortKey);
+      const vb = sortValue(b, sortKey);
       let cmp: number;
       if (typeof va === "string" || typeof vb === "string") {
         cmp = String(va).localeCompare(String(vb));
@@ -200,53 +254,11 @@ export const LeaderboardView = ({
                 }
               >
                 <td className="num dim">{rank(index)}</td>
-                <td className={row.teamName ? undefined : "dim"}>
-                  {row.teamName ?? "unassigned"}
-                </td>
-                <td>{row.userId}</td>
-                <td className="num">{row.sessions}</td>
-                <td className="num">{row.turns}</td>
-                <td className="num">{row.requests}</td>
-                <td className="num">{fmtTokens(row.inputTokens)}</td>
-                <td className="num">{fmtTokens(row.outputTokens)}</td>
-                <td className="num">{fmtTokens(row.cacheReadTokens)}</td>
-                <td>{row.topAgent}</td>
-                <td className="dim">
-                  {row.lastActiveAt ? clock(row.lastActiveAt) : "—"}
-                </td>
-                <td className="spark">
-                  <svg viewBox="0 0 96 24" width="96" height="24" aria-hidden>
-                    <polyline points={sparklinePoints(row.trend, 96, 24)} />
-                  </svg>
-                </td>
-                <td
-                  className="num dim"
-                  title={
-                    row.todayCostUsd === null
-                      ? undefined
-                      : `today ${fmtCost(row.todayCostUsd)}`
-                  }
-                >
-                  {fmtDelta(row.deltaVsWeek)}
-                </td>
-                <td className="num">
-                  {row.costUsd === null ? (
-                    "—"
-                  ) : (
-                    <span className="cost-cell">
-                      <span>{fmtCost(row.costUsd)}</span>
-                      <span
-                        className="share"
-                        style={{
-                          width:
-                            maxCost > 0
-                              ? `${(row.costUsd / maxCost) * 100}%`
-                              : "0",
-                        }}
-                      />
-                    </span>
-                  )}
-                </td>
+                {COLUMNS.map((col) => (
+                  <Fragment key={col.key}>
+                    {CELL_RENDERERS[col.key](row, maxCost)}
+                  </Fragment>
+                ))}
               </tr>
             );
           })}

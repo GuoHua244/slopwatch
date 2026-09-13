@@ -1,7 +1,7 @@
 /**
  * The on-machine Slopwatch config: backend URL, bearer token, and the
  * optional LLM summary block. Lives at `~/.slopwatch/config.json` (0600) —
- * the single credential store the install flow writes and the hooks/sidecars
+ * the single credential store the install flow writes and the hooks/listeners
  * read at fire time, so tokens never sit in per-project hook command lines.
  * `SLOPWATCH_HOME` (or the homeDir parameter) relocates the directory for
  * tests; a missing or unreadable file loads as null so capture falls back to

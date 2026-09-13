@@ -1,9 +1,7 @@
 import { useState } from "react";
 import type { AdminApi } from "../api";
+import { errorMessage } from "../lib/format";
 import { usePolled, type PollError } from "./AdminView";
-
-const errorMessage = (e: unknown): string =>
-  e instanceof Error ? e.message : String(e);
 
 type Props = {
   api: AdminApi;

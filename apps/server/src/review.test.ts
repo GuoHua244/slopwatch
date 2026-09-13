@@ -14,6 +14,7 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
   pruneRaw: async () => ({ archived: 0, pruned: 0 }),
   getSetting: async () => null,
   setSetting: async () => {},
+  clearSetting: async () => {},
   listSettings: async () => ({}),
   backfillTokenTotals: async () => 0,
   listRollups: async () => ({
@@ -381,7 +382,7 @@ describe.skipIf(!dbTests())("review semantics against Postgres", () => {
     expect(first.reviewer_id.startsWith("dri-")).toBe(true);
 
     // upsert: a second DRI review replaces the first
-    const read = await req(app, `/sessions/${sessionId}/review`);
+    const read = await req(app, `/sessions/${sessionId}/review`, {}, devToken);
     expect(
       ((await read.json()) as { review: ReviewRow | null }).review,
     ).toEqual(first);
@@ -396,7 +397,7 @@ describe.skipIf(!dbTests())("review semantics against Postgres", () => {
         )
       ).status,
     ).toBe(204);
-    const gone = await req(app, `/sessions/${sessionId}/review`);
+    const gone = await req(app, `/sessions/${sessionId}/review`, {}, devToken);
     expect(
       ((await gone.json()) as { review: ReviewRow | null }).review,
     ).toBeNull();
@@ -456,7 +457,12 @@ describe.skipIf(!dbTests())("review semantics against Postgres", () => {
     );
     expect(sessionNote.status).toBe(201);
 
-    const listed = await req(app, `/sessions/${sessionId}/comments`);
+    const listed = await req(
+      app,
+      `/sessions/${sessionId}/comments`,
+      {},
+      devToken,
+    );
     const { comments } = (await listed.json()) as { comments: CommentRow[] };
     expect(comments.map((c) => [c.turn_id, c.body])).toEqual([
       ["turn_1", "this turn looped twice"],

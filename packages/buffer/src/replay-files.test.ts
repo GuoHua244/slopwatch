@@ -46,7 +46,7 @@ describe("replayQueueFiles", () => {
     expect(other.stats().entries).toBe(1); // other pattern untouched
   });
 
-  test("skip callback leaves live sidecars' queues untouched", async () => {
+  test("skip callback leaves live listeners' queues untouched", async () => {
     const kept = createDiskQueue({
       file: join(dir, "zcode-sess_live.queue.jsonl"),
     });

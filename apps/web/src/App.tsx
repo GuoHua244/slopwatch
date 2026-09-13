@@ -102,21 +102,27 @@ const SignInGate = ({ onSignedIn }: { onSignedIn: (user: string) => void }) => {
   );
 };
 
+/** Saved-token lifecycle: anon → checking (verifying against /me) → signed-in. */
+type AuthState =
+  | { status: "anon" }
+  | { status: "checking" }
+  | { status: "signed-in"; user: string };
+
 export const App = () => {
   // The admin route keeps its own separate gate; everything else needs a
   // verified user token first.
-  const [user, setUser] = useState<string | null>(() =>
-    storedToken() ? "" : null,
+  const [auth, setAuth] = useState<AuthState>(() =>
+    storedToken() ? { status: "checking" } : { status: "anon" },
   );
   // verify the persisted token once on load; a stale token falls back to the gate
   useEffect(() => {
     if (!storedToken()) return;
     void createReviewApi(storedToken)
       .me()
-      .then((info) => setUser(info.user))
+      .then((info) => setAuth({ status: "signed-in", user: info.user }))
       .catch(() => {
         clearToken();
-        setUser(null);
+        setAuth({ status: "anon" });
       });
   }, []);
   const feed = useSessions();
@@ -134,10 +140,16 @@ export const App = () => {
     if (sessionId !== null) setSelectedId(sessionId);
   }, [sessionId]);
 
-  // After every hook: the gate renders instead of the dashboard (the admin
-  // route keeps its own separate gate).
-  if (user === null && route !== "admin") {
-    return <SignInGate onSignedIn={setUser} />;
+  // Until /me verifies the saved token, render the gate (or a verifying note) —
+  // never the dashboard; the admin route keeps its own separate gate.
+  if (auth.status !== "signed-in" && route !== "admin") {
+    return auth.status === "checking" ? (
+      <p className="empty">verifying saved token…</p>
+    ) : (
+      <SignInGate
+        onSignedIn={(user) => setAuth({ status: "signed-in", user })}
+      />
+    );
   }
 
   const selected =
@@ -168,14 +180,14 @@ export const App = () => {
               ? `connection lost${feed.lastError ? ` · ${feed.lastError}` : ""}`
               : "connecting…"}
         </span>
-        {user !== null && (
+        {auth.status === "signed-in" && (
           <span className="dim">
-            {user || "…"}
+            {auth.user}
             <button
               className="signout"
               onClick={() => {
                 clearToken();
-                setUser(null);
+                setAuth({ status: "anon" });
               }}
             >
               sign out

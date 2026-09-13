@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NormalEvent } from "@slopwatch/events";
 
-// v2 decision 21 end-to-end on the real zcode sidecar: with the server down,
+// v2 decision 21 end-to-end on the real zcode listener: with the server down,
 // a flush must QUEUE the batch to disk and still advance the cursor (the
 // rollout file can vanish — the queue is what preserves the data now), and a
 // later sweep must ship the queued batches to a recovered server.

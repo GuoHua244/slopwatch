@@ -1,12 +1,12 @@
 /**
  * Sweep every queue file in the listener state dir and replay it — the
  * orphan-drain path (v2 decision 21). A session that truly ended can leave
- * batches queued with no sidecar left to respawn; any later hook fire in any
+ * batches queued with no listener left to respawn; any later hook fire in any
  * session spawns this sweep, which ships the stuck batches (e.g. the
  * session:end the hook could not deliver) and empties the files.
  *
- * `skip` lets the caller leave LIVE sidecars' queues alone: a running
- * sidecar replays its own queue on every flush, and a concurrent rewrite
+ * `skip` lets the caller leave LIVE listeners' queues alone: a running
+ * listener replays its own queue on every flush, and a concurrent rewrite
  * here would interleave with its appends and tear lines.
  */
 import { existsSync, readdirSync } from "node:fs";
@@ -18,7 +18,7 @@ export const replayQueueFiles = async (opts: {
   dir: string;
   pattern: RegExp;
   send: (events: NormalEvent[]) => Promise<void>;
-  /** Return true for queue files owned by a live sidecar — they are skipped. */
+  /** Return true for queue files owned by a live listener — they are skipped. */
   skip?: (queueFileName: string) => boolean;
 }): Promise<{ files: number; sentEvents: number; skipped: number }> => {
   if (!existsSync(opts.dir)) return { files: 0, sentEvents: 0, skipped: 0 };

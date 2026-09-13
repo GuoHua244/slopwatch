@@ -7,12 +7,8 @@ import {
   type ReviewRow,
 } from "../api";
 import { createPoller } from "../lib/poller";
+import { storedToken } from "../auth";
 import type { FeedStatus } from "./useSessions";
-
-// The user token now lives in the shared auth module (v2 decision 22) —
-// re-exported here for the existing review sign-in UI.
-import { storedToken, saveToken, clearToken } from "../auth";
-export { storedToken, saveToken, clearToken };
 
 export type ReviewState = {
   api: ReviewApi;

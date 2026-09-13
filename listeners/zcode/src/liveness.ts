@@ -1,22 +1,22 @@
 import { statSync } from "node:fs";
 
 /**
- * How long a sidecar's heartbeat is trusted after its last touch. Generous
- * enough for AV scans and machine sleep; small enough that a dead sidecar is
+ * How long a listener's heartbeat is trusted after its last touch. Generous
+ * enough for AV scans and machine sleep; small enough that a dead listener is
  * declared dead on the next user message.
  */
 export const HEARTBEAT_TTL_MS = 5 * 60_000;
 
 /**
- * True when a sidecar for this session is alive: the PID exists AND the
- * sidecar's heartbeat file was touched within the TTL. Signal-0 alone is not
- * enough on Windows — PIDs are reused within minutes, so a dead sidecar's PID
+ * True when a listener for this session is alive: the PID exists AND the
+ * listener's heartbeat file was touched within the TTL. Signal-0 alone is not
+ * enough on Windows — PIDs are reused within minutes, so a dead listener's PID
  * can belong to a stranger and the spawner would skip respawning forever,
  * silently stalling that session's capture. A missing or stale heartbeat
- * therefore means "not alive", including sidecars from before heartbeats
+ * therefore means "not alive", including listeners from before heartbeats
  * existed.
  */
-export const isSidecarAlive = (opts: {
+export const isListenerAlive = (opts: {
   pid: number;
   heartbeatFile: string;
   nowMs?: number;

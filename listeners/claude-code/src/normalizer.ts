@@ -11,7 +11,9 @@
  * prompt (same positional rule the dashboard applies; see ADR 0002).
  */
 import {
-  SCHEMA_VERSION,
+  envelope,
+  isNonEmptyString,
+  isObject,
   type ModelRequestEvent,
   type NormalEvent,
   type SessionMetaEvent,
@@ -41,14 +43,6 @@ export const newTailState = (): TailState => ({
   toolNames: new Map(),
   taskPreviewSent: false,
 });
-
-export const turnIdOf = (state: TailState): string | null => state.turnId;
-
-const isObject = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
-
-const isNonEmptyString = (v: unknown): v is string =>
-  typeof v === "string" && v.length > 0;
 
 const blocksOf = (content: unknown): Record<string, unknown>[] =>
   Array.isArray(content) ? content.filter(isObject) : [];
@@ -97,10 +91,7 @@ export const metaFromRecord = (
     return null;
   }
   return {
-    schema_version: SCHEMA_VERSION,
-    agent: "claude-code",
-    session_id: sessionId,
-    occurred_at: new Date().toISOString(),
+    ...envelope("claude-code", sessionId, new Date().toISOString()),
     kind: "session",
     event: "meta",
     title: record.summary.slice(0, 200),
@@ -168,10 +159,7 @@ export const eventsFromRecord = (
       for (const result of results) {
         if (!isNonEmptyString(result.tool_use_id)) continue;
         const toolResult: ToolResultEvent = {
-          schema_version: SCHEMA_VERSION,
-          agent: "claude-code",
-          session_id: sessionId,
-          occurred_at: occurredAt,
+          ...envelope("claude-code", sessionId, occurredAt),
           kind: "tool",
           event: "result",
           tool_call_id: result.tool_use_id,
@@ -188,10 +176,7 @@ export const eventsFromRecord = (
           : `${sessionId}-${timestampMs ?? Date.now()}`;
         state.turnId = turnId;
         const start: TurnStartEvent = {
-          schema_version: SCHEMA_VERSION,
-          agent: "claude-code",
-          session_id: sessionId,
-          occurred_at: occurredAt,
+          ...envelope("claude-code", sessionId, occurredAt),
           kind: "turn",
           event: "start",
           turn_id: turnId,
@@ -201,10 +186,7 @@ export const eventsFromRecord = (
         if (!state.taskPreviewSent) {
           state.taskPreviewSent = true;
           const preview: SessionMetaEvent = {
-            schema_version: SCHEMA_VERSION,
-            agent: "claude-code",
-            session_id: sessionId,
-            occurred_at: occurredAt,
+            ...envelope("claude-code", sessionId, occurredAt),
             kind: "session",
             event: "meta",
             task_preview: text.slice(0, 160),
@@ -227,10 +209,7 @@ export const eventsFromRecord = (
             ? Math.max(0, timestampMs - state.prevTimestampMs)
             : 0;
         const modelRequest: ModelRequestEvent = {
-          schema_version: SCHEMA_VERSION,
-          agent: "claude-code",
-          session_id: sessionId,
-          occurred_at: occurredAt,
+          ...envelope("claude-code", sessionId, occurredAt),
           kind: "model_request",
           provider: "anthropic",
           model: isNonEmptyString(message.model) ? message.model : "unknown",
@@ -251,10 +230,7 @@ export const eventsFromRecord = (
             continue;
           state.toolNames.set(block.id, block.name);
           const call: ToolCallEvent = {
-            schema_version: SCHEMA_VERSION,
-            agent: "claude-code",
-            session_id: sessionId,
-            occurred_at: occurredAt,
+            ...envelope("claude-code", sessionId, occurredAt),
             kind: "tool",
             event: "call",
             tool_call_id: block.id,

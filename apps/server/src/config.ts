@@ -30,23 +30,26 @@ export const loadConfig = (
       tokens.set(pair.slice(idx + 1).trim(), pair.slice(0, idx).trim());
   }
 
-  const s3Keys = [
+  // v2 decision 21 ethos: fail visible — a partial S3 config must not silently
+  // disable archiving while payloads quietly pile up in Postgres.
+  const s3Required = [
     env.SLOPWATCH_S3_ENDPOINT,
     env.SLOPWATCH_S3_BUCKET,
     env.SLOPWATCH_S3_ACCESS_KEY_ID,
     env.SLOPWATCH_S3_SECRET_ACCESS_KEY,
   ];
+  const missing = s3Required.filter((v) => !v).length;
+  if (missing > 0 && missing < s3Required.length)
+    throw new Error(
+      "S3 archive partially configured — set all of SLOPWATCH_S3_ENDPOINT, SLOPWATCH_S3_BUCKET, SLOPWATCH_S3_ACCESS_KEY_ID, SLOPWATCH_S3_SECRET_ACCESS_KEY, or none",
+    );
   const s3 =
-    s3Keys.every((v) => v !== undefined) &&
-    s3Keys[0] &&
-    s3Keys[1] &&
-    s3Keys[2] &&
-    s3Keys[3]
+    missing === 0
       ? {
-          endpoint: s3Keys[0],
-          bucket: s3Keys[1],
-          accessKeyId: s3Keys[2],
-          secretAccessKey: s3Keys[3],
+          endpoint: env.SLOPWATCH_S3_ENDPOINT!,
+          bucket: env.SLOPWATCH_S3_BUCKET!,
+          accessKeyId: env.SLOPWATCH_S3_ACCESS_KEY_ID!,
+          secretAccessKey: env.SLOPWATCH_S3_SECRET_ACCESS_KEY!,
           region: env.SLOPWATCH_S3_REGION ?? "us-east-1",
         }
       : null;

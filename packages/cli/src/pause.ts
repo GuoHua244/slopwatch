@@ -1,9 +1,9 @@
 /**
  * `slopwatch pause` / `slopwatch resume`: flip the capture kill switch in
  * the central config. Paused, the spawner exits before spawning anything,
- * so a half-finished deployment costs nothing — no sidecar, no events, no
+ * so a half-finished deployment costs nothing — no listener, no events, no
  * summary tokens. Wiring stays in place; resume re-enables on the next
- * message. A sidecar already running when pause lands finishes its session
+ * message. A listener already running when pause lands finishes its session
  * (one last end + summary) and is not replaced.
  */
 import { loadConfig, saveConfig } from "@slopwatch/config";

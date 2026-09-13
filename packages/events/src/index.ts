@@ -9,7 +9,7 @@ export type TokenUsage = {
   reasoning_tokens?: number;
 };
 
-type Envelope = {
+export type Envelope = {
   schema_version: typeof SCHEMA_VERSION;
   /** Open identifier of the producing coding agent — deliberately not a closed enum. */
   agent: string;
@@ -19,6 +19,18 @@ type Envelope = {
   /** Original agent-side record, retained for fidelity and debugging. */
   raw?: unknown;
 };
+
+/** The envelope fields every event carries, built in one place. */
+export const envelope = (
+  agent: string,
+  sessionId: string,
+  occurredAt: string,
+): Envelope => ({
+  schema_version: SCHEMA_VERSION,
+  agent,
+  session_id: sessionId,
+  occurred_at: occurredAt,
+});
 
 export type SessionStartEvent = Envelope & {
   kind: "session";
@@ -169,10 +181,10 @@ export type NormalEvent =
   | ToolResultEvent
   | QuarantineEvent;
 
-const isObject = (v: unknown): v is Record<string, unknown> =>
+export const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-const isNonEmptyString = (v: unknown): boolean =>
+export const isNonEmptyString = (v: unknown): v is string =>
   typeof v === "string" && v.length > 0;
 
 const isNonNegativeNumber = (v: unknown): boolean =>
@@ -293,8 +305,9 @@ export type SendEventsOptions = {
 };
 
 /**
- * Ship a batch of events to the Server. v0 failure behavior: throw and let the
- * caller drop the batch (open question 4) — no retry, no local buffering yet.
+ * Ship a batch of events to the Server. Failure behavior: throw and let the
+ * caller decide — the live listeners queue failed batches to a disk-backed
+ * offline buffer (@slopwatch/buffer) and replay them on a later flush.
  */
 export const sendEvents = async (
   events: NormalEvent[],

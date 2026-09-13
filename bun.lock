@@ -44,6 +44,7 @@
         "@slopwatch/buffer": "workspace:*",
         "@slopwatch/config": "workspace:*",
         "@slopwatch/events": "workspace:*",
+        "@slopwatch/listener-shared": "workspace:*",
         "@slopwatch/summary": "workspace:*",
       },
     },
@@ -54,6 +55,7 @@
         "@slopwatch/buffer": "workspace:*",
         "@slopwatch/config": "workspace:*",
         "@slopwatch/events": "workspace:*",
+        "@slopwatch/listener-shared": "workspace:*",
         "@slopwatch/summary": "workspace:*",
       },
     },
@@ -83,6 +85,15 @@
     "packages/events": {
       "name": "@slopwatch/events",
       "version": "0.0.0",
+    },
+    "packages/listener-shared": {
+      "name": "@slopwatch/listener-shared",
+      "version": "0.0.0",
+      "dependencies": {
+        "@slopwatch/buffer": "workspace:*",
+        "@slopwatch/events": "workspace:*",
+        "@slopwatch/summary": "workspace:*",
+      },
     },
     "packages/summary": {
       "name": "@slopwatch/summary",
@@ -134,6 +145,8 @@
     "@slopwatch/events": ["@slopwatch/events@workspace:packages/events"],
 
     "@slopwatch/listener-claude-code": ["@slopwatch/listener-claude-code@workspace:listeners/claude-code"],
+
+    "@slopwatch/listener-shared": ["@slopwatch/listener-shared@workspace:packages/listener-shared"],
 
     "@slopwatch/listener-zcode": ["@slopwatch/listener-zcode@workspace:listeners/zcode"],
 

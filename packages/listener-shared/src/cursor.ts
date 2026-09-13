@@ -1,8 +1,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
 /**
- * Byte offset of the last ingested transcript read, persisted per session so
- * a re-spawned sidecar resumes where the previous one stopped (no duplicates).
+ * Byte offset of the last ingested capture read, persisted per session so a
+ * respawned generation resumes where the previous one stopped (no duplicates).
  */
 export const readCursor = (path: string): number => {
   try {

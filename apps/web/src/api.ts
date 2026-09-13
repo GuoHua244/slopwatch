@@ -39,7 +39,7 @@ export type CommentRow = {
 /** GET /me — the identity behind the reader's bearer token. */
 export type MeInfo = { user: string; is_dri: boolean };
 
-/** Row of GET /rollups — per-day turn/tool counts for one developer. */
+/** Row of GET /rollups — per-day turn/tool counts for one user. */
 export type DailyRollupRow = {
   user_id: string;
   /** UTC day, "YYYY-MM-DD". */
@@ -48,7 +48,7 @@ export type DailyRollupRow = {
   tool_calls: number;
 };
 
-/** Row of GET /rollups — per-hour turn/tool counts for one developer. */
+/** Row of GET /rollups — per-hour turn/tool counts for one user. */
 export type UserHourlyRollupRow = {
   user_id: string;
   /** UTC hour, "YYYY-MM-DDTHH". */

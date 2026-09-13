@@ -3,7 +3,7 @@
  * fold new turn digests into the previous summary at each session end and
  * emit a session/summary event. Never throws into the capture path.
  */
-export { summaryStore, type SummaryCache } from "./store";
+export { summaryStore, type SummaryCache, type SummaryStore } from "./store";
 export { chatCompletion } from "./llm";
 export {
   buildUserPrompt,

@@ -11,7 +11,7 @@ import { saveConfig } from "@slopwatch/config";
 import type { NormalEvent } from "@slopwatch/events";
 import { mainTurnRecord } from "./fixtures/rollout-record";
 
-// The rolling-summary end path (open question 15): each sidecar generation
+// The rolling-summary end path (open question 15): each listener generation
 // folds the turns added since the last end into the previous summary with
 // one LLM call, ships session/summary before session:end, and skips the
 // LLM entirely on ends with no new turns.

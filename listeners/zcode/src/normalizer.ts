@@ -1,6 +1,8 @@
 import { basename } from "node:path";
 import {
-  SCHEMA_VERSION,
+  envelope,
+  isNonEmptyString,
+  isObject,
   type ModelRequestEvent,
   type NormalEvent,
   type SessionMetaEvent,
@@ -8,12 +10,6 @@ import {
   type ToolCallEvent,
   type TurnStartEvent,
 } from "@slopwatch/events";
-
-const isObject = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
-
-const isNonEmptyString = (v: unknown): v is string =>
-  typeof v === "string" && v.length > 0;
 
 /** Rollout files are named `model-io-<sessionId>.jsonl` (sessionId includes the `sess_` prefix). */
 export const sessionIdFromFilename = (filename: string): string | null =>
@@ -113,10 +109,7 @@ export const metaFromRecord = (
   }
   if (!title) return null;
   return {
-    schema_version: SCHEMA_VERSION,
-    agent: "zcode",
-    session_id: sessionId,
-    occurred_at: recordTime(record),
+    ...envelope("zcode", sessionId, recordTime(record)),
     kind: "session",
     event: "meta",
     title: title.slice(0, 200),
@@ -144,10 +137,7 @@ export const taskPreviewFromRecord = (
     const text = userSpeech(message.content);
     if (!text) continue;
     return {
-      schema_version: SCHEMA_VERSION,
-      agent: "zcode",
-      session_id: sessionId,
-      occurred_at: recordTime(record),
+      ...envelope("zcode", sessionId, recordTime(record)),
       kind: "session",
       event: "meta",
       task_preview: text.slice(0, 160),
@@ -185,12 +175,13 @@ export const turnStartFromRecord = (
     if (text) userMessage = text.slice(0, 2000);
   }
   const event: TurnStartEvent = {
-    schema_version: SCHEMA_VERSION,
-    agent: "zcode",
-    session_id: sessionId,
-    occurred_at: isNonEmptyString(record.startedAt)
-      ? record.startedAt
-      : recordTime(record),
+    ...envelope(
+      "zcode",
+      sessionId,
+      isNonEmptyString(record.startedAt)
+        ? record.startedAt
+        : recordTime(record),
+    ),
     kind: "turn",
     event: "start",
     turn_id: record.turnId,
@@ -263,10 +254,7 @@ export const eventsFromRecord = (
   if (!startedAt) return [];
 
   const modelRequest: ModelRequestEvent = {
-    schema_version: SCHEMA_VERSION,
-    agent: "zcode",
-    session_id: sessionId,
-    occurred_at: startedAt,
+    ...envelope("zcode", sessionId, startedAt),
     kind: "model_request",
     provider: isNonEmptyString(model.providerId) ? model.providerId : "unknown",
     model: model.modelId,
@@ -295,10 +283,7 @@ export const eventsFromRecord = (
     if (!isObject(tc) || !isNonEmptyString(tc.id) || !isNonEmptyString(tc.name))
       continue;
     const call: ToolCallEvent = {
-      schema_version: SCHEMA_VERSION,
-      agent: "zcode",
-      session_id: sessionId,
-      occurred_at: completedAt,
+      ...envelope("zcode", sessionId, completedAt),
       kind: "tool",
       event: "call",
       tool_call_id: tc.id,

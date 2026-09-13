@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isNormalEvent } from "@slopwatch/events";
-import {
-  eventsFromRecord,
-  metaFromRecord,
-  newTailState,
-  turnIdOf,
-} from "./normalizer";
+import { eventsFromRecord, metaFromRecord, newTailState } from "./normalizer";
 import {
   assistantDuplicateRecord,
   assistantRecord,
@@ -118,15 +113,6 @@ describe("eventsFromRecord — duration grounding", () => {
     const events = eventsFromRecord(assistantRecord, sessionId, state);
     const mr = events.find((e) => e.kind === "model_request");
     if (mr!.kind === "model_request") expect(mr!.duration_ms).toBe(0);
-  });
-});
-
-describe("turnIdOf", () => {
-  test("tracks the latest prompt uuid, null before any prompt", () => {
-    const state = newTailState();
-    expect(turnIdOf(state)).toBeNull();
-    eventsFromRecord(promptRecord, sessionId, state);
-    expect(turnIdOf(state)).toBe("u-0001");
   });
 });
 

@@ -43,6 +43,10 @@ export const shortId = (id: string): string =>
 const truncate = (s: string, max = 40): string =>
   s.length > max ? `${s.slice(0, max - 1)}…` : s;
 
+/** Best display text for a caught-unknown (Error message or String). */
+export const errorMessage = (e: unknown): string =>
+  e instanceof Error ? e.message : String(e);
+
 /** First three entries of a tool-args object as "k=v" pairs. */
 export const summarizeArgs = (args: unknown): string => {
   if (args === null || args === undefined) return "";

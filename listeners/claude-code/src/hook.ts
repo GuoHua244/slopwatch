@@ -3,7 +3,7 @@
  * stdin (no argv template expansion), so this script reads stdin, plans the
  * action, and returns immediately — SessionStart/UserPromptSubmit spawn the
  * transcript tailer detached, SessionEnd ships the session:end event and
- * tears the sidecar down. Prints nothing on stdout: SessionStart stdout
+ * tears the listener down. Prints nothing on stdout: SessionStart stdout
  * would be injected into the conversation as context.
  *
  * Usage (wired by install.ts): bun hook.ts --server-url U --token T
@@ -20,33 +20,18 @@ import {
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  SCHEMA_VERSION,
-  sendEvents,
-  type SessionEndEvent,
-} from "@slopwatch/events";
+import { envelope, sendEvents, type SessionEndEvent } from "@slopwatch/events";
 import { resolveShipConfig } from "@slopwatch/config";
 import { createDiskQueue } from "@slopwatch/buffer";
+import { argvHelpers, spawnDrainSweep } from "@slopwatch/listener-shared";
 
 /** The per-session disk queue (v2 decision 21), beside the pid/log files. */
 const queueFile = (sessionId: string): string =>
   join(logDir, `claude-code-${sessionId}.queue.jsonl`);
 
 /** Detached sweep of every stuck queue file in the state dir. */
-const spawnDrainSweep = (): void => {
-  try {
-    const drainTs = fileURLToPath(new URL("./drain.ts", import.meta.url));
-    const child = Bun.spawn([process.execPath, drainTs], {
-      detached: true,
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    child.unref?.();
-  } catch {
-    // best effort — the next hook fire sweeps again
-  }
-};
+const sweep = (): void =>
+  spawnDrainSweep(fileURLToPath(new URL("./drain.ts", import.meta.url)));
 
 export type HookPlan =
   | {
@@ -100,10 +85,7 @@ export const planHook = (hookInput: unknown): HookPlan => {
 };
 
 const args = process.argv.slice(2);
-const arg = (name: string): string | undefined => {
-  const i = args.indexOf(`--${name}`);
-  return i >= 0 ? args[i + 1] : undefined;
-};
+const { arg } = argvHelpers(args);
 
 const readStdinJson = async (): Promise<unknown> => {
   const chunks: Buffer[] = [];
@@ -121,7 +103,7 @@ const logDir = join(homedir(), ".slopwatch", "listeners");
 const pidFile = (sessionId: string): string =>
   join(logDir, `claude-code-${sessionId}.pid`);
 
-const killStaleSidecar = (sessionId: string): void => {
+const killStaleListener = (sessionId: string): void => {
   try {
     const pid = Number(readFileSync(pidFile(sessionId), "utf8").trim());
     if (Number.isFinite(pid) && pid > 0) process.kill(pid);
@@ -138,7 +120,7 @@ const main = async (): Promise<void> => {
       console.error("usage: bun hook.ts --stop --session-id <id>");
       process.exit(1);
     }
-    killStaleSidecar(sessionId);
+    killStaleListener(sessionId);
     process.exit(0);
   }
 
@@ -159,10 +141,7 @@ const main = async (): Promise<void> => {
 
   if (plan.kind === "end") {
     const end: SessionEndEvent = {
-      schema_version: SCHEMA_VERSION,
-      agent: "claude-code",
-      session_id: plan.sessionId,
-      occurred_at: new Date().toISOString(),
+      ...envelope("claude-code", plan.sessionId, new Date().toISOString()),
       kind: "session",
       event: "end",
       ...(plan.reason ? { reason: plan.reason } : {}),
@@ -172,7 +151,7 @@ const main = async (): Promise<void> => {
         await sendEvents([end], { serverUrl, token });
       } catch (e) {
         // v2 decision 21: the end event queues to disk instead of dying —
-        // the hook is the ONLY sender of this event and the sidecar is being
+        // the hook is the ONLY sender of this event and the listener is being
         // torn down, so a sweep is spawned to ship it once the server answers
         console.error(
           `hook: session:end not delivered (${e instanceof Error ? e.message : String(e)}) — queueing`,
@@ -187,7 +166,7 @@ const main = async (): Promise<void> => {
               `hook: queue overflow dropped ${droppedEvents} events`,
             );
           }
-          spawnDrainSweep();
+          sweep();
         } catch (e2) {
           console.error(
             `hook: session:end lost — queueing failed (${e2 instanceof Error ? e2.message : String(e2)})`,
@@ -197,11 +176,11 @@ const main = async (): Promise<void> => {
     } else {
       console.log(JSON.stringify(end));
     }
-    killStaleSidecar(plan.sessionId);
+    killStaleListener(plan.sessionId);
     process.exit(0);
   }
 
-  // spawn — but skip when a sidecar for this session is already alive
+  // spawn — but skip when a listener for this session is already alive
   mkdirSync(logDir, { recursive: true });
   try {
     const pid = Number(readFileSync(pidFile(plan.sessionId), "utf8").trim());
@@ -210,7 +189,7 @@ const main = async (): Promise<void> => {
       process.exit(0); // already running
     }
   } catch {
-    // no pid file or stale pid — spawn a fresh sidecar
+    // no pid file or stale pid — spawn a fresh listener
   }
 
   const liveTs = fileURLToPath(new URL("./live.ts", import.meta.url));
@@ -251,7 +230,7 @@ const main = async (): Promise<void> => {
   child.unref?.();
   writeFileSync(pidFile(plan.sessionId), String(child.pid));
   // sweep any queue files stuck since earlier outages (v2 decision 21)
-  spawnDrainSweep();
+  sweep();
   console.error(
     `slopwatch listener spawned: pid=${child.pid} log=${logFile} transcript=${plan.transcriptPath}`,
   );

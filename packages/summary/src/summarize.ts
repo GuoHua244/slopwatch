@@ -6,7 +6,7 @@
  * summary current and the last one wins — no need to identify "the real
  * end".
  */
-import { SCHEMA_VERSION, type SessionSummaryEvent } from "@slopwatch/events";
+import { envelope, type SessionSummaryEvent } from "@slopwatch/events";
 import { chatCompletion } from "./llm";
 import { summaryStore } from "./store";
 
@@ -26,7 +26,7 @@ export const buildUserPrompt = (
     .join("\n")}`;
 
 export type FoldOptions = {
-  /** Per-session state file base (same base as the sidecar's cursor). */
+  /** Per-session state file base (same base as the listener's cursor). */
   stateBase: string;
   agent: string;
   sessionId: string;
@@ -67,10 +67,7 @@ export const foldSummary = async (
   });
   store.clearDigests();
   return {
-    schema_version: SCHEMA_VERSION,
-    agent: opts.agent,
-    session_id: opts.sessionId,
-    occurred_at: updatedAt,
+    ...envelope(opts.agent, opts.sessionId, updatedAt),
     kind: "session",
     event: "summary",
     body: text,
