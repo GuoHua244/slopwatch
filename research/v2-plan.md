@@ -69,6 +69,7 @@ Storage and rollup buckets stay UTC (v1 decision 18 stands). Daily aggregates re
 - **New listeners** — Codex, Pi, OpenCode, Copilot stay deferred (decision 20).
 - **Cross-provider cost normalization** — reaffirmed deferred (v1 open question 12): token totals are stored and serve relative comparison; a price table would be a permanently maintained asset the rollout does not depend on.
 - **Resident helper process, sub-5s spectate, proxy capture path, resumes/compaction modeling** — unchanged deferrals; revisit triggers unchanged.
+- **Tail resync across rollout rewrites** — a same-or-larger rewrite can resume the tail mid-record and quarantine a suffix (research/quarantine-rewrite-suffixes.md); a resync protocol needs dedup groundwork, deferred until the artifacts cost more than the fix.
 
 ## Known-bug gate
 

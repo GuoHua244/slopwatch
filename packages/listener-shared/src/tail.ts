@@ -18,6 +18,12 @@ export type RecordAdapter = {
  * quarantine, hand records to the adapter, feed the turn digest, flush, and
  * commit the cursor only after a successful send. Cursor state resumes from
  * the previous generation's offset (0 on first capture).
+ *
+ * Shrink is detected and resets the read; a rewrite that keeps or grows the
+ * size is not — the resume then starts mid-record and that first fragment
+ * lands in the quarantine as a mid-JSON suffix. Accepted by design (verbatim
+ * evidence, nothing lost); a resync protocol would need dedup groundwork to
+ * avoid re-emitting whole sessions.
  */
 export const createTailLoop = (opts: {
   file: string;
