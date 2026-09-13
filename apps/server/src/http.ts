@@ -240,7 +240,9 @@ export const createApp = ({
     if (url.pathname === "/sessions" && req.method === "GET") {
       const user = await resolveUser();
       if (user === null) return json(401, { error: "unauthorized" });
-      return json(200, { sessions: await store.listSessions() });
+      // Team-scoped DRI filter: "unassigned" is the NULL-team bucket.
+      const teamId = url.searchParams.get("team_id")?.trim() || undefined;
+      return json(200, { sessions: await store.listSessions(teamId) });
     }
 
     // Decision 18: per-developer usage rollups (org-wide read like /sessions).

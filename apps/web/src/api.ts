@@ -110,7 +110,7 @@ export class ApiError extends Error {
 }
 
 export type Api = {
-  listSessions(): Promise<SessionSummary[]>;
+  listSessions(teamId?: string): Promise<SessionSummary[]>;
   /** Decision 8: incremental page of a session's events after sinceSeq. */
   eventsSince(sessionId: string, sinceSeq: number): Promise<StoredEvent[]>;
   /**
@@ -262,11 +262,13 @@ export const createApi = (
     };
   };
   return {
-    listSessions: async () =>
+    listSessions: async (teamId) =>
       (
         await getJson<{ sessions: SessionSummary[] }>(
           doFetch,
-          "/sessions",
+          teamId === undefined
+            ? "/sessions"
+            : `/sessions?team_id=${encodeURIComponent(teamId)}`,
           auth(),
         )
       ).sessions,

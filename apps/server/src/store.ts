@@ -183,7 +183,12 @@ export type Store = {
     events: NormalEvent[],
     userId: string | null,
   ): Promise<{ accepted: number }>;
-  listSessions(): Promise<SessionRow[]>;
+  /**
+   * All sessions, newest first. `teamId` narrows to one team's snapshot
+   * (the team-scoped DRI filter); the sentinel "unassigned" selects the
+   * NULL-team bucket.
+   */
+  listSessions(teamId?: string): Promise<SessionRow[]>;
   eventsSince(sessionId: string, sinceSeq: number): Promise<StoredEvent[]>;
   /**
    * Decision 13: remove a whole session — normalized events, raw payloads,
@@ -730,9 +735,16 @@ export const createPgStore = (databaseUrl: string): Store => {
       }
     },
 
-    async listSessions() {
+    async listSessions(teamId) {
+      const filter =
+        teamId === undefined
+          ? ""
+          : teamId === "unassigned"
+            ? "WHERE team_id IS NULL"
+            : "WHERE team_id = $1";
       const { rows } = await pool.query(
-        "SELECT session_id, agent, user_id, team_id, first_seen_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions ORDER BY first_seen_at DESC",
+        `SELECT session_id, agent, user_id, team_id, first_seen_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions ${filter} ORDER BY first_seen_at DESC`,
+        teamId !== undefined && teamId !== "unassigned" ? [teamId] : [],
       );
       return rows.map((r) => ({
         session_id: r.session_id as string,

@@ -126,4 +126,35 @@ describe.skipIf(!dbTests())("team store semantics", () => {
     const mine = sessions.find((row) => row.session_id === sessionId)!;
     expect(mine.team_id).toBeNull();
   });
+
+  test("listSessions filters on the team snapshot; unassigned picks the NULL bucket", async () => {
+    const s = await ensure();
+    const user = `u-${randomUUID().slice(0, 8)}`;
+    await s.createUser(user, null);
+    const team = await s.createTeam(`f-${randomUUID().slice(0, 6)}`, null);
+    await s.setUserTeam(user, team.id);
+    const inTeam = `sess_filter-${randomUUID()}`;
+    await s.appendEvents([startEvent(inTeam)], user);
+
+    const loner = `u-${randomUUID().slice(0, 8)}`;
+    await s.createUser(loner, null);
+    const unassigned = `sess_filter-${randomUUID()}`;
+    await s.appendEvents([startEvent(unassigned)], loner);
+
+    const teamSessionIds = (await s.listSessions(team.id)).map(
+      (row) => row.session_id,
+    );
+    expect(teamSessionIds).toContain(inTeam);
+    expect(teamSessionIds).not.toContain(unassigned);
+
+    const unassignedIds = (await s.listSessions("unassigned")).map(
+      (row) => row.session_id,
+    );
+    expect(unassignedIds).toContain(unassigned);
+    expect(unassignedIds).not.toContain(inTeam);
+
+    const everything = (await s.listSessions()).map((row) => row.session_id);
+    expect(everything).toContain(inTeam);
+    expect(everything).toContain(unassigned);
+  });
 });

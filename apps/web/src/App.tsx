@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { createReviewApi } from "./api";
+import { createApi, createReviewApi, type TeamInfo } from "./api";
 import { clearToken, saveToken, storedToken } from "./auth";
 import { useSessions } from "./hooks/useSessions";
 import { clock } from "./lib/format";
@@ -125,9 +125,21 @@ export const App = () => {
         setAuth({ status: "anon" });
       });
   }, []);
-  const feed = useSessions();
+  const [teamFilter, setTeamFilter] = useState<string>("all");
+  const feed = useSessions(teamFilter === "all" ? null : teamFilter);
   const { route, sessionId, userId } = useHashRoute();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Team-scoped DRI filter: the roster feeds the sessions dropdown; fetched
+  // once per sign-in.
+  const [teams, setTeams] = useState<TeamInfo[]>([]);
+  useEffect(() => {
+    if (auth.status !== "signed-in") return;
+    void createApi()
+      .teams()
+      .then(setTeams)
+      .catch(() => {});
+  }, [auth.status]);
 
   // Follow the newest session until the operator picks one.
   useEffect(() => {
@@ -215,6 +227,26 @@ export const App = () => {
       ) : (
         <main>
           <aside>
+            <form className="admin-form" onSubmit={(e) => e.preventDefault()}>
+              <label className="dim">
+                team{" "}
+                <select
+                  value={teamFilter}
+                  onChange={(e) => {
+                    setTeamFilter(e.target.value);
+                    setSelectedId(null);
+                  }}
+                >
+                  <option value="all">all</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                  <option value="unassigned">unassigned</option>
+                </select>
+              </label>
+            </form>
             <SessionList
               sessions={feed.sessions}
               selectedId={selectedId}

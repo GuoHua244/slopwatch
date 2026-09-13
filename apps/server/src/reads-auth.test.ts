@@ -5,14 +5,16 @@ import type { Store } from "./store";
 // v2 decision 22 / ADR 0003: every data read requires a bearer token. The
 // store answers empty-but-successful so a 200 proves the auth gate passed;
 // a refusing stub proves the gate fires before any storage access.
-const scriptedStore = (): Store => {
+const scriptedStore = (): Store & { calls: string[] } => {
   const calls: string[] = [];
   let store: Store;
   const base = {
     migrate: async () => {},
     appendEvents: async () => ({ accepted: 0 }),
-    listSessions: async () => {
-      calls.push("listSessions");
+    listSessions: async (teamId?: string) => {
+      calls.push(
+        teamId === undefined ? "listSessions" : `listSessions:${teamId}`,
+      );
       return [];
     },
     eventsSince: async () => {
@@ -139,5 +141,21 @@ describe("read-plane authentication (decision 22)", () => {
       }),
     );
     expect(res.status).toBe(401);
+  });
+
+  test("the team filter reaches the store verbatim", async () => {
+    const store = scriptedStore();
+    const a = createApp({
+      tokens: new Map([["tok-alice", "alice"]]),
+      store,
+    });
+    await get(a, "/sessions?team_id=team-1", "tok-alice");
+    await get(a, "/sessions?team_id=unassigned", "tok-alice");
+    await get(a, "/sessions", "tok-alice");
+    expect(store.calls).toEqual([
+      "listSessions:team-1",
+      "listSessions:unassigned",
+      "listSessions",
+    ]);
   });
 });

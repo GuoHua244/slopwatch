@@ -13,8 +13,12 @@ export type SessionFeed = {
 
 const api = createApi();
 
-/** Decision 4: poll GET /sessions every ~5s and on tab focus. */
-export const useSessions = (intervalMs = 5000): SessionFeed => {
+/** Decision 4: poll GET /sessions every ~5s and on tab focus. A non-null
+ * teamId narrows the poll to one team (or the "unassigned" bucket). */
+export const useSessions = (
+  teamId: string | null = null,
+  intervalMs = 5000,
+): SessionFeed => {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [status, setStatus] = useState<FeedStatus>("connecting");
   const [lastError, setLastError] = useState<string | null>(null);
@@ -27,7 +31,7 @@ export const useSessions = (intervalMs = 5000): SessionFeed => {
       intervalMs,
       tick: async () => {
         try {
-          const list = await api.listSessions();
+          const list = await api.listSessions(teamId ?? undefined);
           if (!mounted.current) return;
           setSessions(list);
           setStatus("live");
@@ -45,7 +49,7 @@ export const useSessions = (intervalMs = 5000): SessionFeed => {
       mounted.current = false;
       poller.stop();
     };
-  }, [intervalMs]);
+  }, [intervalMs, teamId]);
 
   return { sessions, status, lastError, lastUpdated };
 };
