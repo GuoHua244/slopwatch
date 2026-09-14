@@ -32,6 +32,11 @@ services:
   db:
     image: postgres:18-alpine
     restart: unless-stopped
+    ports:
+      # host-side tooling (psql / MCP db tools) only; loopback-bound on purpose.
+      # 5432 is taken by the host's own Postgres and 5433-5532 is a reserved
+      # WSL range, so use a high port.
+      - "127.0.0.1:15432:5432"
     environment:
       POSTGRES_USER: slopwatch
       POSTGRES_PASSWORD: slopwatch
