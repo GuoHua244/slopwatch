@@ -28,8 +28,8 @@ describe("fmtTokens", () => {
 });
 
 describe("fmtCost", () => {
-  test("sub-dollar amounts keep four decimals", () => {
-    expect(fmtCost(0)).toBe("$0.0000");
+  test("sub-dollar amounts keep four decimals; exact zero stays short", () => {
+    expect(fmtCost(0)).toBe("$0");
     expect(fmtCost(0.0042)).toBe("$0.0042");
     expect(fmtCost(0.115)).toBe("$0.1150");
   });

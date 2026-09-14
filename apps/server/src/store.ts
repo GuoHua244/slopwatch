@@ -11,6 +11,8 @@ export type SessionRow = {
   /** Team snapshot from session creation (ADR 0004); never backfilled. */
   team_id: string | null;
   first_seen_at: string;
+  /** Last ingest into the session; null when no event has landed yet. */
+  last_event_at: string | null;
   last_seq: number;
   title: string | null;
   task_preview: string | null;
@@ -213,10 +215,22 @@ export type Store = {
    */
   backfillTokenTotals(): Promise<number>;
   /**
+   * One-time maintenance: copy each zcode model_request's response text out
+   * of its retained raw rollout record into the event payload (events
+   * captured before response_text shipped). Idempotent; no-op when done.
+   */
+  backfillResponseText(): Promise<number>;
+  /**
    * Decision 18: per-developer usage rollups, UTC-bucketed. `sinceDay` and
    * `sinceHour` ("YYYY-MM-DD" / "YYYY-MM-DDTHH") are inclusive lower bounds.
+   * `teamId` narrows every window to one team's members ("unassigned" = users
+   * with no team) via users.team_id; totals are scoped the same way.
    */
-  listRollups(sinceDay: string, sinceHour: string): Promise<RollupsSnapshot>;
+  listRollups(
+    sinceDay: string,
+    sinceHour: string,
+    teamId?: string,
+  ): Promise<RollupsSnapshot>;
   /** Full recompute of every rollup table from the events table. Rows written. */
   backfillRollups(): Promise<number>;
   /** Decision 13 admin plane. */
@@ -258,6 +272,11 @@ export type Store = {
     body: string,
   ): Promise<CommentRow | null>;
   listComments(sessionId: string): Promise<CommentRow[]>;
+  /**
+   * Delete one review note — the author's own only. False when the note is
+   * absent or written by someone else.
+   */
+  deleteComment(commentId: number, authorId: string): Promise<boolean>;
   /** Decision 10: the DRI role attribute. False for unknown users. */
   isDri(name: string): Promise<boolean>;
   setUserDri(name: string, isDri: boolean): Promise<AdminUserRow | null>;
@@ -761,7 +780,7 @@ export const createPgStore = (databaseUrl: string): Store => {
             ? "WHERE team_id IS NULL"
             : "WHERE team_id = $1";
       const { rows } = await pool.query(
-        `SELECT session_id, agent, user_id, team_id, first_seen_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions ${filter} ORDER BY COALESCE(last_event_at, first_seen_at) DESC`,
+        `SELECT session_id, agent, user_id, team_id, first_seen_at, last_event_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions ${filter} ORDER BY COALESCE(last_event_at, first_seen_at) DESC`,
         teamId !== undefined && teamId !== "unassigned" ? [teamId] : [],
       );
       return rows.map((r) => ({
@@ -770,6 +789,9 @@ export const createPgStore = (databaseUrl: string): Store => {
         user_id: r.user_id as string | null,
         team_id: (r.team_id as string | null) ?? null,
         first_seen_at: new Date(r.first_seen_at as string).toISOString(),
+        last_event_at: r.last_event_at
+          ? new Date(r.last_event_at as string).toISOString()
+          : null,
         last_seq: Number(r.last_seq),
         title: (r.title as string | null) ?? null,
         task_preview: (r.task_preview as string | null) ?? null,
@@ -857,6 +879,23 @@ export const createPgStore = (databaseUrl: string): Store => {
       return rowCount ?? 0;
     },
 
+    async backfillResponseText() {
+      const { rowCount } = await pool.query(`
+        UPDATE events
+        SET payload = payload
+          || jsonb_build_object('response_text', left(raw#>>'{response,text}', 2000))
+        WHERE kind = 'model_request'
+          AND agent = 'zcode'
+          AND raw IS NOT NULL
+          -- title-generation requests echo a JSON title payload, not speech
+          AND (raw->>'querySource') IS DISTINCT FROM 'session_title'
+          AND jsonb_typeof(raw#>'{response,text}') = 'string'
+          AND length(raw#>>'{response,text}') > 0
+          AND payload->>'response_text' IS NULL
+      `);
+      return rowCount ?? 0;
+    },
+
     async deleteSession(sessionId) {
       const client = await pool.connect();
       try {
@@ -888,30 +927,55 @@ export const createPgStore = (databaseUrl: string): Store => {
       }
     },
 
-    async listRollups(sinceDay, sinceHour) {
+    async listRollups(sinceDay, sinceHour, teamId) {
+      // Team scope (v2 decision 27): rollups are user-grain, so membership
+      // resolves through users.team_id — never sessions' creation-time snapshot.
+      // `WHERE TRUE` gives every query an anchor for the AND.
+      const scope = (
+        baseParams: unknown[],
+      ): { sql: string; params: unknown[] } =>
+        teamId === undefined
+          ? { sql: "", params: baseParams }
+          : teamId === "unassigned"
+            ? {
+                sql: " AND user_id NOT IN (SELECT name FROM users WHERE team_id IS NOT NULL)",
+                params: baseParams,
+              }
+            : {
+                sql: ` AND user_id IN (SELECT name FROM users WHERE team_id = $${baseParams.length + 1})`,
+                params: [...baseParams, teamId],
+              };
       const modelSelect =
         "user_id, day AS bucket, model, model_requests, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens";
+      const totalsScope = scope([]);
       const totals = await pool.query(
-        "SELECT user_id, SUM(turns) AS turns, SUM(tool_calls) AS tool_calls FROM user_daily_rollup GROUP BY user_id ORDER BY user_id",
+        `SELECT user_id, SUM(turns) AS turns, SUM(tool_calls) AS tool_calls FROM user_daily_rollup WHERE TRUE${totalsScope.sql} GROUP BY user_id ORDER BY user_id`,
+        totalsScope.params,
       );
+      const modelTotalsScope = scope([]);
       const modelTotals = await pool.query(
-        `SELECT user_id, model, SUM(model_requests) AS model_requests, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens FROM model_daily_rollup GROUP BY user_id, model ORDER BY user_id, model`,
+        `SELECT user_id, model, SUM(model_requests) AS model_requests, SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens, SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens FROM model_daily_rollup WHERE TRUE${modelTotalsScope.sql} GROUP BY user_id, model ORDER BY user_id, model`,
+        modelTotalsScope.params,
       );
+      const dailyScope = scope([sinceDay]);
       const daily = await pool.query(
-        "SELECT user_id, day, turns, tool_calls FROM user_daily_rollup WHERE day >= $1 ORDER BY user_id, day",
-        [sinceDay],
+        `SELECT user_id, day, turns, tool_calls FROM user_daily_rollup WHERE day >= $1${dailyScope.sql} ORDER BY user_id, day`,
+        dailyScope.params,
       );
+      const userHourlyScope = scope([sinceHour]);
       const userHourly = await pool.query(
-        "SELECT user_id, hour, turns, tool_calls FROM user_hourly_rollup WHERE hour >= $1 ORDER BY user_id, hour",
-        [sinceHour],
+        `SELECT user_id, hour, turns, tool_calls FROM user_hourly_rollup WHERE hour >= $1${userHourlyScope.sql} ORDER BY user_id, hour`,
+        userHourlyScope.params,
       );
+      const modelDailyScope = scope([sinceDay]);
       const modelDaily = await pool.query(
-        `SELECT ${modelSelect} FROM model_daily_rollup WHERE day >= $1 ORDER BY user_id, day, model`,
-        [sinceDay],
+        `SELECT ${modelSelect} FROM model_daily_rollup WHERE day >= $1${modelDailyScope.sql} ORDER BY user_id, day, model`,
+        modelDailyScope.params,
       );
+      const modelHourlyScope = scope([sinceHour]);
       const modelHourly = await pool.query(
-        `SELECT ${modelSelect.replace("day AS bucket", "hour AS bucket")} FROM model_hourly_rollup WHERE hour >= $1 ORDER BY user_id, hour, model`,
-        [sinceHour],
+        `SELECT ${modelSelect.replace("day AS bucket", "hour AS bucket")} FROM model_hourly_rollup WHERE hour >= $1${modelHourlyScope.sql} ORDER BY user_id, hour, model`,
+        modelHourlyScope.params,
       );
       return {
         totals: totals.rows.map((r) => ({
@@ -1212,6 +1276,14 @@ export const createPgStore = (databaseUrl: string): Store => {
         [sessionId],
       );
       return rows.map((r) => pgCommentRow(r));
+    },
+
+    async deleteComment(commentId, authorId) {
+      const { rowCount } = await pool.query(
+        "DELETE FROM review_comments WHERE comment_id = $1 AND author_id = $2",
+        [commentId, authorId],
+      );
+      return rowCount === 1;
     },
 
     async isDri(name) {

@@ -7,6 +7,8 @@ export type SessionSummary = {
   agent: string;
   user_id: string | null;
   first_seen_at: string;
+  /** Last ingest into the session; null when no event has landed yet. */
+  last_event_at: string | null;
   last_seq: number;
   title: string | null;
   task_preview: string | null;
@@ -96,6 +98,8 @@ export type ReviewApi = {
     turnId: string | null,
     body: string,
   ): Promise<CommentRow>;
+  /** Author-only server-side; 404 for someone else's note or an unknown id. */
+  deleteComment(sessionId: string, commentId: number): Promise<void>;
 };
 
 export class ApiError extends Error {
@@ -116,9 +120,14 @@ export type Api = {
   /**
    * Decision 18: per-developer usage rollups. `days` lower-bounds the daily
    * windows (absent = all history); `hours` the hourly window (server
-   * default 24). Totals always cover all history.
+   * default 24). Totals always cover all history. `teamId` scopes every
+   * window server-side to one team's members ("unassigned" bucket included).
    */
-  rollups(params?: { days?: number; hours?: number }): Promise<RollupsSnapshot>;
+  rollups(params?: {
+    days?: number;
+    hours?: number;
+    teamId?: string;
+  }): Promise<RollupsSnapshot>;
   /** Decision 23: the roster, for the leaderboard's team grouping. */
   teams(): Promise<TeamInfo[]>;
 };
@@ -284,6 +293,7 @@ export const createApi = (
       const search = new URLSearchParams();
       if (params.days !== undefined) search.set("days", String(params.days));
       if (params.hours !== undefined) search.set("hours", String(params.hours));
+      if (params.teamId !== undefined) search.set("team_id", params.teamId);
       const query = search.toString();
       return getJson<RollupsSnapshot>(
         doFetch,
@@ -366,6 +376,14 @@ export const createReviewApi = (
           "POST",
         )
       ).comment,
+    deleteComment: async (sessionId, commentId) => {
+      await unwrapJson(
+        doFetch,
+        `/sessions/${encodeURIComponent(sessionId)}/comments/${commentId}`,
+        auth({ method: "DELETE" }),
+        "DELETE",
+      );
+    },
   };
 };
 

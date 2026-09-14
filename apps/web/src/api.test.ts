@@ -19,6 +19,7 @@ const session = (): SessionSummary => ({
   agent: "zcode",
   user_id: "alice",
   first_seen_at: "2026-09-09T15:26:58.337Z",
+  last_event_at: null,
   last_seq: 3,
   title: "hello",
   task_preview: null,
@@ -68,6 +69,33 @@ describe("createApi", () => {
     expect(events).toHaveLength(1);
     expect(events[0]!.event_seq).toBe(4);
     expect(events[0]!.event.kind).toBe("model_request");
+  });
+
+  test("rollups forwards window params and the team scope as a query string", async () => {
+    const paths: string[] = [];
+    const api = createApi((input) => {
+      paths.push(String(input));
+      return Promise.resolve(
+        jsonResponse(200, {
+          totals: [],
+          model_totals: [],
+          daily: [],
+          user_hourly: [],
+          model_daily: [],
+          model_hourly: [],
+        }),
+      );
+    });
+    await api.rollups();
+    await api.rollups({ days: 8, hours: 8 * 24 });
+    await api.rollups({ days: 8, hours: 8 * 24, teamId: "team-1" });
+    await api.rollups({ teamId: "unassigned" });
+    expect(paths).toEqual([
+      "/rollups",
+      "/rollups?days=8&hours=192",
+      "/rollups?days=8&hours=192&team_id=team-1",
+      "/rollups?team_id=unassigned",
+    ]);
   });
 
   test("non-2xx responses raise ApiError carrying the status", async () => {
@@ -309,6 +337,21 @@ describe("createReviewApi", () => {
       comment,
     );
     expect(bodies).toEqual([{ turn_id: "turn_1", body: "looped twice" }]);
+  });
+
+  test("deleteComment DELETEs the note under the reader's bearer", async () => {
+    const calls: { path: string; method: string }[] = [];
+    const api = createReviewApi(
+      () => "sw_tok",
+      (input, init) => {
+        calls.push({ path: String(input), method: String(init?.method) });
+        return Promise.resolve(new Response(null, { status: 204 }));
+      },
+    );
+    await expect(api.deleteComment("sess_a b", 7)).resolves.toBeUndefined();
+    expect(calls).toEqual([
+      { path: "/sessions/sess_a%20b/comments/7", method: "DELETE" },
+    ]);
   });
 
   test("me() reports the token's user and DRI flag", async () => {

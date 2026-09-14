@@ -28,11 +28,13 @@ const session = (
   agent: string,
   firstSeenAt: string,
   outputTokens = 0,
+  lastEventAt: string | null = null,
 ): SessionSummary => ({
   session_id: sessionId,
   agent,
   user_id: userId,
   first_seen_at: firstSeenAt,
+  last_event_at: lastEventAt,
   last_seq: 1,
   title: null,
   task_preview: null,
@@ -103,6 +105,46 @@ describe("aggregateLeaderboard", () => {
     expect(alice.topAgent).toBe("pi");
     expect(alice.lastActiveAt).toBe("2026-09-09T11:00:00Z");
     expect(alice.trend).toHaveLength(24);
+  });
+
+  test("last seen follows the session's last event, not its creation", () => {
+    const rows = aggregateLeaderboard(
+      [
+        session(
+          "s1",
+          "alice",
+          "zcode",
+          "2026-09-09T10:00:00Z",
+          0,
+          "2026-09-11T23:00:00Z",
+        ),
+        session("s2", "alice", "pi", "2026-09-09T11:00:00Z"),
+      ],
+      snapshot(),
+      NOW,
+    );
+    // A long-running session's last_event_at beats a newer session's start.
+    expect(byUser(rows, "alice").lastActiveAt).toBe("2026-09-11T23:00:00Z");
+  });
+
+  test("todayRequests counts local-today activity regardless of pricing", () => {
+    const rows = aggregateLeaderboard(
+      [],
+      snapshot({
+        model_hourly: [
+          // yesterday local: ignored
+          modelRow("alice", localHourBucket(-1, 9), UNPRICED, 5),
+          // today local: counted even though the model is unpriced
+          modelRow("alice", localHourBucket(0, 9), UNPRICED, 2),
+          modelRow("bob", localHourBucket(0, 9), PRICED, 7),
+        ],
+      }),
+      NOW,
+    );
+    expect(byUser(rows, "alice").todayRequests).toBe(2);
+    expect(byUser(rows, "bob").todayRequests).toBe(7);
+    // unpriced models still hide spend while counting as activity
+    expect(byUser(rows, "alice").todayCostUsd).toBeNull();
   });
 
   test("cost is priced per model row; an unpriced model poisons the sum", () => {

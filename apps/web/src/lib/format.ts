@@ -16,9 +16,9 @@ export const fmtDelta = (ratio: number | null): string => {
   return `${ratio >= 0 ? "↑" : "↓"} ${pct}%`;
 };
 
-/** 0 → "$0.0000", 0.0042 → "$0.0042", 12.345 → "$12.35" */
+/** 0 → "$0", 0.0042 → "$0.0042", 12.345 → "$12.35" */
 export const fmtCost = (usd: number): string =>
-  usd < 1 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
+  usd === 0 ? "$0" : usd < 1 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
 
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 

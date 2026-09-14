@@ -70,6 +70,7 @@ describe("eventsFromRecord — assistant records", () => {
         cache_read_tokens: 5600,
         cache_write_tokens: 340,
       });
+      expect(mr!.response_text).toBe("我先看一下目录。");
     }
   });
 

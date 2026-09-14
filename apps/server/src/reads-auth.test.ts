@@ -28,6 +28,7 @@ const scriptedStore = (): Store & { calls: string[] } => {
     clearSetting: async () => {},
     listSettings: async () => ({}),
     backfillTokenTotals: async () => 0,
+    backfillResponseText: async () => 0,
     listRollups: async () => {
       calls.push("listRollups");
       return {
@@ -64,6 +65,10 @@ const scriptedStore = (): Store & { calls: string[] } => {
     listComments: async () => {
       calls.push("listComments");
       return [];
+    },
+    deleteComment: async () => {
+      calls.push("deleteComment");
+      return false;
     },
     isDri: async () => false,
     setUserDri: async () => null,

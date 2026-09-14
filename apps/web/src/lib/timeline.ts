@@ -21,6 +21,8 @@ export type ToolActivity = {
 export type TurnActivity = {
   turnId: string;
   userMessage?: string;
+  /** The turn's answer: the last non-empty assistant prose seen in it. */
+  assistantMessage?: string;
   startedAt?: string;
   endedAt?: string;
   usage?: TokenUsage;
@@ -107,8 +109,13 @@ export const buildTimeline = (events: StoredEvent[]): SessionTimeline => {
       case "model_request": {
         if (event.turn_id) currentTurnId = event.turn_id;
         const turn = turnFor(event.turn_id);
-        if (turn) turn.modelRequests.push(event);
-        else timeline.orphans.requests.push(event);
+        if (turn) {
+          turn.modelRequests.push(event);
+          // Requests arrive in seq order, so the final prose of the turn wins.
+          if (event.response_text) turn.assistantMessage = event.response_text;
+        } else {
+          timeline.orphans.requests.push(event);
+        }
         break;
       }
       case "tool": {

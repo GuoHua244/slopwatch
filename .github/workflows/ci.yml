@@ -16,3 +16,47 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run ci
+
+  # Acceptance: the same suites against a real Postgres (the DB-backed tests
+  # skip elsewhere), then a RUNNING server smoked end-to-end over HTTP —
+  # ingest with the assistant's response text, the sessions/events reads,
+  # the rollups snapshot and its team scope, and the review-note lifecycle.
+  acceptance:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: slopwatch
+          POSTGRES_PASSWORD: slopwatch
+          POSTGRES_DB: slopwatch
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U slopwatch"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://slopwatch:slopwatch@localhost:5432/slopwatch
+      DATABASE_URL_TEST: postgres://slopwatch:slopwatch@localhost:5432/slopwatch_test
+      SLOPWATCH_TOKENS: tester:acceptance-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Create the test database
+        run: |
+          psql postgresql://slopwatch:slopwatch@localhost:5432/slopwatch \
+            -c "CREATE DATABASE slopwatch_test"
+      - name: Test suites against Postgres
+        run: bun test apps/server
+      - name: Boot the server
+        run: |
+          bun apps/server/src/index.ts &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8787/healthz && break
+            sleep 1
+          done
+      - name: Acceptance smoke over HTTP
+        run: bun apps/server/src/acceptance.ts

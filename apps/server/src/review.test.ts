@@ -17,6 +17,7 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
   clearSetting: async () => {},
   listSettings: async () => ({}),
   backfillTokenTotals: async () => 0,
+  backfillResponseText: async () => 0,
   listRollups: async () => ({
     totals: [],
     model_totals: [],
@@ -59,6 +60,7 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
     throw new Error("not scripted");
   },
   listComments: async () => [],
+  deleteComment: async () => false,
   isDri: async () => false,
   setUserDri: async () => null,
   health: async () => ({
@@ -245,6 +247,44 @@ describe("review plane authorization (in memory)", () => {
     expect(
       ((await ok.json()) as { comment: CommentRow }).comment.author_id,
     ).toBe("alice");
+  });
+
+  test("DELETE comment: 401 unauthenticated, 204 for the author, 404 otherwise", async () => {
+    let deleted: { commentId: number; authorId: string } | undefined;
+    const store = scriptedStore({
+      deleteComment: async (commentId, authorId) => {
+        deleted = { commentId, authorId };
+        return commentId === 7 && authorId === "alice";
+      },
+    });
+    const app = appWith(store, { "tok-alice": "alice" });
+
+    expect(
+      (await req(app, "/sessions/sess_1/comments/7", { method: "DELETE" }))
+        .status,
+    ).toBe(401);
+    expect(deleted).toBeUndefined();
+
+    const ok = await req(
+      app,
+      "/sessions/sess_1/comments/7",
+      { method: "DELETE" },
+      "tok-alice",
+    );
+    expect(ok.status).toBe(204);
+    expect(deleted).toEqual({ commentId: 7, authorId: "alice" });
+
+    // a foreign or unknown note id answers 404, never 403 — nothing to probe
+    expect(
+      (
+        await req(
+          app,
+          "/sessions/sess_1/comments/8",
+          { method: "DELETE" },
+          "tok-alice",
+        )
+      ).status,
+    ).toBe(404);
   });
 
   test("GET /me identifies the token's user and DRI flag", async () => {
@@ -469,6 +509,92 @@ describe.skipIf(!dbTests())("review semantics against Postgres", () => {
       ["turn_1", "this turn looped twice"],
       [null, "reviewed, looks fine"],
     ]);
+  });
+
+  test("an author deletes their own note, never anyone else's", async () => {
+    const sessionId = unique("sess_note_delete");
+    await store.appendEvents(
+      [
+        {
+          schema_version: SCHEMA_VERSION,
+          agent: "zcode",
+          session_id: sessionId,
+          occurred_at: new Date().toISOString(),
+          kind: "session",
+          event: "start",
+          cwd: "D:\\demo",
+          hostname: "DEV-01",
+        },
+      ],
+      "alice",
+    );
+
+    const mine = await req(
+      app,
+      `/sessions/${sessionId}/comments`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ body: "typo in my note, removing it" }),
+      },
+      devToken,
+    );
+    expect(mine.status).toBe(201);
+    const mineId = ((await mine.json()) as { comment: CommentRow }).comment
+      .comment_id;
+
+    const theirs = await store.addComment(
+      sessionId,
+      null,
+      "collaborator",
+      "someone else's note",
+    );
+    expect(theirs).not.toBeNull();
+    const theirsId = theirs!.comment_id;
+
+    // another author's note is not deletable, and it stays listed
+    expect(
+      (
+        await req(
+          app,
+          `/sessions/${sessionId}/comments/${theirsId}`,
+          { method: "DELETE" },
+          devToken,
+        )
+      ).status,
+    ).toBe(404);
+
+    expect(
+      (
+        await req(
+          app,
+          `/sessions/${sessionId}/comments/${mineId}`,
+          { method: "DELETE" },
+          devToken,
+        )
+      ).status,
+    ).toBe(204);
+
+    const listed = await req(
+      app,
+      `/sessions/${sessionId}/comments`,
+      {},
+      devToken,
+    );
+    const { comments } = (await listed.json()) as { comments: CommentRow[] };
+    expect(comments.map((c) => c.comment_id)).toEqual([theirsId]);
+
+    // an already-deleted note is gone for everyone
+    expect(
+      (
+        await req(
+          app,
+          `/sessions/${sessionId}/comments/${mineId}`,
+          { method: "DELETE" },
+          devToken,
+        )
+      ).status,
+    ).toBe(404);
   });
 
   test("deleting a session cascades its reviews and comments", async () => {

@@ -34,6 +34,9 @@ const refusingStore = (): Store => ({
   pruneRaw: () => {
     throw new Error("store must not be touched");
   },
+  backfillResponseText: () => {
+    throw new Error("store must not be touched");
+  },
   backfillTokenTotals: () => {
     throw new Error("store must not be touched");
   },
@@ -85,6 +88,9 @@ const refusingStore = (): Store => ({
     throw new Error("store must not be touched");
   },
   listComments: async () => [],
+  deleteComment: () => {
+    throw new Error("store must not be touched");
+  },
   isDri: async () => false,
   setUserDri: async () => null,
   health: () => {
@@ -216,6 +222,33 @@ describe("GET /rollups", () => {
     expect(seen).toBeDefined();
     expect(seen!.sinceDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(seen!.sinceHour).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}$/);
+  });
+
+  test("the team scope reaches the store verbatim, absent when unfiltered", async () => {
+    const seen: (string | undefined)[] = [];
+    const spyStore: Store = {
+      ...refusingStore(),
+      listRollups: async (_sinceDay, _sinceHour, teamId) => {
+        seen.push(teamId);
+        return {
+          totals: [],
+          model_totals: [],
+          daily: [],
+          model_daily: [],
+          user_hourly: [],
+          model_hourly: [],
+        };
+      },
+    };
+    const app = createApp({
+      tokens: new Map([["tok-alice", "alice"]]),
+      store: spyStore,
+    });
+    const auth = { headers: { authorization: "Bearer tok-alice" } };
+    await app.fetch(new Request("http://x/rollups", auth));
+    await app.fetch(new Request("http://x/rollups?team_id=team-1", auth));
+    await app.fetch(new Request("http://x/rollups?team_id=unassigned", auth));
+    expect(seen).toEqual([undefined, "team-1", "unassigned"]);
   });
 });
 

@@ -8,6 +8,7 @@ import {
   type SessionMetaEvent,
   type TokenUsage,
   type ToolCallEvent,
+  type ToolResultEvent,
   type TurnStartEvent,
 } from "@slopwatch/events";
 
@@ -271,6 +272,15 @@ export const eventsFromRecord = (
     const usage = mapUsage(response.usage);
     if (Object.keys(usage).length > 0) modelRequest.usage = usage;
   }
+  // Title-generation requests echo a JSON title payload in response.text —
+  // metadata, not agent speech, so it must not ride along as an answer.
+  if (
+    record.querySource !== "session_title" &&
+    response &&
+    isNonEmptyString(response.text)
+  ) {
+    modelRequest.response_text = response.text.slice(0, 2000);
+  }
 
   const events: NormalEvent[] = [modelRequest];
 
@@ -294,4 +304,50 @@ export const eventsFromRecord = (
     events.push(call);
   }
   return events;
+};
+
+/**
+ * The results of a turn's earlier tool calls, extracted from this record's
+ * request history: ZCode echoes every prior tool result into
+ * request.messages as `{role: "tool", content, toolCallId, toolName,
+ * isError}` (camelCase — the provider body's own shape). Callers dedupe via
+ * seenToolResults: later records repeat earlier results verbatim. The final
+ * calls of a session have no follow-up request, so they legitimately stay
+ * without a result.
+ */
+export const toolResultsFromRecord = (
+  record: unknown,
+  sessionId: string,
+  seenToolResults: Set<string>,
+): ToolResultEvent[] => {
+  if (!isObject(record) || record.type !== "model_io") return [];
+  const messages =
+    isObject(record.request) && Array.isArray(record.request.messages)
+      ? record.request.messages
+      : [];
+  const results: ToolResultEvent[] = [];
+  for (const message of messages) {
+    if (!isObject(message) || message.role !== "tool") continue;
+    if (
+      !isNonEmptyString(message.toolCallId) ||
+      seenToolResults.has(message.toolCallId)
+    ) {
+      continue;
+    }
+    seenToolResults.add(message.toolCallId);
+    const result: ToolResultEvent = {
+      ...envelope("zcode", sessionId, recordTime(record)),
+      kind: "tool",
+      event: "result",
+      tool_call_id: message.toolCallId,
+      tool: isNonEmptyString(message.toolName) ? message.toolName : "unknown",
+      ok: message.isError !== true,
+    };
+    if (message.isError === true) {
+      const detail = contentToText(message.content).replace(/\s+/g, " ").trim();
+      result.error = detail ? detail.slice(0, 500) : "failed";
+    }
+    results.push(result);
+  }
+  return results;
 };

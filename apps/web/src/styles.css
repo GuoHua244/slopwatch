@@ -205,6 +205,14 @@ h2 {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.assistant-msg {
+  margin: 8px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .row {
   display: flex;
   gap: 10px;

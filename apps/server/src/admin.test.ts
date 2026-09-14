@@ -95,6 +95,7 @@ const memStore = () => {
     clearSetting: async () => {},
     listSettings: async () => ({}),
     backfillTokenTotals: async () => 0,
+    backfillResponseText: async () => 0,
     listRollups: async () => ({
       totals: [],
       model_totals: [],
@@ -232,6 +233,7 @@ const memStore = () => {
     reviewFor: async () => null,
     addComment: async () => null,
     listComments: async () => [],
+    deleteComment: async () => false,
     isDri: async () => false,
     health: async () => ({
       sessions,

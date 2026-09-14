@@ -222,6 +222,13 @@ export const eventsFromRecord = (
           const usage = mapUsage(message.usage);
           if (Object.keys(usage).length > 0) modelRequest.usage = usage;
         }
+        const prose = blocksOf(message.content)
+          .filter((block) => block.type === "text")
+          .map((block) => (isNonEmptyString(block.text) ? block.text : ""))
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (prose) modelRequest.response_text = prose.slice(0, 2000);
         events.push(modelRequest);
 
         for (const block of blocksOf(message.content)) {

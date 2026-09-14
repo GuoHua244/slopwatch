@@ -16,11 +16,16 @@ const EMPTY: RollupsSnapshot = {
 /**
  * Decision 18: poll GET /rollups and hand back the snapshot. `days` sizes the
  * daily window (the leaderboard works off all-time totals + 8 days: today and
- * its trailing week); the hourly window covers the sparkline. Callers pass
- * literals, so the primitive deps only change when the window really does.
+ * its trailing week); the hourly window covers the sparkline; `teamId`
+ * scopes the whole snapshot server-side to one team. Callers pass literals,
+ * so the primitive deps only change when the window really does.
  */
 export const useRollups = (
-  { days, hours }: { days?: number; hours?: number } = {},
+  {
+    days,
+    hours,
+    teamId,
+  }: { days?: number; hours?: number; teamId?: string } = {},
   intervalMs = 5000,
 ): RollupsSnapshot => {
   const [snapshot, setSnapshot] = useState<RollupsSnapshot>(EMPTY);
@@ -28,7 +33,7 @@ export const useRollups = (
 
   useEffect(() => {
     mounted.current = true;
-    const params = { days, hours };
+    const params = { days, hours, teamId };
     const poller = createPoller({
       intervalMs,
       tick: async () => {
@@ -45,7 +50,7 @@ export const useRollups = (
       mounted.current = false;
       poller.stop();
     };
-  }, [intervalMs, days, hours]);
+  }, [intervalMs, days, hours, teamId]);
 
   return snapshot;
 };

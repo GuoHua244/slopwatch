@@ -1,5 +1,5 @@
-import type { SessionSummary } from "../api";
 import { useRollups } from "../hooks/useRollups";
+import { useSessions } from "../hooks/useSessions";
 import { clock, fmtCost, fmtDelta, fmtTokens } from "../lib/format";
 import { aggregateLeaderboard, dailyCostSeries } from "../lib/leaderboard";
 
@@ -7,20 +7,16 @@ import { aggregateLeaderboard, dailyCostSeries } from "../lib/leaderboard";
  * The leaderboard drill-down (decision 18): one developer's 30-day spend
  * chart plus their sessions. Sessions deep-link into the existing session
  * detail; everything is derived from the same rollups snapshot the table
- * uses, so no extra endpoints were needed.
+ * uses, so no extra endpoints were needed. The view fetches its own org-wide
+ * session list — the sessions page's team filter must not shrink it.
  */
-export const DeveloperDetail = ({
-  userId,
-  sessions,
-}: {
-  userId: string;
-  sessions: SessionSummary[];
-}) => {
+export const DeveloperDetail = ({ userId }: { userId: string }) => {
   // 31 local days of spend need hourly rows (v2 decision 27): daily display
   // re-buckets UTC hours into the viewer's calendar days.
   const rollups = useRollups({ days: 31, hours: 31 * 24 });
+  const feed = useSessions(null);
   const row =
-    aggregateLeaderboard(sessions, rollups).find(
+    aggregateLeaderboard(feed.sessions, rollups).find(
       (candidate) => candidate.userId === userId,
     ) ?? null;
   const series = dailyCostSeries(
@@ -28,9 +24,11 @@ export const DeveloperDetail = ({
     31,
   );
   const maxDay = Math.max(...series.map((d) => d.cost), 0);
-  const userSessions = sessions
+  const lastSeen = (s: (typeof feed.sessions)[number]): string =>
+    s.last_event_at ?? s.first_seen_at;
+  const userSessions = feed.sessions
     .filter((s) => (s.user_id ?? "(unknown)") === userId)
-    .sort((a, b) => b.first_seen_at.localeCompare(a.first_seen_at));
+    .sort((a, b) => lastSeen(b).localeCompare(lastSeen(a)));
 
   return (
     <div className="developer">

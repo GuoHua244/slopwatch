@@ -31,6 +31,7 @@ import {
   metaFromRecord,
   sessionIdFromFilename,
   taskPreviewFromRecord,
+  toolResultsFromRecord,
   turnStartFromRecord,
 } from "./normalizer";
 
@@ -119,8 +120,10 @@ const resetIdle = () => {
 };
 
 // ZCode rollout records carry everything worth capturing: title/task preview,
-// the first record of each turn, and the model-request/tool-call stream.
+// the first record of each turn, the model-request/tool-call stream, and the
+// results of earlier tool calls (echoed in the next request's messages).
 const seenTurns = new Set<string>();
+const seenToolResults = new Set<string>();
 let taskPreviewSent = false;
 const adapter: RecordAdapter = {
   driftFromRecord,
@@ -138,6 +141,7 @@ const adapter: RecordAdapter = {
     const turnStart = turnStartFromRecord(record, sessionId, seenTurns);
     if (turnStart) events.push(turnStart);
     events.push(...eventsFromRecord(record, sessionId));
+    events.push(...toolResultsFromRecord(record, sessionId, seenToolResults));
     return events;
   },
 };

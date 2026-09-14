@@ -10,6 +10,14 @@ export const PRICING: PricingEntry[] = [
   // Z.ai public list prices, checked 2026-09-09 via web search.
   { match: "GLM-5.3-Flash", input: 0.15, output: 0.5, cacheRead: 0.03 },
   { match: "GLM-5.3", input: 1.4, output: 4.4 },
+  // Anthropic public list prices (claude-code listener traffic).
+  {
+    match: "claude-sonnet-4-5",
+    input: 3,
+    output: 15,
+    cacheRead: 0.3,
+    cacheWrite: 3.75,
+  },
 ];
 
 export type PricingEntry = {
@@ -20,11 +28,20 @@ export type PricingEntry = {
   cacheWrite?: number;
 };
 
-/** Exact model-name match first, then the first matching family prefix. */
-export const priceFor = (model: string): PricingEntry | null =>
-  PRICING.find((p) => p.match === model) ??
-  PRICING.find((p) => model.startsWith(p.match)) ??
-  null;
+/**
+ * Exact model-name match first, then the first matching family prefix —
+ * case-insensitively, because the same model id arrives in varying case
+ * across record types ("GLM-5.3" vs the sidecar's "glm-5.3"); a case miss
+ * used to poison the whole all-time cost sum as "unpriced".
+ */
+export const priceFor = (model: string): PricingEntry | null => {
+  const key = model.toLowerCase();
+  return (
+    PRICING.find((p) => p.match.toLowerCase() === key) ??
+    PRICING.find((p) => key.startsWith(p.match.toLowerCase())) ??
+    null
+  );
+};
 
 export const estimateCost = (usage: TokenUsage, price: PricingEntry): number =>
   ((usage.input_tokens ?? 0) * price.input +

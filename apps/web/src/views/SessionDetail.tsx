@@ -14,7 +14,15 @@ import { UsageView } from "./UsageView";
 type Tab = "turns" | "raw";
 
 /** One review note line: who, where it points, what they said. */
-const CommentLine = ({ comment }: { comment: CommentRow }) => (
+const CommentLine = ({
+  comment,
+  mine,
+  onDelete,
+}: {
+  comment: CommentRow;
+  mine: boolean;
+  onDelete: () => void;
+}) => (
   <div className="comment">
     <span className="kind">{comment.turn_id ? "turn" : "session"}</span>
     <span className="detail">
@@ -23,6 +31,14 @@ const CommentLine = ({ comment }: { comment: CommentRow }) => (
     </span>
     <span className="meta">
       {comment.author_id} · {clock(comment.created_at)}
+      {mine && (
+        <>
+          {" · "}
+          <button className="link" onClick={onDelete}>
+            delete
+          </button>
+        </>
+      )}
     </span>
   </div>
 );
@@ -60,6 +76,13 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
     run(async () => {
       await review.api.addComment(summary.session_id, null, note.trim());
       setNote("");
+      review.refresh();
+    });
+  };
+  const deleteNote = (commentId: number) => {
+    if (!confirm("delete this note?")) return;
+    run(async () => {
+      await review.api.deleteComment(summary.session_id, commentId);
       review.refresh();
     });
   };
@@ -195,12 +218,15 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
           timeline={timeline}
           comments={review.comments}
           canComment={review.me !== null}
+          currentUser={review.me?.user ?? null}
+          sessionEnded={ended}
           onComment={(turnId, body) =>
             run(async () => {
               await review.api.addComment(summary.session_id, turnId, body);
               review.refresh();
             })
           }
+          onDeleteComment={deleteNote}
         />
       ) : (
         <RawEventsView events={stream.events} />
@@ -214,7 +240,12 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
           <p className="empty">no session-level notes</p>
         ) : (
           sessionComments.map((c) => (
-            <CommentLine key={c.comment_id} comment={c} />
+            <CommentLine
+              key={c.comment_id}
+              comment={c}
+              mine={review.me?.user === c.author_id}
+              onDelete={() => deleteNote(c.comment_id)}
+            />
           ))
         )}
         {review.me !== null ? (

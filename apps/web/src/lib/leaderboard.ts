@@ -16,6 +16,8 @@ export type LeaderboardRow = {
   lastActiveAt: string;
   /** UTC-today spend; null while a contributing model is unpriced. */
   todayCostUsd: number | null;
+  /** Model requests in the local today — activity regardless of pricing. */
+  todayRequests: number;
   /** (today − trailing 7-day mean) / mean; null with no baseline or unpriced. */
   deltaVsWeek: number | null;
   /** Hourly spend over the last 24 UTC hours, oldest → newest. */
@@ -92,15 +94,19 @@ const hourlyTrend = (rows: ModelRollupRow[], now: Date): number[] => {
   });
 };
 
-/** Priced spend + unpriced flag per LOCAL day, from UTC-hour rollup rows. */
+/** Priced spend + request count + unpriced flag per LOCAL day, from UTC-hour rollup rows. */
 const localDaySpend = (
   rows: ModelRollupRow[],
-): Map<string, { cost: number; unpriced: boolean }> => {
-  const byDay = new Map<string, { cost: number; unpriced: boolean }>();
+): Map<string, { cost: number; unpriced: boolean; requests: number }> => {
+  const byDay = new Map<
+    string,
+    { cost: number; unpriced: boolean; requests: number }
+  >();
   for (const row of rows) {
     const price = priceFor(row.model);
     const day = localDayOfHourBucket(row.bucket);
-    const entry = byDay.get(day) ?? { cost: 0, unpriced: false };
+    const entry = byDay.get(day) ?? { cost: 0, unpriced: false, requests: 0 };
+    entry.requests += row.model_requests;
     if (price === null) entry.unpriced = true;
     else entry.cost += estimateCost(rowUsage(row), price);
     byDay.set(day, entry);
@@ -168,11 +174,18 @@ export const aggregateLeaderboard = (
     const key = s.user_id ?? "(unknown)";
     let row = facts.get(key);
     if (!row) {
-      row = { sessions: 0, lastActiveAt: s.first_seen_at, agents: new Map() };
+      row = {
+        sessions: 0,
+        lastActiveAt: s.last_event_at ?? s.first_seen_at,
+        agents: new Map(),
+      };
       facts.set(key, row);
     }
     row.sessions += 1;
-    if (s.first_seen_at > row.lastActiveAt) row.lastActiveAt = s.first_seen_at;
+    // last_event_at is the real "still working" signal; first_seen_at is the
+    // fallback for sessions that have not ingested anything yet.
+    const seen = s.last_event_at ?? s.first_seen_at;
+    if (seen > row.lastActiveAt) row.lastActiveAt = seen;
     row.agents.set(s.agent, (row.agents.get(s.agent) ?? 0) + 1);
   }
 
@@ -220,6 +233,7 @@ export const aggregateLeaderboard = (
         topAgent: topAgent(facts.get(userId)?.agents ?? new Map()),
         lastActiveAt: facts.get(userId)?.lastActiveAt ?? "",
         todayCostUsd: todayCost,
+        todayRequests: todayEntry?.requests ?? 0,
         deltaVsWeek:
           todayCost !== null && trailingPriced && trailingMean > 0
             ? (todayCost - trailingMean) / trailingMean

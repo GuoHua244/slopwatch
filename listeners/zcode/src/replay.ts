@@ -22,6 +22,7 @@ import {
   metaFromRecord,
   resolveSessionId,
   taskPreviewFromRecord,
+  toolResultsFromRecord,
   turnStartFromRecord,
 } from "./normalizer";
 
@@ -78,6 +79,7 @@ const sessionEnd: SessionEndEvent = {
 const events: NormalEvent[] = [sessionStart];
 let taskPreviewSent = false;
 const seenTurns = new Set<string>();
+const seenToolResults = new Set<string>();
 for (const line of unparsable) {
   events.push(
     quarantineLine({
@@ -112,6 +114,7 @@ for (const record of records) {
   const turnStart = turnStartFromRecord(record, sessionId, seenTurns);
   if (turnStart) events.push(turnStart);
   events.push(...eventsFromRecord(record, sessionId));
+  events.push(...toolResultsFromRecord(record, sessionId, seenToolResults));
 }
 events.push(sessionEnd);
 console.log(JSON.stringify(events, null, 2));

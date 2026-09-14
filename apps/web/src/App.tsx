@@ -125,21 +125,74 @@ export const App = () => {
         setAuth({ status: "anon" });
       });
   }, []);
-  const [teamFilter, setTeamFilter] = useState<string>("all");
-  const feed = useSessions(teamFilter === "all" ? null : teamFilter);
   const { route, sessionId, userId } = useHashRoute();
+
+  // The data hooks stay unmounted until the token verifies — polling before a
+  // token exists only produced 401 noise and a "connection lost" flash right
+  // after sign-in.
+  const signedIn = auth.status === "signed-in";
+  if (!signedIn && route !== "admin") {
+    return auth.status === "checking" ? (
+      <p className="empty">verifying saved token…</p>
+    ) : (
+      <SignInGate
+        onSignedIn={(user) => setAuth({ status: "signed-in", user })}
+      />
+    );
+  }
+  return (
+    <Dashboard
+      user={signedIn ? auth.user : null}
+      route={route}
+      sessionId={sessionId}
+      userId={userId}
+      poll={signedIn}
+      onSignOut={
+        signedIn
+          ? () => {
+              clearToken();
+              setAuth({ status: "anon" });
+            }
+          : undefined
+      }
+    />
+  );
+};
+
+/** Everything behind the gate: header, live feed, and the three routes. */
+const Dashboard = ({
+  user,
+  route,
+  sessionId,
+  userId,
+  poll,
+  onSignOut,
+}: {
+  user: string | null;
+  route: Route;
+  sessionId: string | null;
+  userId: string | null;
+  poll: boolean;
+  onSignOut?: () => void;
+}) => {
+  const [teamFilter, setTeamFilter] = useState<string>("all");
+  const feed = useSessions(
+    teamFilter === "all" ? null : teamFilter,
+    5000,
+    poll,
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Team-scoped DRI filter: the roster feeds the sessions dropdown; fetched
   // once per sign-in.
   const [teams, setTeams] = useState<TeamInfo[]>([]);
   useEffect(() => {
-    if (auth.status !== "signed-in") return;
+    if (!poll) return;
     void createApi()
       .teams()
       .then(setTeams)
       .catch(() => {});
-  }, [auth.status]);
+  }, [poll]);
 
   // Follow the newest session until the operator picks one.
   useEffect(() => {
@@ -151,18 +204,6 @@ export const App = () => {
   useEffect(() => {
     if (sessionId !== null) setSelectedId(sessionId);
   }, [sessionId]);
-
-  // Until /me verifies the saved token, render the gate (or a verifying note) —
-  // never the dashboard; the admin route keeps its own separate gate.
-  if (auth.status !== "signed-in" && route !== "admin") {
-    return auth.status === "checking" ? (
-      <p className="empty">verifying saved token…</p>
-    ) : (
-      <SignInGate
-        onSignedIn={(user) => setAuth({ status: "signed-in", user })}
-      />
-    );
-  }
 
   const selected =
     feed.sessions.find((s) => s.session_id === selectedId) ?? null;
@@ -185,23 +226,19 @@ export const App = () => {
             admin
           </a>
         </nav>
-        <span className={`status ${feed.status}`}>
-          {feed.status === "live"
-            ? `live · ${feed.lastUpdated ? clock(feed.lastUpdated.toISOString()) : ""}`
-            : feed.status === "down"
-              ? `connection lost${feed.lastError ? ` · ${feed.lastError}` : ""}`
-              : "connecting…"}
-        </span>
-        {auth.status === "signed-in" && (
+        {poll && (
+          <span className={`status ${feed.status}`}>
+            {feed.status === "live"
+              ? `live · ${feed.lastUpdated ? clock(feed.lastUpdated.toISOString()) : ""}`
+              : feed.status === "down"
+                ? `connection lost${feed.lastError ? ` · ${feed.lastError}` : ""}`
+                : "connecting…"}
+          </span>
+        )}
+        {user !== null && onSignOut && (
           <span className="dim">
-            {auth.user}
-            <button
-              className="signout"
-              onClick={() => {
-                clearToken();
-                setAuth({ status: "anon" });
-              }}
-            >
+            {user}
+            <button className="signout" onClick={onSignOut}>
               sign out
             </button>
           </span>
@@ -211,11 +248,11 @@ export const App = () => {
         <main className="full">
           <section>
             {userId ? (
-              <DeveloperDetail userId={userId} sessions={feed.sessions} />
+              <DeveloperDetail userId={userId} />
             ) : (
               <>
                 <h2>developer leaderboard</h2>
-                <LeaderboardView sessions={feed.sessions} />
+                <LeaderboardView />
               </>
             )}
           </section>

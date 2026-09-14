@@ -207,6 +207,14 @@ describe("NormalEvent v0 schema", () => {
     expect(isNormalEvent({ ...toolCall, tool_call_id: "" })).toBe(false);
     expect(isNormalEvent({ ...toolResult, ok: "yes" as never })).toBe(false);
   });
+
+  test("model_request response_text is optional but must be non-empty", () => {
+    expect(isNormalEvent(modelRequest)).toBe(true);
+    expect(
+      isNormalEvent({ ...modelRequest, response_text: "Fixed — tests pass." }),
+    ).toBe(true);
+    expect(isNormalEvent({ ...modelRequest, response_text: "" })).toBe(false);
+  });
 });
 
 describe("sendEvents", () => {

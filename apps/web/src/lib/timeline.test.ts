@@ -101,6 +101,35 @@ describe("buildTimeline", () => {
     expect(timeline.turns[0]!.userMessage).toBeUndefined();
   });
 
+  test("keeps the last non-empty response text as the turn's answer", () => {
+    const timeline = buildTimeline([
+      ev({
+        kind: "model_request",
+        provider: "p",
+        model: "m",
+        duration_ms: 5,
+        turn_id: "turn_1",
+        response_text: "checking the failing test",
+      }),
+      ev({
+        kind: "model_request",
+        provider: "p",
+        model: "m",
+        duration_ms: 5,
+        turn_id: "turn_1",
+      }),
+      ev({
+        kind: "model_request",
+        provider: "p",
+        model: "m",
+        duration_ms: 5,
+        turn_id: "turn_1",
+        response_text: "fixed — all tests pass",
+      }),
+    ]);
+    expect(timeline.turns[0]!.assistantMessage).toBe("fixed — all tests pass");
+  });
+
   test("files tool events under the turn of the latest preceding request", () => {
     const timeline = buildTimeline([
       ev({

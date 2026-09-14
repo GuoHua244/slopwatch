@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import type { SessionSummary } from "../api";
 import { useRollups } from "../hooks/useRollups";
+import { useSessions } from "../hooks/useSessions";
 import { useTeams } from "../hooks/useTeams";
 import { clock, fmtCost, fmtDelta, fmtTokens } from "../lib/format";
 import { aggregateLeaderboard, type LeaderboardRow } from "../lib/leaderboard";
@@ -10,6 +10,7 @@ import { sparklinePoints } from "../lib/sparkline";
 const rank = (index: number): string => String(index + 1).padStart(2, "0");
 
 type SortKey =
+  | "todayCostUsd"
   | "costUsd"
   | "sessions"
   | "turns"
@@ -31,6 +32,13 @@ type Column = {
 const COLUMNS: Column[] = [
   { key: "team", label: "team" },
   { key: "userId", label: "developer", sortable: true },
+  {
+    key: "todayCostUsd",
+    label: "today",
+    title: "Local-today spend estimate — the default rank (decision 3)",
+    num: true,
+    sortable: true,
+  },
   { key: "sessions", label: "sessions", num: true, sortable: true },
   { key: "turns", label: "turns", num: true, sortable: true },
   { key: "requests", label: "requests", num: true, sortable: true },
@@ -52,7 +60,7 @@ const COLUMNS: Column[] = [
   {
     key: "costUsd",
     label: "cost est.",
-    title: "Public list-price estimate — plan billing may differ",
+    title: "All-time public list-price estimate — plan billing may differ",
     num: true,
     sortable: true,
   },
@@ -60,7 +68,7 @@ const COLUMNS: Column[] = [
 
 type RowWithTeam = LeaderboardRow & { teamName: string | null };
 
-/** Sort value for a sortable column; costUsd is the only nullable one and sorts as 0. */
+/** Sort value for a sortable column; the cost keys are nullable and sort as 0. */
 const sortValue = (row: RowWithTeam, key: SortKey): string | number =>
   (row[key] ?? 0) as string | number;
 
@@ -78,6 +86,11 @@ const CELL_RENDERERS: Record<
     </td>
   ),
   userId: (row) => <td>{row.userId}</td>,
+  todayCostUsd: (row) => (
+    <td className="num">
+      {row.todayCostUsd === null ? "—" : fmtCost(row.todayCostUsd)}
+    </td>
+  ),
   sessions: (row) => <td className="num">{row.sessions}</td>,
   turns: (row) => <td className="num">{row.turns}</td>,
   requests: (row) => <td className="num">{row.requests}</td>,
@@ -129,24 +142,28 @@ const CELL_RENDERERS: Record<
 };
 
 /**
- * The developer leaderboard, served from the decision-18 rollups — one
- * rollups call plus the session list. The team column groups users by their
- * current team (decision 23) with an "unassigned" bucket; the numeric headers
- * sort and the team dropdown filters (v2 decision 27). Clicking a row drills
- * into that developer.
+ * The developer leaderboard, served from the decision-18 rollups. The view
+ * owns its reads: the team dropdown scopes the rollups AND the session facts
+ * server-side, so every column in a row shares one denominator and the
+ * sessions page's filter never leaks in (v2 decision 27). Today spend is the
+ * default rank (decision 3); numeric headers sort, "active today only" hides
+ * everyone with no requests in the local today. Clicking a row drills into
+ * that developer.
  */
-export const LeaderboardView = ({
-  sessions,
-}: {
-  sessions: SessionSummary[];
-}) => {
-  const rollups = useRollups({ days: 8, hours: 8 * 24 });
-  const teams = useTeams();
-  const [sortKey, setSortKey] = useState<SortKey>("costUsd");
-  const [sortDesc, setSortDesc] = useState(true);
+export const LeaderboardView = () => {
   const [teamFilter, setTeamFilter] = useState<string>("all");
+  const [activeOnly, setActiveOnly] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>("todayCostUsd");
+  const [sortDesc, setSortDesc] = useState(true);
+  const rollups = useRollups({
+    days: 8,
+    hours: 8 * 24,
+    ...(teamFilter === "all" ? {} : { teamId: teamFilter }),
+  });
+  const feed = useSessions(teamFilter === "all" ? null : teamFilter);
+  const teams = useTeams();
 
-  const rows = aggregateLeaderboard(sessions, rollups);
+  const rows = aggregateLeaderboard(feed.sessions, rollups);
   const teamByUser = useMemo(() => {
     const map = new Map<string, string>();
     for (const team of teams) {
@@ -161,13 +178,7 @@ export const LeaderboardView = ({
   }));
 
   const visible = rowsWithTeam
-    .filter(
-      (row) =>
-        teamFilter === "all" ||
-        (teamFilter === "unassigned"
-          ? row.teamName === null
-          : row.teamName === teamFilter),
-    )
+    .filter((row) => !activeOnly || row.todayRequests > 0)
     .sort((a, b) => {
       const va = sortValue(a, sortKey);
       const vb = sortValue(b, sortKey);
@@ -180,7 +191,6 @@ export const LeaderboardView = ({
       return sortDesc ? -cmp : cmp;
     });
 
-  if (rows.length === 0) return <p className="empty">no sessions yet</p>;
   const maxCost = Math.max(...rowsWithTeam.map((row) => row.costUsd ?? 0), 0);
 
   const toggleSort = (key: SortKey): void => {
@@ -194,25 +204,45 @@ export const LeaderboardView = ({
   const sortMarker = (key: Column["key"]): string =>
     sortKey === key ? (sortDesc ? " ↓" : " ↑") : "";
 
+  const filterForm = (
+    <form className="admin-form" onSubmit={(e) => e.preventDefault()}>
+      <label className="dim">
+        team{" "}
+        <select
+          value={teamFilter}
+          onChange={(e) => setTeamFilter(e.target.value)}
+        >
+          <option value="all">all</option>
+          {teams.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+          <option value="unassigned">unassigned</option>
+        </select>
+      </label>
+      <label className="dim">
+        <input
+          type="checkbox"
+          checked={activeOnly}
+          onChange={(e) => setActiveOnly(e.target.checked)}
+        />{" "}
+        active today only
+      </label>
+    </form>
+  );
+
+  if (rows.length === 0)
+    return (
+      <>
+        {filterForm}
+        <p className="empty">no activity yet</p>
+      </>
+    );
+
   return (
     <>
-      <form className="admin-form" onSubmit={(e) => e.preventDefault()}>
-        <label className="dim">
-          team{" "}
-          <select
-            value={teamFilter}
-            onChange={(e) => setTeamFilter(e.target.value)}
-          >
-            <option value="all">all</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.name}>
-                {t.name}
-              </option>
-            ))}
-            <option value="unassigned">unassigned</option>
-          </select>
-        </label>
-      </form>
+      {filterForm}
       <table className="usage leaderboard">
         <thead>
           <tr>

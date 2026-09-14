@@ -188,13 +188,24 @@ const AdminHome = ({
   onSignOut,
 }: {
   api: AdminApi;
-  onSignOut: () => void;
+  /** Optional reason — a rejected token bounces back to the gate with it. */
+  onSignOut: (reason?: string) => void;
 }) => {
   const [tab, setTab] = useState<AdminTab>("users");
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = () => setRefreshKey((k) => k + 1);
   const health = usePolled(() => api.health(), refreshKey);
   const quarantine = usePolled(() => api.quarantine(50), refreshKey);
+
+  // A stored-but-stale token 401s on every panel; bounce to the gate with a
+  // recovery hint instead of leaving the operator staring at failures.
+  useEffect(() => {
+    if (health.error?.status === 401)
+      onSignOut(
+        "admin token was rejected — paste the current SLOPWATCH_ADMIN_TOKEN",
+      );
+  }, [health.error, onSignOut]);
+
   return (
     <section className="admin">
       <nav className="tabs">
@@ -228,7 +239,12 @@ const AdminHome = ({
         >
           health
         </button>
-        <button className="signout" onClick={onSignOut}>
+        <button
+          className="signout"
+          onClick={() => {
+            onSignOut();
+          }}
+        >
           sign out
         </button>
       </nav>
@@ -285,9 +301,10 @@ export const AdminView = () => {
   return (
     <AdminHome
       api={createAdminApi(() => token)}
-      onSignOut={() => {
+      onSignOut={(reason) => {
         localStorage.removeItem(TOKEN_KEY);
         setToken(null);
+        setGateError(reason ?? null);
       }}
     />
   );

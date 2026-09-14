@@ -77,6 +77,12 @@ export type ModelRequestEvent = Envelope & {
   turn_id?: string;
   usage?: TokenUsage;
   attempt?: number;
+  /**
+   * The assistant's prose in this response, when the source record carries
+   * one. Listener-truncated like turn:user_message — evidence of what the
+   * agent said, not just what it did.
+   */
+  response_text?: string;
 };
 
 export type ToolCallEvent = Envelope & {
@@ -270,6 +276,7 @@ export const isNormalEvent = (value: unknown): value is NormalEvent => {
       if (!isOptional(value.turn_id, isNonEmptyString)) return false;
       if (!isOptional(value.usage, isTokenUsage)) return false;
       if (!isOptional(value.attempt, isNonNegativeNumber)) return false;
+      if (!isOptional(value.response_text, isNonEmptyString)) return false;
       return true;
     }
     case "tool": {

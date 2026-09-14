@@ -267,6 +267,7 @@ export const createApp = ({
       // hourly ceiling = 31 days so the local-calendar-day charts (decision 27)
       // can re-bucket a full month of UTC hours
       const hours = windowParam(url.searchParams.get("hours"), 31 * 24, 24);
+      const teamId = url.searchParams.get("team_id") ?? undefined;
       const now = Date.now();
       const sinceDay = new Date(now - (days - 1) * 86_400_000)
         .toISOString()
@@ -274,7 +275,7 @@ export const createApp = ({
       const sinceHour = new Date(now - (hours - 1) * 3_600_000)
         .toISOString()
         .slice(0, 13);
-      return json(200, await store.listRollups(sinceDay, sinceHour));
+      return json(200, await store.listRollups(sinceDay, sinceHour, teamId));
     }
 
     // v2 decision 23: the roster, for the leaderboard's team grouping.
@@ -340,6 +341,19 @@ export const createApp = ({
           ? json(404, { error: "no such session" })
           : json(201, { comment });
       }
+    }
+
+    // A note belongs to its author: they — and only they — may retract it.
+    const commentMatch = url.pathname.match(
+      /^\/sessions\/([^/]+)\/comments\/(\d+)$/,
+    );
+    if (commentMatch && req.method === "DELETE") {
+      const user = await resolveUser();
+      if (user === null) return json(401, { error: "unauthorized" });
+      const deleted = await store.deleteComment(Number(commentMatch[2]), user);
+      return deleted
+        ? new Response(null, { status: 204 })
+        : json(404, { error: "no such note" });
     }
 
     // --- Admin plane (decision 13). Disabled unless SLOPWATCH_ADMIN_TOKEN is set.

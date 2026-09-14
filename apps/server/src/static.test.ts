@@ -30,6 +30,9 @@ const refusingStore = (): Store => ({
   pruneRaw: () => {
     throw new Error("store must not be touched");
   },
+  backfillResponseText: () => {
+    throw new Error("store must not be touched");
+  },
   backfillTokenTotals: () => {
     throw new Error("store must not be touched");
   },
@@ -81,6 +84,9 @@ const refusingStore = (): Store => ({
     throw new Error("store must not be touched");
   },
   listComments: async () => [],
+  deleteComment: () => {
+    throw new Error("store must not be touched");
+  },
   isDri: async () => false,
   setUserDri: async () => null,
   health: () => {

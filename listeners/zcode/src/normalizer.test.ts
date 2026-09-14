@@ -6,6 +6,7 @@ import {
   resolveSessionId,
   sessionIdFromFilename,
   taskPreviewFromRecord,
+  toolResultsFromRecord,
   turnStartFromRecord,
 } from "./normalizer";
 import {
@@ -68,6 +69,7 @@ describe("eventsFromRecord", () => {
         cache_read_tokens: 0,
         cache_write_tokens: 0,
       });
+      expect(mr!.response_text).toBe("Spawning a subagent for that.");
     }
   });
 
@@ -95,8 +97,58 @@ describe("eventsFromRecord", () => {
     expect(evts).toHaveLength(1);
     if (evts[0]!.kind === "model_request") {
       expect(evts[0]!.turn_id).toBeUndefined();
+      // a title payload is metadata, not agent speech
+      expect(evts[0]!.response_text).toBeUndefined();
       expect(isNormalEvent(evts[0])).toBe(true);
     }
+  });
+
+  test("tool results ride on the next request's messages, deduped", () => {
+    const recordWithResult = {
+      ...mainTurnRecord,
+      requestId: "req_demo-0003",
+      response: { ...mainTurnRecord.response, toolCalls: undefined },
+      request: {
+        messages: [
+          { role: "user", content: "go" },
+          {
+            role: "tool",
+            toolCallId: "tc_demo-1",
+            toolName: "Agent",
+            content: "subagent finished",
+          },
+          {
+            role: "tool",
+            toolCallId: "tc_bad",
+            toolName: "Bash",
+            content: "exit 1",
+            isError: true,
+          },
+        ],
+      },
+    };
+    const seen = new Set<string>();
+    const first = toolResultsFromRecord(recordWithResult, "sess_demo", seen);
+    expect(first).toHaveLength(2);
+    expect(isNormalEvent(first[0]!)).toBe(true);
+    expect(first[0]).toMatchObject({
+      kind: "tool",
+      event: "result",
+      tool_call_id: "tc_demo-1",
+      tool: "Agent",
+      ok: true,
+    });
+    expect(first[1]).toMatchObject({
+      kind: "tool",
+      event: "result",
+      tool_call_id: "tc_bad",
+      tool: "Bash",
+      ok: false,
+      error: "exit 1",
+    });
+    // the same results echo in every later record — emitted once only
+    const again = toolResultsFromRecord(recordWithResult, "sess_demo", seen);
+    expect(again).toHaveLength(0);
   });
 
   test("skips garbage and non-model_io record types", () => {

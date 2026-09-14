@@ -14,10 +14,13 @@ export type SessionFeed = {
 const api = createApi();
 
 /** Decision 4: poll GET /sessions every ~5s and on tab focus. A non-null
- * teamId narrows the poll to one team (or the "unassigned" bucket). */
+ * teamId narrows the poll to one team (or the "unassigned" bucket). When
+ * `enabled` is false (pre-auth) nothing polls and the feed stays empty —
+ * no anonymous 401 noise. */
 export const useSessions = (
   teamId: string | null = null,
   intervalMs = 5000,
+  enabled = true,
 ): SessionFeed => {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [status, setStatus] = useState<FeedStatus>("connecting");
@@ -26,6 +29,7 @@ export const useSessions = (
   const mounted = useRef(true);
 
   useEffect(() => {
+    if (!enabled) return () => {};
     mounted.current = true;
     const poller = createPoller({
       intervalMs,
@@ -49,7 +53,7 @@ export const useSessions = (
       mounted.current = false;
       poller.stop();
     };
-  }, [intervalMs, teamId]);
+  }, [intervalMs, teamId, enabled]);
 
   return { sessions, status, lastError, lastUpdated };
 };

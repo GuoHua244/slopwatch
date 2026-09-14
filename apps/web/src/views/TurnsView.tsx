@@ -58,13 +58,31 @@ const NoteInput = ({ placeholder, onComment }: NoteInputProps) => {
   );
 };
 
-const TurnComments = ({ comments }: { comments: CommentRow[] }) => (
+type TurnCommentsProps = {
+  comments: CommentRow[];
+  currentUser?: string | null;
+  onDelete?: (commentId: number) => void;
+};
+
+const TurnComments = ({
+  comments,
+  currentUser,
+  onDelete,
+}: TurnCommentsProps) => (
   <div className="comments">
     {comments.map((c) => (
       <div key={c.comment_id} className="comment">
         <span className="detail">{c.body}</span>
         <span className="meta">
           {c.author_id} · {clock(c.created_at)}
+          {currentUser === c.author_id && onDelete && (
+            <>
+              {" · "}
+              <button className="link" onClick={() => onDelete(c.comment_id)}>
+                delete
+              </button>
+            </>
+          )}
         </span>
       </div>
     ))}
@@ -76,6 +94,11 @@ type TurnsViewProps = {
   comments?: CommentRow[];
   canComment?: boolean;
   onComment?: (turnId: string, body: string) => void;
+  /** The signed-in user — only their own notes show the delete affordance. */
+  currentUser?: string | null;
+  onDeleteComment?: (commentId: number) => void;
+  /** Ended sessions cannot produce more results: "running…" would be a lie. */
+  sessionEnded?: boolean;
 };
 
 export const TurnsView = ({
@@ -83,6 +106,9 @@ export const TurnsView = ({
   comments = [],
   canComment = false,
   onComment = () => {},
+  currentUser = null,
+  onDeleteComment,
+  sessionEnded = false,
 }: TurnsViewProps) => {
   const { turns, orphans } = timeline;
   if (
@@ -118,6 +144,8 @@ export const TurnsView = ({
           )}
           <TurnComments
             comments={comments.filter((c) => c.turn_id === turn.turnId)}
+            currentUser={currentUser}
+            onDelete={onDeleteComment}
           />
           {turn.modelRequests.map((request, i) => (
             <div key={i} className="row">
@@ -143,10 +171,17 @@ export const TurnsView = ({
                   ? tool.result.ok === false
                     ? ` · failed${tool.result.error ? `: ${tool.result.error}` : ""}`
                     : ` · ok${tool.result.duration_ms !== undefined ? ` · ${fmtDuration(tool.result.duration_ms)}` : ""}`
-                  : " · running…"}
+                  : sessionEnded
+                    ? " · no result captured"
+                    : " · running…"}
               </span>
             </div>
           ))}
+          {turn.assistantMessage && (
+            <blockquote className="assistant-msg">
+              {turn.assistantMessage}
+            </blockquote>
+          )}
         </article>
       ))}
       {(orphans.requests.length > 0 || orphans.tools.length > 0) && (

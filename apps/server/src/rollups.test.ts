@@ -263,6 +263,63 @@ describe.skipIf(!dbTests())("rollup persistence", () => {
     ).toBeUndefined();
   });
 
+  test("the team scope narrows every window through users.team_id", async () => {
+    await ensure();
+    const team = await store!.createTeam(
+      `team-${crypto.randomUUID().slice(0, 8)}`,
+      null,
+    );
+    const member = freshUser();
+    const outsider = freshUser();
+    await store!.createUser(member, null);
+    await store!.createUser(outsider, null);
+    await store!.setUserTeam(member, team.id);
+
+    const usage = { input_tokens: 10, output_tokens: 1 };
+    const seed = async (user: string): Promise<void> => {
+      const sid = `sess_roll-${crypto.randomUUID().slice(0, 8)}`;
+      await store!.appendEvents(
+        [
+          sessionStart(sid, CROSS_TZ),
+          turnStart(sid, CROSS_TZ),
+          toolCall(sid, CROSS_TZ),
+          modelRequest(sid, CROSS_TZ, "m1", usage),
+        ],
+        user,
+      );
+    };
+    await seed(member);
+    await seed(outsider);
+
+    const scoped = await store!.listRollups(
+      "2000-01-01",
+      "2000-01-01T00",
+      team.id,
+    );
+    expect(scoped.totals.map((r) => r.user_id)).toEqual([member]);
+    expect(scoped.model_totals.map((r) => r.user_id)).toEqual([member]);
+    expect(scoped.daily.map((r) => r.user_id)).toEqual([member]);
+    expect(scoped.user_hourly.map((r) => r.user_id)).toEqual([member]);
+    expect(scoped.model_daily.map((r) => r.user_id)).toEqual([member]);
+    expect(scoped.model_hourly.map((r) => r.user_id)).toEqual([member]);
+
+    // "unassigned" = users with no team; teamless users from other runs may
+    // also appear, so filter to this test's pair.
+    const unassigned = await store!.listRollups(
+      "2000-01-01",
+      "2000-01-01T00",
+      "unassigned",
+    );
+    const inPair = (r: { user_id: string }): boolean =>
+      r.user_id === member || r.user_id === outsider;
+    expect(
+      unassigned.model_totals.filter(inPair).map((r) => r.user_id),
+    ).toEqual([outsider]);
+
+    const everyone = await store!.listRollups("2000-01-01", "2000-01-01T00");
+    expect(everyone.model_totals.filter(inPair)).toHaveLength(2);
+  });
+
   test("backfillRollups rebuilds every table from the events table", async () => {
     await ensure();
     const user = freshUser();

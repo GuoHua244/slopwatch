@@ -32,6 +32,12 @@ describe("pricing", () => {
     expect(priceFor("GLM-5.3")?.input).toBe(1.4);
   });
 
+  test("matching is case-insensitive — the sidecar reports lowercase ids", () => {
+    expect(priceFor("glm-5.3-flash")?.input).toBe(0.15);
+    expect(priceFor("glm-5.3")?.input).toBe(1.4);
+    expect(priceFor("Claude-Sonnet-4-5")?.output).toBe(15);
+  });
+
   test("unknown models have no price", () => {
     expect(priceFor("mystery-model")).toBeNull();
   });
