@@ -57,7 +57,13 @@ export const usePolled = <T,>(
   return { data, error };
 };
 
-const TokenGate = ({ onSave }: { onSave: (token: string) => void }) => {
+const TokenGate = ({
+  error,
+  onSave,
+}: {
+  error: string | null;
+  onSave: (token: string) => void;
+}) => {
   const [value, setValue] = useState("");
   return (
     <section className="admin">
@@ -66,6 +72,7 @@ const TokenGate = ({ onSave }: { onSave: (token: string) => void }) => {
         Enter the operator token (<code>SLOPWATCH_ADMIN_TOKEN</code>). It is
         kept in this browser's localStorage only.
       </p>
+      {error && <p className="banner-error">{error}</p>}
       <form
         className="admin-form"
         onSubmit={(e) => {
@@ -253,12 +260,25 @@ export const AdminView = () => {
   const [token, setToken] = useState<string | null>(() =>
     localStorage.getItem(TOKEN_KEY),
   );
+  const [gateError, setGateError] = useState<string | null>(null);
   if (token === null)
     return (
       <TokenGate
+        error={gateError}
         onSave={(t) => {
-          localStorage.setItem(TOKEN_KEY, t);
-          setToken(t);
+          // Verify against a cheap admin endpoint before trusting the gate —
+          // an unverified save leaves every panel 401-ing afterwards.
+          createAdminApi(() => t)
+            .health()
+            .then(() => {
+              localStorage.setItem(TOKEN_KEY, t);
+              setToken(t);
+            })
+            .catch(() =>
+              setGateError(
+                "that token did not verify — paste SLOPWATCH_ADMIN_TOKEN and try again",
+              ),
+            );
         }}
       />
     );
