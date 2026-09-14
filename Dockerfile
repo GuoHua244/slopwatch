@@ -15,6 +15,7 @@ COPY packages/config/package.json packages/config/
 COPY packages/events/package.json packages/events/
 COPY packages/summary/package.json packages/summary/
 COPY packages/buffer/package.json packages/buffer/
+COPY packages/listener-shared/package.json packages/listener-shared/
 RUN bun install --frozen-lockfile
 
 # Typecheck needs every package's sources (tsgo runs per workspace), but the
@@ -22,11 +23,15 @@ RUN bun install --frozen-lockfile
 # developer/CI loop — the listener E2E specs spawn real processes and are not
 # container-friendly.
 COPY . .
-RUN bun run --filter '@slopwatch/web' build \
-  && rm -rf node_modules listeners packages
+RUN bun run --filter '@slopwatch/web' build
 
 FROM oven/bun:1-slim
 WORKDIR /app
+# Bun workspaces hoist deps to the root node_modules; @slopwatch/events is
+# symlinked from there into packages/, so ship both alongside the server.
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/packages/events ./packages/events
 COPY --from=build /app/apps/server ./apps/server
 COPY --from=build /app/apps/web/dist ./apps/web/dist
 ENV NODE_ENV=production

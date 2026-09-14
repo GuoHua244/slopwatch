@@ -37,7 +37,9 @@ services:
       POSTGRES_PASSWORD: slopwatch
       POSTGRES_DB: slopwatch
     volumes:
-      - db-data:/var/lib/postgresql/data
+      # postgres 18+ layout: mount /var/lib/postgresql so pg_upgrade can work
+      # across major versions inside the same mount (docker-library issue #37).
+      - db-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U slopwatch"]
       interval: 5s
