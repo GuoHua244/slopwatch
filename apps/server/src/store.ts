@@ -318,6 +318,17 @@ ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_input_tokens BIGINT NOT NULL
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_output_tokens BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_cache_read_tokens BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_cache_write_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_event_at TIMESTAMPTZ;
+-- Backfill once: a session's last activity is its newest event, falling back
+-- to first_seen_at for rows that never carried events. Idempotent — the WHERE
+-- keeps it off every row the ingest path already keeps fresh.
+UPDATE sessions s
+SET last_event_at = COALESCE(
+  (SELECT max(e.received_at) FROM events e WHERE e.session_id = s.session_id),
+  s.first_seen_at
+)
+WHERE s.last_event_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS users (
   name       TEXT PRIMARY KEY,
   email      TEXT,
@@ -625,7 +636,7 @@ export const createPgStore = (databaseUrl: string): Store => {
           );
           // row lock on the session serializes concurrent writers
           const { rows } = await client.query(
-            "UPDATE sessions SET last_seq = last_seq + $2 WHERE session_id = $1 RETURNING last_seq",
+            "UPDATE sessions SET last_seq = last_seq + $2, last_event_at = now() WHERE session_id = $1 RETURNING last_seq",
             [sessionId, group.length],
           );
           let seq = Number(rows[0]!.last_seq) - group.length;
@@ -750,7 +761,7 @@ export const createPgStore = (databaseUrl: string): Store => {
             ? "WHERE team_id IS NULL"
             : "WHERE team_id = $1";
       const { rows } = await pool.query(
-        `SELECT session_id, agent, user_id, team_id, first_seen_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions ${filter} ORDER BY first_seen_at DESC`,
+        `SELECT session_id, agent, user_id, team_id, first_seen_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions ${filter} ORDER BY COALESCE(last_event_at, first_seen_at) DESC`,
         teamId !== undefined && teamId !== "unassigned" ? [teamId] : [],
       );
       return rows.map((r) => ({
