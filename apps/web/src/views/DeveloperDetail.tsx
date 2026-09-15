@@ -35,7 +35,7 @@ export const DeveloperDetail = ({ userId }: { userId: string }) => {
       <p>
         <a href="#/leaderboard">← leaderboard</a>
       </p>
-      <h2>{userId}</h2>
+      <h2 className="page-title">{userId}</h2>
       {row === null ? (
         <p className="empty">no activity recorded for this developer</p>
       ) : (

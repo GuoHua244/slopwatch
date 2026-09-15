@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
 import type { CommentRow } from "../api";
 import type { SessionSummary } from "../api";
-import { clearToken, saveToken, storedToken } from "../auth";
 import { useEventStream } from "../hooks/useEventStream";
 import { useReview } from "../hooks/useReview";
 import { sessionTotals } from "../lib/aggregate";
 import { clock, errorMessage, fmtTokens } from "../lib/format";
 import { buildTimeline, isEnded } from "../lib/timeline";
+import { BackToTop } from "./BackToTop";
 import { RawEventsView } from "./RawEventsView";
 import { TurnsView } from "./TurnsView";
 import { UsageView } from "./UsageView";
@@ -60,13 +60,6 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
   const totals = stream.events.length > 0 ? sessionTotals(stream.events) : null;
 
   const sessionComments = review.comments.filter((c) => c.turn_id === null);
-  const identify = () => {
-    const token = prompt("Your Slopwatch user token (sw_…)");
-    if (token && token.trim()) {
-      saveToken(token.trim());
-      review.refresh();
-    }
-  };
   const run = (fn: () => Promise<void>) => {
     setActionError(null);
     fn().catch((e: unknown) => setActionError(errorMessage(e)));
@@ -89,21 +82,25 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
 
   return (
     <div>
-      <h2>{summary.title ?? "(untitled session)"}</h2>
-      <p className={`state ${ended ? "down" : "live"}`}>
-        {ended ? `ended · ${lastEnd?.reason ?? "unknown"}` : "running"}
-        {stream.status === "down" ? " · stream connection lost" : ""}
-      </p>
-      <div className="review-bar">
-        <span className={`state ${review.review ? "live" : ""}`}>
-          {review.review
-            ? `reviewed · ${review.review.reviewer_id} · ${clock(review.review.reviewed_at)}`
-            : "unreviewed"}
+      <div className="sess-head">
+        <h2 className="sess-title">{summary.title ?? "(untitled session)"}</h2>
+        <span className={`chip ${ended ? "chip-down" : "chip-live"}`}>
+          {ended ? `ended · ${lastEnd?.reason ?? "unknown"}` : "running"}
         </span>
-        {!storedToken() ? (
-          <button onClick={identify}>identify to review…</button>
-        ) : review.me === null ? (
-          <button onClick={identify}>token rejected — retry…</button>
+        {stream.status === "down" && (
+          <span className="chip chip-down">stream connection lost</span>
+        )}
+      </div>
+      <div className="review-bar">
+        <span className={`chip ${review.review ? "chip-live" : ""}`}>
+          {review.review
+            ? `Reviewed by ${review.review.reviewer_id} · ${clock(review.review.reviewed_at)}`
+            : "Unreviewed"}
+        </span>
+        {review.me === null ? (
+          <span className="dim">
+            Sign in from the Me page to review and leave notes.
+          </span>
         ) : review.me.is_dri ? (
           review.review ? (
             <button
@@ -114,10 +111,11 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
                 })
               }
             >
-              unmark reviewed
+              Unmark reviewed
             </button>
           ) : (
             <button
+              className="primary"
               onClick={() =>
                 run(async () => {
                   await review.api.markReviewed(summary.session_id);
@@ -125,51 +123,40 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
                 })
               }
             >
-              mark reviewed
+              Mark reviewed
             </button>
           )
         ) : null}
-        {review.me !== null && !review.me.is_dri && (
-          <button
-            className="link"
-            onClick={() => {
-              clearToken();
-              review.refresh();
-            }}
-          >
-            sign out ({review.me.user})
-          </button>
-        )}
-        {actionError && <span className="meta">{actionError}</span>}
+        {actionError && <span className="dim">{actionError}</span>}
       </div>
       <dl className="facts">
         <div>
-          <dt>session</dt>
+          <dt>Session</dt>
           <dd className="mono">{summary.session_id}</dd>
         </div>
         <div>
-          <dt>agent</dt>
+          <dt>Agent</dt>
           <dd>{summary.agent}</dd>
         </div>
         <div>
-          <dt>user</dt>
+          <dt>User</dt>
           <dd>{summary.user_id ?? "?"}</dd>
         </div>
         <div>
-          <dt>first seen</dt>
-          <dd>{clock(summary.first_seen_at)}</dd>
+          <dt>First seen</dt>
+          <dd className="mono">{clock(summary.first_seen_at)}</dd>
         </div>
         <div>
-          <dt>tokens</dt>
+          <dt>Tokens</dt>
           <dd className="mono">
             {totals
-              ? `${fmtTokens(totals.inputTokens)}in · ${fmtTokens(totals.outputTokens)}out · ${fmtTokens(totals.cacheReadTokens)}cache-read`
-              : `${fmtTokens(summary.total_input_tokens)}in · ${fmtTokens(summary.total_output_tokens)}out · ${fmtTokens(summary.total_cache_read_tokens)}cache-read`}
+              ? `${fmtTokens(totals.inputTokens)} in · ${fmtTokens(totals.outputTokens)} out · ${fmtTokens(totals.cacheReadTokens)} cache-read`
+              : `${fmtTokens(summary.total_input_tokens)} in · ${fmtTokens(summary.total_output_tokens)} out · ${fmtTokens(summary.total_cache_read_tokens)} cache-read`}
           </dd>
         </div>
         {start && (
-          <div>
-            <dt>environment</dt>
+          <div className="wide">
+            <dt>Environment</dt>
             <dd>
               {start.hostname} · {start.cwd}
               {start.git_remote ? ` · ${start.git_remote}` : ""}
@@ -178,7 +165,7 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
         )}
         {summary.task_preview && (
           <div className="wide">
-            <dt>task</dt>
+            <dt>Task</dt>
             <dd>{summary.task_preview}</dd>
           </div>
         )}
@@ -186,31 +173,43 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
       {latestSummary && (
         <section className="machine-summary">
           <h3>
-            machine-generated summary{" "}
-            <span className="meta">· {latestSummary.model}</span>
+            Machine summary
+            <span className="mono dim">· {latestSummary.model}</span>
           </h3>
           <p>{latestSummary.body}</p>
-          <p className="meta">
-            produced on the developer's machine with their own LLM key — a
-            reading aid, never evidence; review the event stream
+          <p className="dim" style={{ fontSize: "11.5px" }}>
+            Produced on the developer's machine with their own LLM key — a
+            reading aid, never evidence; review the event stream.
           </p>
         </section>
       )}
-      <UsageView events={stream.events} />
-      <nav className="tabs">
+      {totals && totals.requests > 0 && (
+        <div className="panel-card">
+          <div className="card-head">
+            <h3 className="card-title">Usage</h3>
+            <span className="dim" style={{ fontSize: "12px" }}>
+              per-model request totals
+            </span>
+          </div>
+          <UsageView events={stream.events} />
+        </div>
+      )}
+      <nav className="segment">
         <button
           type="button"
           className={tab === "turns" ? "active" : ""}
           onClick={() => setTab("turns")}
         >
-          turns ({timeline.turns.length})
+          Turns
+          <span className="seg-count">{timeline.turns.length}</span>
         </button>
         <button
           type="button"
           className={tab === "raw" ? "active" : ""}
           onClick={() => setTab("raw")}
         >
-          raw events ({stream.events.length})
+          Raw events
+          <span className="seg-count">{stream.events.length}</span>
         </button>
       </nav>
       {tab === "turns" ? (
@@ -232,12 +231,12 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
         <RawEventsView events={stream.events} />
       )}
       <section className="review-notes">
-        <h3>review notes</h3>
+        <h3>Review notes</h3>
         {review.status === "down" && (
-          <p className="meta">notes unavailable · {review.lastError}</p>
+          <p className="dim">Notes unavailable · {review.lastError}</p>
         )}
         {sessionComments.length === 0 ? (
-          <p className="empty">no session-level notes</p>
+          <p className="dim">No session-level notes yet.</p>
         ) : (
           sessionComments.map((c) => (
             <CommentLine
@@ -259,14 +258,17 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="add a session-level review note"
+              placeholder="Add a session-level review note"
             />
-            <button type="submit">add</button>
+            <button className="primary" type="submit">
+              Add note
+            </button>
           </form>
         ) : (
-          <p className="meta">identify above to leave review notes</p>
+          <p className="dim">Sign in from the Me page to leave notes.</p>
         )}
       </section>
+      <BackToTop />
     </div>
   );
 };

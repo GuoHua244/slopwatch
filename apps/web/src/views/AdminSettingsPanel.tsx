@@ -10,10 +10,11 @@ type Props = {
 };
 
 /**
- * Operator settings (v2 decision 25, broadened): the org webhook that
- * receives a message whenever a session finishes, and the global raw-payload
- * retention default. Values shown are the server's effective configuration —
- * stored overrides merged over boot defaults — so what you see is what runs.
+ * Operator settings (v2 decision 25, broadened), written for the lead who
+ * just wants the outcome: "my team chat hears about finished sessions" and
+ * "old raw payloads go away". Values shown are the server's effective
+ * configuration — stored overrides merged over boot defaults — so what you
+ * see is what runs.
  */
 export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
   const {
@@ -52,7 +53,7 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
     e.preventDefault();
     if (!url.trim()) {
       setFormError(
-        "webhook URL is required — untick enabled to switch pushes off",
+        "A webhook URL is required — untick enabled to switch pushes off.",
       );
       return;
     }
@@ -65,7 +66,7 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
       setUrlDraft(null);
       setFormatDraft(null);
       setEnabledDraft(null);
-      setNotice("webhook settings saved");
+      setNotice("Webhook settings saved.");
     });
   };
 
@@ -73,116 +74,131 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
     e.preventDefault();
     const days = Number(ttl.trim());
     if (!Number.isInteger(days) || days < 1) {
-      setFormError("retention must be a positive number of days");
+      setFormError("Retention must be a positive number of days.");
       return;
     }
     void run(async () => {
       await api.updateSettings({ raw_ttl_days: String(days) });
       setTtlDraft(null);
-      setNotice("retention saved — the next prune run applies it");
+      setNotice("Retention saved — the next prune run applies it.");
     });
   };
 
   const sendTest = () =>
     void run(async () => {
       await api.testWebhook();
-      setNotice("test delivery sent — check the chat");
+      setNotice("Test delivery sent — check the chat.");
     });
 
   return (
     <>
-      <h2>settings</h2>
+      <h2 className="page-title">Settings</h2>
+      <p className="page-sub">
+        Two org-wide behaviors. Everything applies immediately on save.
+      </p>
       {error && <p className="banner-error">{error.message}</p>}
 
-      <section className="settings-section">
-        <h3>session webhook</h3>
-        <p className="dim">
-          One org-level incoming-webhook bot. Every finished session pushes a
-          single message (user, agent, session id). Delivery never blocks
-          capture — a dead webhook only logs on the server.
-        </p>
-        <p className={`state ${webhookLive ? "live" : ""}`}>
-          {webhookLive
-            ? "enabled — pushes on every finished session"
-            : url.trim()
-              ? "disabled — the URL is kept but nothing is pushed"
-              : "not configured"}
-        </p>
-        <form className="settings-form" onSubmit={saveWebhook}>
-          <label className="field wide">
-            <span>webhook URL</span>
-            <input
-              value={url}
-              onChange={(e) => setUrlDraft(e.target.value)}
-              placeholder="https://hooks.example.com/…"
-            />
-          </label>
-          <label className="field">
-            <span>message format</span>
-            <select
-              value={format}
-              onChange={(e) => setFormatDraft(e.target.value)}
-            >
-              <option value="slack">slack-style {"{text}"}</option>
-              <option value="feishu">feishu</option>
-              <option value="dingtalk">dingtalk</option>
-            </select>
-          </label>
-          <label className="field checkbox">
-            <span>delivery</span>
-            <span className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) =>
-                  setEnabledDraft(e.target.checked ? "true" : "false")
-                }
-              />
-              enabled
+      <div className="settings-col">
+        <section className="settings-card">
+          <div className="card-head">
+            <h3 className="card-title">Session notifications</h3>
+            <span className={`settings-status ${webhookLive ? "live" : "off"}`}>
+              {webhookLive
+                ? "Enabled"
+                : url.trim()
+                  ? "Disabled"
+                  : "Not configured"}
             </span>
-          </label>
-          <div className="field actions">
-            <button type="submit">save</button>
-            <button
-              type="button"
-              disabled={url.trim().length === 0}
-              title={
-                url.trim().length === 0
-                  ? "configure a URL first"
-                  : "push a real test message to the webhook"
-              }
-              onClick={sendTest}
-            >
-              send test
-            </button>
           </div>
-        </form>
-      </section>
+          <p className="card-lede">
+            Post one message to your team chat whenever a session ends, so the
+            team sees what the agents did without opening the dashboard.
+            Delivery never blocks capture — a dead webhook only logs on the
+            server.
+          </p>
+          <form className="settings-form" onSubmit={saveWebhook}>
+            <label className="field wide">
+              <span>Webhook URL</span>
+              <input
+                value={url}
+                onChange={(e) => setUrlDraft(e.target.value)}
+                placeholder="https://hooks.example.com/…"
+              />
+            </label>
+            <label className="field">
+              <span>Message format</span>
+              <select
+                value={format}
+                onChange={(e) => setFormatDraft(e.target.value)}
+              >
+                <option value="slack">Slack-style {"{text}"}</option>
+                <option value="feishu">Feishu</option>
+                <option value="dingtalk">DingTalk</option>
+              </select>
+            </label>
+            <label className="field checkbox">
+              <span>Delivery</span>
+              <span className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={enabled}
+                  onChange={(e) =>
+                    setEnabledDraft(e.target.checked ? "true" : "false")
+                  }
+                />
+                Enabled
+              </span>
+            </label>
+            <div className="field actions">
+              <button className="primary" type="submit">
+                Save
+              </button>
+              <button
+                type="button"
+                disabled={url.trim().length === 0}
+                title={
+                  url.trim().length === 0
+                    ? "Configure a URL first"
+                    : "Push a real test message to the webhook"
+                }
+                onClick={sendTest}
+              >
+                Send test
+              </button>
+            </div>
+          </form>
+        </section>
 
-      <section className="settings-section">
-        <h3>raw payload retention</h3>
-        <p className="dim">
-          Days before captured raw payloads are expired (and archived first when
-          object storage is configured). A team's own retention override wins
-          over this global default; clearing the stored value falls back to the
-          deployment's boot default.
-        </p>
-        <form className="settings-form" onSubmit={saveTtl}>
-          <label className="field">
-            <span>global default (days)</span>
-            <input
-              type="number"
-              min={1}
-              step={1}
-              value={ttl}
-              onChange={(e) => setTtlDraft(e.target.value)}
-            />
-          </label>
-          <div className="field actions">
-            <button type="submit">save</button>
+        <section className="settings-card">
+          <div className="card-head">
+            <h3 className="card-title">Data retention</h3>
+            <span className="settings-status off">global default</span>
           </div>
-        </form>
-      </section>
+          <p className="card-lede">
+            How many days raw prompts and responses are kept before expiry. A
+            team's own retention override wins over this default; when object
+            storage is configured, payloads are archived before they are
+            removed.
+          </p>
+          <form className="settings-form" onSubmit={saveTtl}>
+            <label className="field">
+              <span>Keep raw payloads for (days)</span>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={ttl}
+                onChange={(e) => setTtlDraft(e.target.value)}
+              />
+            </label>
+            <div className="field actions">
+              <button className="primary" type="submit">
+                Save
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
 
       {formError && <p className="banner-error">{formError}</p>}
       {notice && <p className="dim">{notice}</p>}

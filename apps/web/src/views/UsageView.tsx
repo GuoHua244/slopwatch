@@ -11,14 +11,17 @@ export const UsageView = ({ events }: { events: StoredEvent[] }) => {
     <table className="usage">
       <thead>
         <tr>
-          <th>model</th>
-          <th>req</th>
-          <th>in</th>
-          <th>out</th>
-          <th>cache rd</th>
-          <th>duration</th>
-          <th title="Public list-price estimate — plan billing may differ">
-            cost est.
+          <th>Model</th>
+          <th className="num">Req</th>
+          <th className="num">In</th>
+          <th className="num">Out</th>
+          <th className="num">Cache rd</th>
+          <th className="num">Duration</th>
+          <th
+            className="num"
+            title="Public list-price estimate — plan billing may differ"
+          >
+            Cost est.
           </th>
         </tr>
       </thead>

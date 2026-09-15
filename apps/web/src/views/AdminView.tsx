@@ -64,83 +64,86 @@ const HealthPanel = ({
   quarantine: { data: QuarantineRow[] | null; error: PollError | null };
 }) => (
   <>
-    <h2>system health</h2>
+    <h2 className="page-title">System health</h2>
+    <p className="page-sub">
+      Capture pipeline at a glance — counts, freshness, and what the listeners
+      could not parse.
+    </p>
     {health.error && <p className="banner-error">{health.error.message}</p>}
     {health.data && (
-      <dl className="facts">
-        <div>
-          <dt>database</dt>
-          <dd className="state live">ok</dd>
+      <div className="kpi-row">
+        <div className="kpi-card">
+          <div className="kpi-value live">{health.data.sessions}</div>
+          <div className="kpi-label">Sessions</div>
         </div>
-        <div>
-          <dt>sessions</dt>
-          <dd>{health.data.sessions}</dd>
+        <div className="kpi-card">
+          <div className="kpi-value">{health.data.events}</div>
+          <div className="kpi-label">Events captured</div>
         </div>
-        <div>
-          <dt>events</dt>
-          <dd>{health.data.events}</dd>
-        </div>
-        <div>
-          <dt>last event received</dt>
-          <dd>
+        <div className="kpi-card">
+          <div className="kpi-value">
             {health.data.last_event_at ? clock(health.data.last_event_at) : "—"}
-          </dd>
+          </div>
+          <div className="kpi-label">Last event received</div>
         </div>
-        <div>
-          <dt>quarantined lines</dt>
-          <dd>
-            {health.data.quarantine_total}
-            {health.data.quarantine_24h > 0
-              ? ` (${health.data.quarantine_24h} in 24h)`
-              : ""}
-          </dd>
+        <div className="kpi-card">
+          <div
+            className={`kpi-value ${health.data.quarantine_24h > 0 ? "down" : "live"}`}
+          >
+            {health.data.quarantine_24h}
+          </div>
+          <div className="kpi-label">
+            Quarantined (24h of {health.data.quarantine_total})
+          </div>
         </div>
-        <div>
-          <dt>last quarantine</dt>
-          <dd>
-            {health.data.last_quarantine_at
-              ? clock(health.data.last_quarantine_at)
-              : "—"}
-          </dd>
-        </div>
-      </dl>
+      </div>
     )}
-    <h3>recent quarantined lines</h3>
-    <p className="dim">
-      Listener lines that could not be normalized (v2 schema-drift quarantine).
-      A nonzero count means an agent wrote something the adapter does not know.
-    </p>
-    {quarantine.error && (
-      <p className="banner-error">{quarantine.error.message}</p>
-    )}
-    {quarantine.data !== null &&
-      (quarantine.data.length === 0 ? (
-        <p className="dim">nothing quarantined — capture is clean</p>
-      ) : (
-        <table className="data">
-          <thead>
-            <tr>
-              <th>when</th>
-              <th>agent</th>
-              <th>reason</th>
-              <th>line (capped)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {quarantine.data.map((row) => (
-              <tr key={row.seq}>
-                <td>{clock(row.created_at)}</td>
-                <td>{row.agent}</td>
-                <td>
-                  {row.reason}
-                  <span className="dim"> · {row.session_id}</span>
-                </td>
-                <td className="raw-line">{row.line.slice(0, 240)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ))}
+    <div className="panel-card">
+      <div className="card-head">
+        <h3 className="card-title">Recent quarantined lines</h3>
+        <span className="settings-status off">schema drift</span>
+      </div>
+      <p className="card-lede">
+        Listener lines that could not be normalized. A nonzero count means an
+        agent wrote something the adapter does not know yet — capture otherwise
+        continues.
+      </p>
+      {quarantine.error && (
+        <p className="banner-error">{quarantine.error.message}</p>
+      )}
+      {quarantine.data !== null &&
+        (quarantine.data.length === 0 ? (
+          <p className="dim">Nothing quarantined — capture is clean.</p>
+        ) : (
+          <div className="table-scroll" style={{ marginTop: 12 }}>
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Agent</th>
+                  <th>Reason</th>
+                  <th>Line (capped)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quarantine.data.map((row) => (
+                  <tr key={row.seq}>
+                    <td className="mono" style={{ whiteSpace: "nowrap" }}>
+                      {clock(row.created_at)}
+                    </td>
+                    <td>{row.agent}</td>
+                    <td>
+                      {row.reason}
+                      <span className="dim"> · {row.session_id}</span>
+                    </td>
+                    <td className="raw-line">{row.line.slice(0, 240)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+    </div>
   </>
 );
 
@@ -163,37 +166,37 @@ const AdminHome = ({ api }: { api: AdminApi }) => {
         : null;
 
   return (
-    <section className="admin">
+    <div>
       <nav className="tabs">
         <button
           className={tab === "users" ? "active" : ""}
           onClick={() => setTab("users")}
         >
-          users
+          Users
         </button>
         <button
           className={tab === "teams" ? "active" : ""}
           onClick={() => setTab("teams")}
         >
-          teams
+          Teams
         </button>
         <button
           className={tab === "sessions" ? "active" : ""}
           onClick={() => setTab("sessions")}
         >
-          sessions
+          Sessions
         </button>
         <button
           className={tab === "settings" ? "active" : ""}
           onClick={() => setTab("settings")}
         >
-          settings
+          Settings
         </button>
         <button
           className={tab === "health" ? "active" : ""}
           onClick={() => setTab("health")}
         >
-          health
+          Health
         </button>
       </nav>
       {gate ? (
@@ -217,7 +220,7 @@ const AdminHome = ({ api }: { api: AdminApi }) => {
       ) : (
         <HealthPanel health={health} quarantine={quarantine} />
       )}
-    </section>
+    </div>
   );
 };
 

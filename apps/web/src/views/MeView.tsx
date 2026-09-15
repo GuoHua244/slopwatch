@@ -39,8 +39,8 @@ const sumTokens = (rows: ModelRollupRow[]): number =>
 
 /**
  * The "me" page (profile): everything that belongs to the signed-in user —
- * identity, role, team, their lifetime footprint, and sign-out — in one view.
- * The token lives in this browser's localStorage only; signing out clears it.
+ * identity, role, team, their lifetime footprint, and the one sign-out — in
+ * one view. Every identity/auth affordance in the product lives here.
  */
 export const MeView = ({ onSignOut }: { onSignOut: () => void }) => {
   const [me, setMe] = useState<MeInfo | null>(null);
@@ -54,7 +54,7 @@ export const MeView = ({ onSignOut }: { onSignOut: () => void }) => {
   }, []);
 
   if (error) return <p className="banner-error">{error}</p>;
-  if (me === null) return <p className="empty">loading…</p>;
+  if (me === null) return <p className="empty">Loading…</p>;
 
   const cost = costEstimate(me.usage.model_totals);
   const unpriced = me.usage.model_totals.some(
@@ -62,109 +62,105 @@ export const MeView = ({ onSignOut }: { onSignOut: () => void }) => {
   );
 
   return (
-    <section className="admin me">
-      <h2>my profile</h2>
-      <dl className="facts">
-        <div>
-          <dt>name</dt>
-          <dd>{me.user}</dd>
-        </div>
-        <div>
-          <dt>email</dt>
-          <dd>{me.email ?? "—"}</dd>
-        </div>
-        <div>
-          <dt>role</dt>
-          <dd className={me.role === "admin" ? "cell-live" : undefined}>
-            {me.role}
-          </dd>
-        </div>
-        <div>
-          <dt>team</dt>
-          <dd>{me.team_name ?? "unassigned"}</dd>
-        </div>
-        <div>
-          <dt>reviewer (dri)</dt>
-          <dd>{me.is_dri ? "yes" : "no"}</dd>
-        </div>
-        <div>
-          <dt>member since</dt>
-          <dd>
-            {me.created_at ? (
-              <>
-                {fmtDate(me.created_at)}
-                <span className="dim"> · {sinceDuration(me.created_at)}</span>
-              </>
-            ) : (
-              "—"
-            )}
-          </dd>
-        </div>
-      </dl>
+    <>
+      <h2 className="page-title">My profile</h2>
+      <p className="page-sub">Your identity, footprint, and account.</p>
 
-      <h2>my usage</h2>
-      <dl className="facts">
-        <div>
-          <dt>sessions</dt>
-          <dd>{me.usage.sessions}</dd>
+      <div className="panel-card">
+        <div className="profile-head">
+          <span className="avatar-lg">{me.user.slice(0, 1).toUpperCase()}</span>
+          <div>
+            <div className="profile-name">
+              {me.user}{" "}
+              {me.role === "admin" && <span className="role-chip">admin</span>}
+            </div>
+            <div className="profile-sub">
+              {me.email ?? "no email on file"} · team{" "}
+              {me.team_name ?? "unassigned"} · reviewer (DRI):{" "}
+              {me.is_dri ? "yes" : "no"}
+            </div>
+            <div className="profile-sub">
+              Member since {me.created_at ? fmtDate(me.created_at) : "—"}
+              {me.created_at ? ` · ${sinceDuration(me.created_at)}` : ""}
+            </div>
+          </div>
         </div>
-        <div>
-          <dt>turns</dt>
-          <dd>{me.usage.turns}</dd>
-        </div>
-        <div>
-          <dt>tool calls</dt>
-          <dd>{me.usage.tool_calls}</dd>
-        </div>
-        <div>
-          <dt>tokens (all time)</dt>
-          <dd>{fmtTokens(sumTokens(me.usage.model_totals))}</dd>
-        </div>
-        <div>
-          <dt>cost est.</dt>
-          <dd>
-            {cost === null ? (
-              <span title="some model traffic has no list price">—</span>
-            ) : (
-              fmtCost(cost)
-            )}
-            {unpriced && (
-              <span className="dim"> (unpriced models present)</span>
-            )}
-          </dd>
-        </div>
-        <div>
-          <dt>live since</dt>
-          <dd>
-            {me.usage.first_seen_at ? (
-              <>
-                {fmtDate(me.usage.first_seen_at)}
-                <span className="dim">
-                  {" "}
-                  · {sinceDuration(me.usage.first_seen_at)}
-                </span>
-              </>
-            ) : (
-              "—"
-            )}
-          </dd>
-        </div>
-        <div>
-          <dt>last activity</dt>
-          <dd>
-            {me.usage.last_seen_at ? fmtDate(me.usage.last_seen_at) : "—"}
-          </dd>
-        </div>
-      </dl>
+      </div>
 
-      <h2>account</h2>
-      <p className="dim">
-        Signed in with a user token kept in this browser's localStorage only.
-        Tokens are minted by an admin; ask one if you need a new one.
-      </p>
-      <button className="signout" onClick={onSignOut}>
-        sign out
-      </button>
-    </section>
+      <div className="panel-card">
+        <div className="card-head">
+          <h3 className="card-title">My usage</h3>
+          <span className="dim" style={{ fontSize: "12px" }}>
+            lifetime, all agents
+          </span>
+        </div>
+        <div className="kpi-row">
+          <div className="kpi-card">
+            <div className="kpi-value">{me.usage.sessions}</div>
+            <div className="kpi-label">Sessions</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-value">{me.usage.turns}</div>
+            <div className="kpi-label">Turns</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-value">{me.usage.tool_calls}</div>
+            <div className="kpi-label">Tool calls</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-value">
+              {fmtTokens(sumTokens(me.usage.model_totals))}
+            </div>
+            <div className="kpi-label">Tokens (all time)</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-value live">
+              {cost === null ? (
+                <span title="some model traffic has no list price">—</span>
+              ) : (
+                fmtCost(cost)
+              )}
+            </div>
+            <div className="kpi-label">
+              Cost est.{unpriced ? " (unpriced models present)" : ""}
+            </div>
+          </div>
+        </div>
+        <p className="dim" style={{ margin: "0 0 4px", fontSize: "12.5px" }}>
+          Live since{" "}
+          {me.usage.first_seen_at ? (
+            <>
+              {fmtDate(me.usage.first_seen_at)}
+              <span className="dim">
+                {" "}
+                · {sinceDuration(me.usage.first_seen_at)}
+              </span>
+            </>
+          ) : (
+            "—"
+          )}{" "}
+          · Last activity{" "}
+          {me.usage.last_seen_at ? fmtDate(me.usage.last_seen_at) : "—"}
+        </p>
+      </div>
+
+      <div className="panel-card">
+        <div className="card-head">
+          <h3 className="card-title">Account</h3>
+        </div>
+        <p className="card-lede">
+          You are signed in with a user token kept in this browser's
+          localStorage only. Tokens are minted by an admin on the Admin → Users
+          page; ask one if you need a new one.
+        </p>
+        <button
+          className="signout"
+          onClick={onSignOut}
+          style={{ marginTop: 14 }}
+        >
+          Sign out
+        </button>
+      </div>
+    </>
   );
 };

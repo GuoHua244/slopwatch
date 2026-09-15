@@ -70,45 +70,57 @@ const SignInGate = ({
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   return (
-    <section className="admin">
-      <h2>sign in</h2>
-      <p className="dim">
-        Paste your Slopwatch user token — the same one your listener uses. It is
-        kept in this browser's localStorage only.
-      </p>
-      <form
-        className="admin-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const token = value.trim();
-          if (!token) return;
-          setChecking(true);
-          setError(null);
-          void createReviewApi(() => token)
-            .me()
-            .then((info) => {
-              saveToken(token);
-              onSignedIn(info.user, info.role);
-            })
-            .catch(() => {
-              setError("that token did not verify — check it and try again");
-            })
-            .finally(() => setChecking(false));
-        }}
-      >
-        <input
-          type="password"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="user token"
-          autoFocus
-        />
-        <button type="submit" disabled={checking}>
-          {checking ? "checking…" : "sign in"}
-        </button>
-      </form>
-      {error && <p className="banner-error">{error}</p>}
-    </section>
+    <div className="auth-screen">
+      <div className="auth-rings" aria-hidden>
+        <span />
+        <span />
+      </div>
+      <div className="auth-card">
+        <div className="auth-brand">
+          <span className="pulse" />
+          slopwatch
+        </div>
+        <p className="auth-copy">
+          Every AI coding session your team runs — captured, reviewable, and
+          priced. Paste your user token to look inside.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const token = value.trim();
+            if (!token) return;
+            setChecking(true);
+            setError(null);
+            void createReviewApi(() => token)
+              .me()
+              .then((info) => {
+                saveToken(token);
+                onSignedIn(info.user, info.role);
+              })
+              .catch(() => {
+                setError("that token did not verify — check it and try again");
+              })
+              .finally(() => setChecking(false));
+          }}
+        >
+          <input
+            type="password"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="Paste your user token (sw_…)"
+            autoFocus
+          />
+          <button className="primary" type="submit" disabled={checking}>
+            {checking ? "Checking…" : "Sign in"}
+          </button>
+        </form>
+        {error && <p className="banner-error">{error}</p>}
+        <p className="auth-hint">
+          The token stays in this browser's localStorage only. Ask an admin to
+          mint one on the admin page if you don't have it.
+        </p>
+      </div>
+    </div>
   );
 };
 
@@ -121,15 +133,17 @@ type AuthState =
 /** Shown when a signed-in user opens a route their role may not see. */
 const NotAuthorized = ({ route }: { route: string }) => (
   <main className="full">
-    <section className="admin">
-      <h2>not authorized</h2>
-      <p className="dim">
-        The {route} area is for admins. Your account has the member role — ask
-        an admin to promote you if you need access.
-      </p>
-      <p>
-        <a href="#/sessions">back to sessions</a>
-      </p>
+    <section>
+      <div className="stage narrow">
+        <h2 className="page-title">Not authorized</h2>
+        <p className="page-sub">
+          The {route} area is for admins. Your account has the member role — ask
+          an admin to promote you if you need access.
+        </p>
+        <p>
+          <a href="#/sessions">Back to sessions</a>
+        </p>
+      </div>
     </section>
   </main>
 );
@@ -234,58 +248,84 @@ const Dashboard = ({
     if (sessionId !== null) setSelectedId(sessionId);
   }, [sessionId]);
 
+  // The browser tab mirrors the route so history entries read at a glance.
+  useEffect(() => {
+    const label =
+      route === "leaderboard"
+        ? userId
+          ? "Developer"
+          : "Leaderboard"
+        : route === "admin"
+          ? "Admin"
+          : route === "me"
+            ? "Me"
+            : "Sessions";
+    document.title = `${label} · slopwatch`;
+  }, [route, userId]);
+
   const selected =
     feed.sessions.find((s) => s.session_id === selectedId) ?? null;
 
   return (
     <>
       <header>
-        <h1>slopwatch</h1>
+        <a className="brand" href="#/sessions">
+          <span className="pulse" />
+          slopwatch
+        </a>
         <nav className="menu">
           <a href="#/sessions" className={route === "sessions" ? "active" : ""}>
-            sessions
+            Sessions
           </a>
           {isAdmin && (
             <a
               href="#/leaderboard"
               className={route === "leaderboard" ? "active" : ""}
             >
-              leaderboard
+              Leaderboard
             </a>
           )}
           {isAdmin && (
             <a href="#/admin" className={route === "admin" ? "active" : ""}>
-              admin
+              Admin
             </a>
           )}
           <a href="#/me" className={route === "me" ? "active" : ""}>
-            me
+            Me
           </a>
         </nav>
-        <span className={`status ${feed.status}`}>
+        <span className={`live-pill ${feed.status}`}>
+          {feed.status === "live" && <span className="pulse" />}
           {feed.status === "live"
             ? `live · ${feed.lastUpdated ? clock(feed.lastUpdated.toISOString()) : ""}`
             : feed.status === "down"
-              ? `connection lost${feed.lastError ? ` · ${feed.lastError}` : ""}`
+              ? "connection lost"
               : "connecting…"}
         </span>
-        {/* The name links to the profile — identity, usage, and sign-out live there. */}
-        <a className="header-user" href="#/me" title="my profile">
-          {user}
+        {/* The avatar chip is the human anchor — profile, usage, and sign-out live behind it. */}
+        <a className="user-chip" href="#/me" title="My profile">
+          <span className="avatar">{user.slice(0, 1).toUpperCase()}</span>
+          <span className="chip-name">{user}</span>
         </a>
       </header>
       {route === "leaderboard" ? (
         isAdmin ? (
           <main className="full">
             <section>
-              {userId ? (
-                <DeveloperDetail userId={userId} />
-              ) : (
-                <>
-                  <h2>developer leaderboard</h2>
-                  <LeaderboardView />
-                </>
-              )}
+              <div className="stage">
+                {userId ? (
+                  <DeveloperDetail userId={userId} />
+                ) : (
+                  <>
+                    <h2 className="page-title">Developer leaderboard</h2>
+                    <p className="page-sub">
+                      Local-day spend ranks first; click a column header to
+                      re-sort, a row to open the developer's history.
+                    </p>
+                    <LeaderboardView />
+                  </>
+                )}
+              </div>
             </section>
           </main>
         ) : (
@@ -294,39 +334,65 @@ const Dashboard = ({
       ) : route === "admin" ? (
         isAdmin ? (
           <main className="full">
-            <AdminView />
+            <section>
+              <div className="stage">
+                <AdminView />
+              </div>
+            </section>
           </main>
         ) : (
           <NotAuthorized route="admin" />
         )
       ) : route === "me" ? (
         <main className="full">
-          <MeView onSignOut={onSignOut} />
+          <section>
+            <div className="stage narrow">
+              <MeView onSignOut={onSignOut} />
+            </div>
+          </section>
         </main>
       ) : (
         <main>
           <aside>
             {isAdmin && (
-              <form className="admin-form" onSubmit={(e) => e.preventDefault()}>
-                <label className="dim">
-                  team{" "}
+              <div className="rail-head">
+                <span className="rail-count">
+                  {feed.sessions.length}{" "}
+                  {feed.sessions.length === 1 ? "session" : "sessions"}
+                </span>
+                <label className="filter-pill">
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 12 12"
+                    fill="none"
+                    aria-hidden
+                  >
+                    <path
+                      d="M1.5 2.5h9L7.3 6.4v3.2L4.7 8.2V6.4L1.5 2.5Z"
+                      stroke="currentColor"
+                      strokeWidth="1.1"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
                   <select
                     value={teamFilter}
                     onChange={(e) => {
                       setTeamFilter(e.target.value);
                       setSelectedId(null);
                     }}
+                    aria-label="Filter sessions by team"
                   >
-                    <option value="all">all</option>
+                    <option value="all">All teams</option>
                     {teams.map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name}
                       </option>
                     ))}
-                    <option value="unassigned">unassigned</option>
+                    <option value="unassigned">Unassigned</option>
                   </select>
                 </label>
-              </form>
+              </div>
             )}
             <SessionList
               sessions={feed.sessions}
@@ -335,11 +401,15 @@ const Dashboard = ({
             />
           </aside>
           <section>
-            {selected ? (
-              <SessionDetail summary={selected} />
-            ) : (
-              <p className="empty">no sessions yet</p>
-            )}
+            <div className="stage">
+              {selected ? (
+                <SessionDetail summary={selected} />
+              ) : (
+                <p className="empty">
+                  No sessions yet — they appear here as agents work.
+                </p>
+              )}
+            </div>
           </section>
         </main>
       )}

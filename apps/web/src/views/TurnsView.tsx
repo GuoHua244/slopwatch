@@ -30,7 +30,15 @@ const NoteInput = ({ placeholder, onComment }: NoteInputProps) => {
           setOpen(true);
         }}
       >
-        note
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden>
+          <path
+            d="M5 1.2v7.6M1.2 5h7.6"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+          />
+        </svg>
+        Note
       </button>
     );
   return (
@@ -123,11 +131,9 @@ export const TurnsView = ({
       {turns.map((turn) => (
         <article key={turn.turnId} className="turn">
           <header className="turn-head">
-            <span className={`kind ${turn.userMessage ? "accent" : ""}`}>
-              turn {shortId(turn.turnId)}
-            </span>
+            <span className="turn-id">{shortId(turn.turnId)}</span>
             <span className="meta">
-              {turn.modelRequests.length} req · {turn.tools.length} tools
+              {turn.modelRequests.length} requests · {turn.tools.length} tools
               {turn.usage
                 ? ` · ${usage(turn.usage.input_tokens, turn.usage.output_tokens)}`
                 : ""}
@@ -150,9 +156,11 @@ export const TurnsView = ({
           {turn.modelRequests.map((request, i) => (
             <div key={i} className="row">
               <span className="kind">request</span>
-              <span className="detail">
-                {request.provider}/{request.model} ·{" "}
-                {fmtDuration(request.duration_ms)}
+              <span
+                className="detail"
+                title={`${request.provider}/${request.model}`}
+              >
+                {request.model} · {fmtDuration(request.duration_ms)}
                 {request.usage
                   ? ` · ${usage(request.usage.input_tokens, request.usage.output_tokens)}`
                   : ""}
@@ -195,9 +203,11 @@ export const TurnsView = ({
           {orphans.requests.map((request, i) => (
             <div key={i} className="row">
               <span className="kind">request</span>
-              <span className="detail">
-                {request.provider}/{request.model} ·{" "}
-                {fmtDuration(request.duration_ms)}
+              <span
+                className="detail"
+                title={`${request.provider}/${request.model}`}
+              >
+                {request.model} · {fmtDuration(request.duration_ms)}
               </span>
               <span className="meta">{clock(request.occurred_at)}</span>
             </div>
