@@ -41,6 +41,8 @@ jobs:
       DATABASE_URL: postgres://slopwatch:slopwatch@localhost:5432/slopwatch
       DATABASE_URL_TEST: postgres://slopwatch:slopwatch@localhost:5432/slopwatch_test
       SLOPWATCH_TOKENS: tester:acceptance-token
+      SLOPWATCH_ADMIN_TOKEN: acceptance-admin-token
+      ACCEPTANCE_ADMIN_TOKEN: acceptance-admin-token
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

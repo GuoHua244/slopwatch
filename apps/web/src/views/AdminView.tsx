@@ -9,6 +9,7 @@ import {
 import { storedToken } from "../auth";
 import { clock } from "../lib/format";
 import { createPoller } from "../lib/poller";
+import { AdminAuditPanel } from "./AdminAuditPanel";
 import { AdminSessionsPanel } from "./AdminSessionsPanel";
 import { AdminSettingsPanel } from "./AdminSettingsPanel";
 import { AdminTeamsPanel } from "./AdminTeamsPanel";
@@ -23,12 +24,13 @@ const toPollError = (e: unknown): PollError => ({
 
 /**
  * Poll an admin resource on the decision-4 contract (tick ~5s while
- * visible, never overlap, survive errors). refreshKey bumps re-arm the
- * poller so mutations surface immediately.
+ * visible, never overlap, survive errors). The effect re-arms whenever a
+ * dependency changes — panels pass [refreshKey] so mutations surface
+ * immediately; the audit panel adds its filter/page state.
  */
 export const usePolled = <T,>(
   fetcher: () => Promise<T>,
-  refreshKey: number,
+  deps: React.DependencyList,
 ): { data: T | null; error: PollError | null } => {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<PollError | null>(null);
@@ -51,8 +53,9 @@ export const usePolled = <T,>(
       mounted = false;
       poller.stop();
     };
-    // fetcher closes over the current api/token; refreshKey marks changes
-  }, [refreshKey]);
+    // fetcher closes over the current api/token; deps mark changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
   return { data, error };
 };
 
@@ -147,14 +150,20 @@ const HealthPanel = ({
   </>
 );
 
-type AdminTab = "users" | "teams" | "sessions" | "settings" | "health";
+type AdminTab =
+  | "users"
+  | "teams"
+  | "sessions"
+  | "settings"
+  | "audit"
+  | "health";
 
 const AdminHome = ({ api }: { api: AdminApi }) => {
   const [tab, setTab] = useState<AdminTab>("users");
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = () => setRefreshKey((k) => k + 1);
-  const health = usePolled(() => api.health(), refreshKey);
-  const quarantine = usePolled(() => api.quarantine(50), refreshKey);
+  const health = usePolled(() => api.health(), [refreshKey]);
+  const quarantine = usePolled(() => api.quarantine(50), [refreshKey]);
 
   // A revoked token or a role pulled mid-session shows as one honest banner
   // instead of five panels each 401/403-ing.
@@ -193,6 +202,12 @@ const AdminHome = ({ api }: { api: AdminApi }) => {
           Settings
         </button>
         <button
+          className={tab === "audit" ? "active" : ""}
+          onClick={() => setTab("audit")}
+        >
+          Audit
+        </button>
+        <button
           className={tab === "health" ? "active" : ""}
           onClick={() => setTab("health")}
         >
@@ -217,6 +232,8 @@ const AdminHome = ({ api }: { api: AdminApi }) => {
           refreshKey={refreshKey}
           refresh={refresh}
         />
+      ) : tab === "audit" ? (
+        <AdminAuditPanel api={api} refreshKey={refreshKey} refresh={refresh} />
       ) : (
         <HealthPanel health={health} quarantine={quarantine} />
       )}

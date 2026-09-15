@@ -21,11 +21,11 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
     error,
   }: { data: AdminUserRow[] | null; error: PollError | null } = usePolled(
     () => api.users(),
-    refreshKey,
+    [refreshKey],
   );
   const { data: teams }: { data: AdminTeamRow[] | null } = usePolled(
     () => api.teams(),
-    refreshKey,
+    [refreshKey],
   );
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");

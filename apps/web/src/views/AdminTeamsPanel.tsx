@@ -20,7 +20,7 @@ export const AdminTeamsPanel = ({ api, refreshKey, refresh }: Props) => {
     error,
   }: { data: AdminTeamRow[] | null; error: PollError | null } = usePolled(
     () => api.teams(),
-    refreshKey,
+    [refreshKey],
   );
   const [name, setName] = useState("");
   const [retention, setRetention] = useState("");

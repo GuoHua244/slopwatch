@@ -2,12 +2,14 @@
  * Acceptance smoke for a RUNNING server: exercise the planes a real
  * deployment serves — health, event ingest (including the assistant's
  * response text riding on model_request), the sessions/events reads,
- * the rollups snapshot and its team scope, and the review-note lifecycle
- * (add → listed → author delete → gone). Every check prints a PASS line;
- * the first failure exits nonzero.
+ * the rollups snapshot and its team scope, the review-note lifecycle
+ * (add → listed → author delete → gone), and the audit trail those
+ * mutations leave behind (needs ACCEPTANCE_ADMIN_TOKEN). Every check
+ * prints a PASS line; the first failure exits nonzero.
  *
  * Usage: bun apps/server/src/acceptance.ts   (env: ACCEPTANCE_URL,
- * ACCEPTANCE_TOKEN — defaults match a local dev server)
+ * ACCEPTANCE_TOKEN, ACCEPTANCE_ADMIN_TOKEN — defaults match a local dev
+ * server)
  */
 const base = (process.env.ACCEPTANCE_URL ?? "http://127.0.0.1:8787").replace(
   /\/+$/,
@@ -172,6 +174,44 @@ check("DELETE an already-deleted note returns 404", repeat.status === 404);
 // 6. Anonymous reads stay rejected (decision 22).
 const anon = await fetch(`${base}/sessions`);
 check("anonymous GET /sessions is 401", anon.status === 401);
+
+// 7. Audit trail (ADR 0007): the note lifecycle above must be traceable, the
+// operator can page and filter the log, and non-admins cannot read it. Runs
+// only when the server was booted with an operator bypass token.
+const adminToken = process.env.ACCEPTANCE_ADMIN_TOKEN;
+if (adminToken) {
+  const adminReq = (path: string): Promise<Response> =>
+    fetch(`${base}${path}`, {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+  const audit = await (
+    await adminReq("/admin/audit?kind=note&limit=10")
+  ).json();
+  const actions = (audit.rows ?? []).map((r: { action?: string }) => r.action);
+  check(
+    "GET /admin/audit records the note lifecycle",
+    actions.includes("note.add") && actions.includes("note.delete"),
+  );
+  check(
+    "GET /admin/audit filters by kind",
+    (audit.rows ?? []).every((r: { action?: string }) =>
+      String(r.action).startsWith("note."),
+    ),
+  );
+  check(
+    "GET /admin/audit pages with a total",
+    typeof audit.total === "number" && audit.total >= 2,
+  );
+  const byActor = await adminReq("/admin/audit?actor=tester&limit=5");
+  check("GET /admin/audit filters by actor", byActor.status === 200);
+  // Member-vs-admin 403 is covered by the route unit tests; against a live
+  // server the deterministic variant is an unknown bearer (401 everywhere,
+  // regardless of which roles the local roster carries).
+  const stranger = await fetch(`${base}/admin/audit`, {
+    headers: { authorization: "Bearer sw_not-a-real-token" },
+  });
+  check("GET /admin/audit rejects unknown tokens", stranger.status === 401);
+}
 
 if (failures > 0) {
   console.error(`acceptance: ${failures} check(s) failed`);

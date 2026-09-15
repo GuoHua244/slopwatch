@@ -26,6 +26,12 @@ const scriptedStore = (): Store & { calls: string[] } => {
     setSetting: async () => {},
     clearSetting: async () => {},
     listSettings: async () => ({}),
+    appendAudit: async () => {},
+    listAudit: async () => ({ rows: [], total: 0 }),
+    getSession: async () => null,
+    getComment: async () => null,
+    getTeam: async () => null,
+    getToken: async () => null,
     backfillTokenTotals: async () => 0,
     backfillResponseText: async () => 0,
     listRollups: async () => {
@@ -73,7 +79,7 @@ const scriptedStore = (): Store & { calls: string[] } => {
     setUserDri: async () => null,
     roleOf: async () => "member" as const,
     setUserRole: async () => null,
-    ensureUser: async () => {},
+    ensureUser: async () => false,
     ensureAdmin: async () => {},
     ownUsage: async () => ({
       sessions: 0,

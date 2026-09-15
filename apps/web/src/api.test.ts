@@ -149,6 +149,38 @@ describe("createAdminApi", () => {
     expect(users[0]!.active_tokens).toBe(2);
   });
 
+  test("audit builds the filtered, paginated query and unwraps rows+total", async () => {
+    const { api, calls } = recordingApi(200, {
+      rows: [
+        {
+          seq: 3,
+          occurred_at: "2026-09-16T00:00:00.000Z",
+          actor_kind: "user",
+          actor_user: "guohua",
+          action: "user.update",
+          target: "bob",
+          detail: { changes: { role: { before: "member", after: "admin" } } },
+        },
+      ],
+      total: 42,
+    });
+    const page = await api.audit({
+      limit: 50,
+      offset: 50,
+      kind: "user",
+      actor: "guohua",
+    });
+    expect(calls[0]!.path).toBe(
+      "/admin/audit?limit=50&offset=50&kind=user&actor=guohua",
+    );
+    expect(page.total).toBe(42);
+    expect(page.rows[0]!.action).toBe("user.update");
+
+    const bare = recordingApi(200, { rows: [], total: 0 });
+    await bare.api.audit();
+    expect(bare.calls[0]!.path).toBe("/admin/audit");
+  });
+
   test("createUser POSTs a JSON body and unwraps the user", async () => {
     const { api, calls } = recordingApi(201, {
       user: {

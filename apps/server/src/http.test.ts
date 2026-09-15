@@ -31,6 +31,12 @@ const refusingStore = (): Store => ({
   setSetting: async () => {},
   clearSetting: async () => {},
   listSettings: async () => ({}),
+  appendAudit: async () => {},
+  listAudit: async () => ({ rows: [], total: 0 }),
+  getSession: async () => null,
+  getComment: async () => null,
+  getTeam: async () => null,
+  getToken: async () => null,
   pruneRaw: () => {
     throw new Error("store must not be touched");
   },
@@ -95,7 +101,7 @@ const refusingStore = (): Store => ({
   setUserDri: async () => null,
   roleOf: async () => "member" as const,
   setUserRole: async () => null,
-  ensureUser: async () => {},
+  ensureUser: async () => false,
   ensureAdmin: async () => {},
   sessionOwner: async () => null,
   ownUsage: async () => ({

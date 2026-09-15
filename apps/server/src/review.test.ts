@@ -16,6 +16,12 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
   setSetting: async () => {},
   clearSetting: async () => {},
   listSettings: async () => ({}),
+  appendAudit: async () => {},
+  listAudit: async () => ({ rows: [], total: 0 }),
+  getSession: async () => null,
+  getComment: async () => null,
+  getTeam: async () => null,
+  getToken: async () => null,
   backfillTokenTotals: async () => 0,
   backfillResponseText: async () => 0,
   listRollups: async () => ({
@@ -65,7 +71,7 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
   setUserDri: async () => null,
   roleOf: async () => "member" as const,
   setUserRole: async () => null,
-  ensureUser: async () => {},
+  ensureUser: async () => false,
   ensureAdmin: async () => {},
   sessionOwner: async () => null,
   ownUsage: async () => ({
@@ -342,6 +348,7 @@ describe("review plane authorization (in memory)", () => {
     const store = scriptedStore({
       ensureUser: async (name) => {
         provisioned = name;
+        return true;
       },
       getUser: async (name) => ({
         name,

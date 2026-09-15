@@ -9,6 +9,7 @@ import {
   NoSuchTeamError,
   TeamExistsError,
   UserExistsError,
+  type AuditActor,
   type Role,
   type Store,
 } from "./store";
@@ -173,6 +174,23 @@ const windowParam = (
   return Math.min(Math.floor(n), max);
 };
 
+/** Per-field before/after for an audit diff; unchanged fields drop out. */
+const diffFields = (
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  fields: readonly string[],
+): Record<string, { before: unknown; after: unknown }> => {
+  const changes: Record<string, { before: unknown; after: unknown }> = {};
+  for (const field of fields) {
+    if (before[field] !== after[field])
+      changes[field] = {
+        before: before[field] ?? null,
+        after: after[field] ?? null,
+      };
+  }
+  return changes;
+};
+
 export const createApp = ({
   tokens,
   store,
@@ -209,6 +227,19 @@ export const createApp = ({
       if (user === null) return null;
       return { user, role: await store.roleOf(user) };
     };
+
+    // ADR 0007: every successful mutation leaves one audit entry. Best-effort
+    // by design — the change has already committed, so a failed append must
+    // not fail the response and tempt a retry of a non-idempotent operation.
+    const audit = (
+      actor: AuditActor,
+      action: string,
+      target: string,
+      detail?: Record<string, unknown>,
+    ): Promise<void> =>
+      store
+        .appendAudit({ actor, action, target, detail })
+        .catch((e: unknown) => console.error("audit append failed:", e));
 
     if (url.pathname === "/healthz") return json(200, { ok: true });
 
@@ -335,7 +366,16 @@ export const createApp = ({
     if (url.pathname === "/me" && req.method === "GET") {
       const reader = await resolveReader();
       if (reader === null) return json(401, { error: "unauthorized" });
-      await store.ensureUser(reader.user);
+      if (await store.ensureUser(reader.user)) {
+        // ADR 0007: first sight provisioned the row — that is a user
+        // appearing in the org, so the trail records it.
+        await audit(
+          { kind: "user", user: reader.user },
+          "user.provision",
+          reader.user,
+          { via: "sign-in" },
+        );
+      }
       const row = await store.getUser(reader.user);
       return json(200, {
         user: reader.user,
@@ -366,13 +406,17 @@ export const createApp = ({
           return json(403, { error: "only a DRI can change review state" });
         if (req.method === "POST") {
           const review = await store.markReviewed(sessionId, user);
+          if (review !== null)
+            await audit({ kind: "user", user }, "review.mark", sessionId);
           return review === null
             ? json(404, { error: "no such session" })
             : json(200, { review });
         }
-        return (await store.unmarkReviewed(sessionId))
-          ? new Response(null, { status: 204 })
-          : json(404, { error: "no such review" });
+        if (await store.unmarkReviewed(sessionId)) {
+          await audit({ kind: "user", user }, "review.unmark", sessionId);
+          return new Response(null, { status: 204 });
+        }
+        return json(404, { error: "no such review" });
       }
     }
 
@@ -394,9 +438,14 @@ export const createApp = ({
           return json(400, { error: "body must be a non-empty string" });
         const turnId = trimField(body.turn_id, 200);
         const comment = await store.addComment(sessionId, turnId, user, note);
-        return comment === null
-          ? json(404, { error: "no such session" })
-          : json(201, { comment });
+        if (comment !== null) {
+          await audit({ kind: "user", user }, "note.add", sessionId, {
+            comment_id: comment.comment_id,
+            turn_id: comment.turn_id,
+          });
+          return json(201, { comment });
+        }
+        return json(404, { error: "no such session" });
       }
     }
 
@@ -407,10 +456,26 @@ export const createApp = ({
     if (commentMatch && req.method === "DELETE") {
       const user = await resolveUser();
       if (user === null) return json(401, { error: "unauthorized" });
-      const deleted = await store.deleteComment(Number(commentMatch[2]), user);
-      return deleted
-        ? new Response(null, { status: 204 })
-        : json(404, { error: "no such note" });
+      const sessionId = decodeURIComponent(commentMatch[1]!);
+      const commentId = Number(commentMatch[2]);
+      // ADR 0007: the retracted note vanishes — capture a preview first so
+      // the trail says what was removed, not just that something was.
+      const existing = await store.getComment(commentId);
+      if (await store.deleteComment(commentId, user)) {
+        await audit({ kind: "user", user }, "note.delete", sessionId, {
+          comment_id: commentId,
+          turn_id: existing?.turn_id ?? null,
+          author: existing?.author_id ?? null,
+          body_preview:
+            existing === null
+              ? null
+              : existing.body.length > 140
+                ? `${existing.body.slice(0, 140)}…`
+                : existing.body,
+        });
+        return new Response(null, { status: 204 });
+      }
+      return json(404, { error: "no such note" });
     }
 
     // --- Admin plane (decision 13, now role-based): a signed-in user with
@@ -430,9 +495,34 @@ export const createApp = ({
           return json(403, { error: "the admin role is required" });
         caller = reader.user;
       }
+      // ADR 0007: every admin mutation is attributed to the signed-in admin,
+      // or to the operator pseudo-actor on the break-glass bypass.
+      const adminActor: AuditActor =
+        caller === null ? { kind: "operator" } : { kind: "user", user: caller };
 
       if (url.pathname === "/admin/health" && req.method === "GET")
         return json(200, { ok: true, ...(await store.health()) });
+
+      // ADR 0007: the audit trail read — newest first, filterable by action
+      // category prefix and acting user, paginated with a filtered total.
+      if (url.pathname === "/admin/audit" && req.method === "GET") {
+        const limit = windowParam(url.searchParams.get("limit"), 200, 50);
+        const offsetRaw = Number(url.searchParams.get("offset") ?? 0);
+        return json(
+          200,
+          await store.listAudit({
+            limit,
+            offset:
+              Number.isFinite(offsetRaw) && offsetRaw > 0
+                ? Math.floor(offsetRaw)
+                : 0,
+            kind:
+              url.searchParams.get("kind")?.trim().replace(/\.+$/, "") ||
+              undefined,
+            actor: url.searchParams.get("actor")?.trim() || undefined,
+          }),
+        );
+      }
 
       // v2 decision 21: inspect the quarantine — the verbatim drift evidence.
       if (url.pathname === "/admin/quarantine" && req.method === "GET") {
@@ -477,7 +567,12 @@ export const createApp = ({
             return json(400, { error: RETENTION_ERROR });
           const retention = body.raw_retention_days ?? null;
           try {
-            return json(201, { team: await store.createTeam(name, retention) });
+            const team = await store.createTeam(name, retention);
+            await audit(adminActor, "team.create", name, {
+              id: team.id,
+              raw_retention_days: retention,
+            });
+            return json(201, { team });
           } catch (e) {
             if (e instanceof TeamExistsError)
               return json(409, { error: e.message });
@@ -499,6 +594,7 @@ export const createApp = ({
             return json(400, { error: RETENTION_ERROR });
           if (name === undefined && raw_retention_days === undefined)
             return json(400, { error: "nothing to update" });
+          const before = await store.getTeam(id);
           try {
             const team = await store.updateTeam(id, {
               ...(name !== undefined ? { name: trimField(name, 100)! } : {}),
@@ -506,9 +602,26 @@ export const createApp = ({
                 ? { raw_retention_days }
                 : {}),
             });
-            return team === null
-              ? json(404, { error: "no such team" })
-              : json(200, { team });
+            if (team === null) return json(404, { error: "no such team" });
+            if (before !== null) {
+              const changes = diffFields(
+                {
+                  name: before.name,
+                  raw_retention_days: before.raw_retention_days,
+                },
+                {
+                  name: team.name,
+                  raw_retention_days: team.raw_retention_days,
+                },
+                ["name", "raw_retention_days"],
+              );
+              if (Object.keys(changes).length > 0)
+                await audit(adminActor, "team.update", team.name, {
+                  id,
+                  changes,
+                });
+            }
+            return json(200, { team });
           } catch (e) {
             if (e instanceof TeamExistsError)
               return json(409, { error: e.message });
@@ -516,9 +629,15 @@ export const createApp = ({
           }
         }
         if (req.method === "DELETE") {
-          return (await store.deleteTeam(id))
-            ? json(200, { ok: true })
-            : json(404, { error: "no such team" });
+          const before = await store.getTeam(id);
+          if (await store.deleteTeam(id)) {
+            await audit(adminActor, "team.delete", before?.name ?? id, {
+              id,
+              member_count: before?.member_count ?? 0,
+            });
+            return json(200, { ok: true });
+          }
+          return json(404, { error: "no such team" });
         }
       }
 
@@ -533,7 +652,9 @@ export const createApp = ({
           if (name === null)
             return json(400, { error: "name must be a non-empty string" });
           try {
-            return json(201, { user: await store.createUser(name, email) });
+            const user = await store.createUser(name, email);
+            await audit(adminActor, "user.create", name, { email });
+            return json(201, { user });
           } catch (e) {
             if (e instanceof UserExistsError)
               return json(409, { error: e.message });
@@ -574,6 +695,7 @@ export const createApp = ({
           ) {
             return json(400, { error: "nothing to update" });
           }
+          const before = await store.getUser(name);
           try {
             if (disabled !== undefined) {
               const user = await store.setUserDisabled(name, disabled);
@@ -596,12 +718,47 @@ export const createApp = ({
               return json(404, { error: e.message });
             throw e;
           }
-          return json(200, { user: await store.getUser(name) });
+          const after = await store.getUser(name);
+          if (before !== null && after !== null) {
+            const changes = diffFields(
+              {
+                disabled: before.disabled,
+                is_dri: before.is_dri,
+                role: before.role,
+                team: before.team_name,
+              },
+              {
+                disabled: after.disabled,
+                is_dri: after.is_dri,
+                role: after.role,
+                team: after.team_name,
+              },
+              ["disabled", "is_dri", "role", "team"],
+            );
+            if (Object.keys(changes).length > 0)
+              await audit(adminActor, "user.update", name, { changes });
+          }
+          return json(200, { user: after });
         }
         if (req.method === "DELETE") {
-          return (await store.deleteUser(name))
-            ? json(200, { ok: true })
-            : json(404, { error: "no such user" });
+          const before = await store.getUser(name);
+          if (await store.deleteUser(name)) {
+            await audit(
+              adminActor,
+              "user.delete",
+              name,
+              before === null
+                ? {}
+                : {
+                    email: before.email,
+                    team: before.team_name,
+                    role: before.role,
+                    active_tokens: before.active_tokens,
+                  },
+            );
+            return json(200, { ok: true });
+          }
+          return json(404, { error: "no such user" });
         }
       }
 
@@ -612,8 +769,14 @@ export const createApp = ({
         const name = decodeURIComponent(tokensMatch[1]!);
         if ((await store.getUser(name)) === null)
           return json(404, { error: "no such user" });
-        if (req.method === "POST")
-          return json(201, await store.mintToken(name));
+        if (req.method === "POST") {
+          const minted = await store.mintToken(name);
+          await audit(adminActor, "token.mint", name, {
+            token_id: minted.token_id,
+            hint: minted.hint,
+          });
+          return json(201, minted);
+        }
         if (req.method === "GET")
           return json(200, { tokens: await store.listTokens(name) });
       }
@@ -622,9 +785,17 @@ export const createApp = ({
       if (tokenMatch && req.method === "DELETE") {
         // Malformed (non-UUID) ids must 404, not surface a Postgres cast error.
         try {
-          return (await store.revokeToken(decodeURIComponent(tokenMatch[1]!)))
-            ? json(200, { ok: true })
-            : json(404, { error: "no such token" });
+          const id = decodeURIComponent(tokenMatch[1]!);
+          const before = await store.getToken(id);
+          if (await store.revokeToken(id)) {
+            await audit(adminActor, "token.revoke", before?.user_name ?? id, {
+              token_id: id,
+              hint: before?.hint ?? null,
+              user: before?.user_name ?? null,
+            });
+            return json(200, { ok: true });
+          }
+          return json(404, { error: "no such token" });
         } catch {
           return json(404, { error: "no such token" });
         }
@@ -693,6 +864,7 @@ export const createApp = ({
                 });
             }
           }
+          const before = await store.listSettings();
           for (const [key, value] of Object.entries(body)) {
             // explicit null clears the setting (e.g. unset webhook_url);
             // JSON bodies can't carry undefined, but stay defensive
@@ -703,6 +875,23 @@ export const createApp = ({
             if (value === undefined) continue;
             await store.setSetting(key, String(value));
           }
+          const after = await store.listSettings();
+          const changes: Record<
+            string,
+            { before: string | null; after: string | null }
+          > = {};
+          for (const key of Object.keys(body)) {
+            const b = before[key] ?? null;
+            const a = after[key] ?? null;
+            if (b !== a) changes[key] = { before: b, after: a };
+          }
+          if (Object.keys(changes).length > 0)
+            await audit(
+              adminActor,
+              "settings.update",
+              Object.keys(changes).join(", "),
+              { changes },
+            );
           return json(200, { settings: await effective() });
         }
       }
@@ -728,9 +917,31 @@ export const createApp = ({
 
       const sessionMatch = url.pathname.match(/^\/admin\/sessions\/([^/]+)$/);
       if (sessionMatch && req.method === "DELETE") {
-        return (await store.deleteSession(decodeURIComponent(sessionMatch[1]!)))
-          ? json(200, { ok: true })
-          : json(404, { error: "no such session" });
+        const sessionId = decodeURIComponent(sessionMatch[1]!);
+        // ADR 0007: the session and its events vanish — snapshot them into
+        // the entry so the trail outlives what it describes.
+        const snap = await store.getSession(sessionId);
+        if (await store.deleteSession(sessionId)) {
+          await audit(
+            adminActor,
+            "session.delete",
+            sessionId,
+            snap === null
+              ? {}
+              : {
+                  agent: snap.agent,
+                  user: snap.user_id,
+                  title: snap.title,
+                  events: snap.last_seq,
+                  input_tokens: snap.total_input_tokens,
+                  output_tokens: snap.total_output_tokens,
+                  cache_read_tokens: snap.total_cache_read_tokens,
+                  cache_write_tokens: snap.total_cache_write_tokens,
+                },
+          );
+          return json(200, { ok: true });
+        }
+        return json(404, { error: "no such session" });
       }
     }
 

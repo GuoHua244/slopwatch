@@ -21,7 +21,7 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
     data: settings,
     error,
   }: { data: Record<string, string> | null; error: PollError | null } =
-    usePolled(() => api.settings(), refreshKey);
+    usePolled(() => api.settings(), [refreshKey]);
   const [urlDraft, setUrlDraft] = useState<string | null>(null);
   const [formatDraft, setFormatDraft] = useState<string | null>(null);
   const [enabledDraft, setEnabledDraft] = useState<string | null>(null);

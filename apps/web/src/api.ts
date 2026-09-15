@@ -218,6 +218,22 @@ export type QuarantineRow = {
   created_at: string;
 };
 
+/**
+ * Row of GET /admin/audit — one data mutation on the server (ADR 0007):
+ * who acted, when, which action vocabulary term, on what target, and the
+ * structured detail (before/after diffs, or the snapshot a hard delete
+ * erased).
+ */
+export type AuditRow = {
+  seq: number;
+  occurred_at: string;
+  actor_kind: "user" | "operator" | "system";
+  actor_user: string | null;
+  action: string;
+  target: string;
+  detail: Record<string, unknown>;
+};
+
 export type AdminHealth = {
   ok: boolean;
   sessions: number;
@@ -241,6 +257,18 @@ export type AdminApi = {
   deleteSession(sessionId: string): Promise<void>;
   health(): Promise<AdminHealth>;
   quarantine(limit?: number): Promise<QuarantineRow[]>;
+  /**
+   * ADR 0007: the audit log, newest first. `kind` prefixes the action
+   * ("user" matches user.*); `actor` substring-matches the acting user or
+   * names the operator/system pseudo-actors; `offset` pages within the
+   * filtered `total`.
+   */
+  audit(params?: {
+    limit?: number;
+    offset?: number;
+    kind?: string;
+    actor?: string;
+  }): Promise<{ rows: AuditRow[]; total: number }>;
   teams(): Promise<AdminTeamRow[]>;
   settings(): Promise<Record<string, string>>;
   updateSettings(patch: Record<string, string>): Promise<void>;
@@ -522,6 +550,19 @@ export const createAdminApi = (
           auth({ method: "GET" }),
         )
       ).rows,
+    audit: async (params = {}) => {
+      const search = new URLSearchParams();
+      if (params.limit !== undefined) search.set("limit", String(params.limit));
+      if (params.offset !== undefined)
+        search.set("offset", String(params.offset));
+      if (params.kind !== undefined) search.set("kind", params.kind);
+      if (params.actor !== undefined) search.set("actor", params.actor);
+      const query = search.toString();
+      return unwrap<{ rows: AuditRow[]; total: number }>(
+        `/admin/audit${query ? `?${query}` : ""}`,
+        auth({ method: "GET" }),
+      );
+    },
     teams: async () =>
       (
         await unwrap<{ teams: AdminTeamRow[] }>(

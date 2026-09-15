@@ -118,6 +118,38 @@ export type QuarantineRow = {
   created_at: string;
 };
 
+/**
+ * Who performed an audited action: a signed-in user, the operator bypass
+ * token (no user identity to attribute), or the server itself (boot
+ * provisioning, prune sweeps).
+ */
+export type AuditActor =
+  | { kind: "user"; user: string }
+  | { kind: "operator" }
+  | { kind: "system" };
+
+/** The write side of the audit log (ADR 0007): one mutation, one entry. */
+export type AuditEntry = {
+  actor: AuditActor;
+  /** Vocabulary: "<resource>.<verb>" — user.create, session.delete, … */
+  action: string;
+  /** The affected thing, human-readable at action time (user/team name, session id, setting key). */
+  target: string;
+  /** Structured context — before/after diffs, or the snapshot a hard delete erases. */
+  detail?: Record<string, unknown>;
+};
+
+/** Row of GET /admin/audit — mirrors AuditEntry plus identity and time. */
+export type AuditRow = {
+  seq: number;
+  occurred_at: string;
+  actor_kind: "user" | "operator" | "system";
+  actor_user: string | null;
+  action: string;
+  target: string;
+  detail: Record<string, unknown>;
+};
+
 /** Per-day turn/tool counts for one user (decision 18). */
 export type DailyRollupRow = {
   user_id: string;
@@ -310,8 +342,9 @@ export type Store = {
   /**
    * Provision the row on first sight so env-token users become manageable
    * (team, DRI, role) without a manual create; a no-op when it exists.
+   * True when this call created the row.
    */
-  ensureUser(name: string): Promise<void>;
+  ensureUser(name: string): Promise<boolean>;
   /** Bootstrap: grant the admin role idempotently (SLOPWATCH_ADMINS). */
   ensureAdmin(name: string): Promise<void>;
   /** GET /me's usage block: one user's lifetime footprint. */
@@ -339,6 +372,30 @@ export type Store = {
   setSetting(key: string, value: string): Promise<void>;
   clearSetting(key: string): Promise<void>;
   listSettings(): Promise<Record<string, string>>;
+  /** ADR 0007: append one audit entry. The only write the audit log has. */
+  appendAudit(entry: AuditEntry): Promise<void>;
+  /**
+   * ADR 0007: the audit log, newest first. `kind` prefixes the action
+   * ("user" matches user.*); `actor` substring-matches the acting user and
+   * exactly matches the operator/system pseudo-actors. `total` respects the
+   * filters for pagination.
+   */
+  listAudit(opts: {
+    limit: number;
+    offset: number;
+    kind?: string;
+    actor?: string;
+  }): Promise<{ rows: AuditRow[]; total: number }>;
+  /** One session row — the snapshot an audit trail captures before a hard delete. */
+  getSession(sessionId: string): Promise<SessionRow | null>;
+  /** One review note by id, regardless of author — the preview for its own audit entry. */
+  getComment(commentId: number): Promise<CommentRow | null>;
+  /** One team by id; null when unknown. */
+  getTeam(id: string): Promise<TeamRow | null>;
+  /** One token by id with its owning user; null when unknown. */
+  getToken(
+    tokenId: string,
+  ): Promise<(AdminTokenRow & { user_name: string }) | null>;
   close(): Promise<void>;
 };
 
@@ -481,6 +538,18 @@ CREATE TABLE IF NOT EXISTS settings (
   value      TEXT NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- ADR 0007: append-only audit trail of every data mutation. Actors are
+-- snapshotted as text (no FK) so deleting a user never erases their history.
+CREATE TABLE IF NOT EXISTS audit_log (
+  seq         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actor_kind  TEXT NOT NULL,
+  actor_user  TEXT,
+  action      TEXT NOT NULL,
+  target      TEXT NOT NULL,
+  detail      JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS audit_log_action ON audit_log (action);
 `;
 
 const USER_SELECT = `
@@ -528,6 +597,37 @@ const pgCommentRow = (r: Record<string, unknown>): CommentRow => ({
   author_id: r.author_id as string,
   body: r.body as string,
   created_at: new Date(r.created_at as string).toISOString(),
+});
+
+const pgAuditRow = (r: Record<string, unknown>): AuditRow => ({
+  seq: Number(r.seq),
+  occurred_at: new Date(r.occurred_at as string).toISOString(),
+  actor_kind:
+    r.actor_kind === "operator" || r.actor_kind === "system"
+      ? r.actor_kind
+      : "user",
+  actor_user: (r.actor_user as string | null) ?? null,
+  action: r.action as string,
+  target: r.target as string,
+  detail: (r.detail as Record<string, unknown> | null) ?? {},
+});
+
+const pgSessionRow = (r: Record<string, unknown>): SessionRow => ({
+  session_id: r.session_id as string,
+  agent: r.agent as string,
+  user_id: (r.user_id as string | null) ?? null,
+  team_id: (r.team_id as string | null) ?? null,
+  first_seen_at: new Date(r.first_seen_at as string).toISOString(),
+  last_event_at: r.last_event_at
+    ? new Date(r.last_event_at as string).toISOString()
+    : null,
+  last_seq: Number(r.last_seq),
+  title: (r.title as string | null) ?? null,
+  task_preview: (r.task_preview as string | null) ?? null,
+  total_input_tokens: Number(r.total_input_tokens),
+  total_output_tokens: Number(r.total_output_tokens),
+  total_cache_read_tokens: Number(r.total_cache_read_tokens),
+  total_cache_write_tokens: Number(r.total_cache_write_tokens),
 });
 
 const modelRollupRow = (r: Record<string, unknown>): ModelRollupRow => ({
@@ -834,23 +934,7 @@ export const createPgStore = (databaseUrl: string): Store => {
         `SELECT session_id, agent, user_id, team_id, first_seen_at, last_event_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions ${where} ORDER BY COALESCE(last_event_at, first_seen_at) DESC`,
         args,
       );
-      return rows.map((r) => ({
-        session_id: r.session_id as string,
-        agent: r.agent as string,
-        user_id: r.user_id as string | null,
-        team_id: (r.team_id as string | null) ?? null,
-        first_seen_at: new Date(r.first_seen_at as string).toISOString(),
-        last_event_at: r.last_event_at
-          ? new Date(r.last_event_at as string).toISOString()
-          : null,
-        last_seq: Number(r.last_seq),
-        title: (r.title as string | null) ?? null,
-        task_preview: (r.task_preview as string | null) ?? null,
-        total_input_tokens: Number(r.total_input_tokens),
-        total_output_tokens: Number(r.total_output_tokens),
-        total_cache_read_tokens: Number(r.total_cache_read_tokens),
-        total_cache_write_tokens: Number(r.total_cache_write_tokens),
-      }));
+      return rows.map((r) => pgSessionRow(r));
     },
 
     async eventsSince(sessionId, sinceSeq) {
@@ -1141,10 +1225,11 @@ export const createPgStore = (databaseUrl: string): Store => {
     },
 
     async ensureUser(name) {
-      await pool.query(
+      const { rowCount } = await pool.query(
         "INSERT INTO users (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
         [name],
       );
+      return (rowCount ?? 0) > 0;
     },
 
     async ensureAdmin(name) {
@@ -1356,6 +1441,19 @@ export const createPgStore = (databaseUrl: string): Store => {
           candidate,
           identity.email,
         ]);
+        // ADR 0007: the one store-internal audit — creation happens inside
+        // auth resolution, below the handler layer that owns every other
+        // entry. Best-effort: a failed append must not fail the login.
+        try {
+          await this.appendAudit({
+            actor: { kind: "user", user: candidate },
+            action: "user.provision",
+            target: candidate,
+            detail: { via: "oidc", email: identity.email },
+          });
+        } catch (e) {
+          console.error("audit append failed:", e);
+        }
         return candidate;
       } catch (e) {
         // The name exists but did not resolve above — a disabled user, or a
@@ -1498,6 +1596,87 @@ export const createPgStore = (databaseUrl: string): Store => {
       const out: Record<string, string> = {};
       for (const row of rows) out[row.key as string] = row.value as string;
       return out;
+    },
+
+    async appendAudit(entry) {
+      await pool.query(
+        "INSERT INTO audit_log (actor_kind, actor_user, action, target, detail) VALUES ($1, $2, $3, $4, $5)",
+        [
+          entry.actor.kind,
+          entry.actor.kind === "user" ? entry.actor.user : null,
+          entry.action,
+          entry.target,
+          JSON.stringify(entry.detail ?? {}),
+        ],
+      );
+    },
+
+    async listAudit({ limit, offset, kind, actor }) {
+      const filters: string[] = [];
+      const params: unknown[] = [];
+      if (kind !== undefined) {
+        params.push(`${kind}.%`);
+        filters.push(`action LIKE $${params.length}`);
+      }
+      if (actor !== undefined) {
+        params.push(actor);
+        const n = params.length;
+        filters.push(
+          `(actor_user ILIKE '%' || $${n} || '%' OR actor_kind = $${n})`,
+        );
+      }
+      const where = filters.length > 0 ? ` WHERE ${filters.join(" AND ")}` : "";
+      const { rows: counted } = await pool.query(
+        `SELECT COUNT(*) AS n FROM audit_log${where}`,
+        params,
+      );
+      const { rows } = await pool.query(
+        `SELECT seq, occurred_at, actor_kind, actor_user, action, target, detail
+         FROM audit_log${where} ORDER BY seq DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset],
+      );
+      return {
+        rows: rows.map((r) => pgAuditRow(r)),
+        total: Number(counted[0]!.n),
+      };
+    },
+
+    async getSession(sessionId) {
+      const { rows } = await pool.query(
+        "SELECT session_id, agent, user_id, team_id, first_seen_at, last_event_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions WHERE session_id = $1",
+        [sessionId],
+      );
+      return rows[0] ? pgSessionRow(rows[0]) : null;
+    },
+
+    async getComment(commentId) {
+      const { rows } = await pool.query(
+        "SELECT comment_id, session_id, turn_id, author_id, body, created_at FROM review_comments WHERE comment_id = $1",
+        [commentId],
+      );
+      return rows[0] ? pgCommentRow(rows[0]) : null;
+    },
+
+    async getTeam(id) {
+      return getTeamRow(id);
+    },
+
+    async getToken(tokenId) {
+      const { rows } = await pool.query(
+        "SELECT token_id, hint, user_name, created_at, revoked_at FROM tokens WHERE token_id = $1",
+        [tokenId],
+      );
+      return rows[0]
+        ? {
+            token_id: rows[0]!.token_id as string,
+            hint: rows[0]!.hint as string,
+            user_name: rows[0]!.user_name as string,
+            created_at: new Date(rows[0]!.created_at as string).toISOString(),
+            revoked_at: rows[0]!.revoked_at
+              ? new Date(rows[0]!.revoked_at as string).toISOString()
+              : null,
+          }
+        : null;
     },
 
     async close() {

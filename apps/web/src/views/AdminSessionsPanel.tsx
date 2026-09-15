@@ -65,7 +65,7 @@ export const AdminSessionsPanel = ({ api, refreshKey, refresh }: Props) => {
   }: {
     data: SessionSummary[] | null;
     error: PollError | null;
-  } = usePolled(() => readApi.listSessions(), refreshKey);
+  } = usePolled(() => readApi.listSessions(), [refreshKey]);
   const [actionError, setActionError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 

@@ -22,11 +22,39 @@ if (config.adminToken === undefined) {
 const store = createPgStore(config.databaseUrl);
 await store.migrate();
 
+// The system pseudo-actor for audit entries the server itself causes (ADR
+// 0007) — boot provisioning and prune sweeps. Best-effort like every append.
+const systemAudit = (
+  action: string,
+  target: string,
+  detail?: Record<string, unknown>,
+): Promise<void> =>
+  store
+    .appendAudit({ actor: { kind: "system" }, action, target, detail })
+    .catch((e: unknown) => console.error("audit append failed:", e));
+
 // Role-based admin bootstrap: names in SLOPWATCH_ADMINS get the admin role
 // idempotently at boot, so the first admin needs no operator-token dance.
 for (const name of config.adminNames) {
+  const before = await store.getUser(name);
   await store.ensureAdmin(name);
-  console.log(`admin role granted to "${name}"`);
+  if (before === null) {
+    console.log(`admin role granted to "${name}"`);
+    await systemAudit("user.provision", name, { via: "boot", role: "admin" });
+  } else if (before.role !== "admin" || before.disabled) {
+    console.log(`admin role granted to "${name}"`);
+    await systemAudit("user.update", name, {
+      via: "boot",
+      changes: {
+        ...(before.role !== "admin"
+          ? { role: { before: before.role, after: "admin" } }
+          : {}),
+        ...(before.disabled
+          ? { disabled: { before: true, after: false } }
+          : {}),
+      },
+    });
+  }
 }
 
 // Decision 11 + v2 decision 24: expire raw payloads past their effective
@@ -49,6 +77,9 @@ const prune = () =>
           `pruned raw payloads from ${pruned} events` +
             (archive ? ` (${archived} archived to object storage)` : ""),
         );
+        // ADR 0007: the one automated mutation that rewrites stored data —
+        // one summary entry per sweep keeps the trail complete.
+        void systemAudit("events.prune", "events", { pruned, archived });
       }
     })
     .catch((e: unknown) => console.error("prune failed:", e));

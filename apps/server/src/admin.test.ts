@@ -98,6 +98,21 @@ const memStore = () => {
     setSetting: async () => {},
     clearSetting: async () => {},
     listSettings: async () => ({}),
+    appendAudit: async () => {},
+    listAudit: async () => ({ rows: [], total: 0 }),
+    getSession: async () => null,
+    getComment: async () => null,
+    getTeam: async (id) => {
+      const t = teams.get(id);
+      if (!t) return null;
+      return {
+        ...t,
+        id,
+        member_count: [...users.values()].filter((u) => u.team_id === id)
+          .length,
+      };
+    },
+    getToken: async () => null,
     backfillTokenTotals: async () => 0,
     backfillResponseText: async () => 0,
     listRollups: async () => ({
@@ -141,16 +156,17 @@ const memStore = () => {
       return row(name);
     },
     ensureUser: async (name) => {
-      if (!users.has(name))
-        users.set(name, {
-          email: null,
-          disabled: false,
-          is_dri: false,
-          role: "member",
-          created_at: new Date().toISOString(),
-          team_id: null,
-          team_name: null,
-        });
+      if (users.has(name)) return false;
+      users.set(name, {
+        email: null,
+        disabled: false,
+        is_dri: false,
+        role: "member",
+        created_at: new Date().toISOString(),
+        team_id: null,
+        team_name: null,
+      });
+      return true;
     },
     ensureAdmin: async (name) => {
       if (!users.has(name))
