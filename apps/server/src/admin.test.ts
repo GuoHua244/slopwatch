@@ -24,6 +24,7 @@ const memStore = () => {
       email: string | null;
       disabled: boolean;
       is_dri: boolean;
+      role: "admin" | "member";
       created_at: string;
       team_id?: string | null;
       team_name?: string | null;
@@ -51,11 +52,13 @@ const memStore = () => {
   >();
   const seenSessions = new Set<string>();
   const sessionEvents = new Map<string, number>();
+  const owners = new Map<string, string | null>();
   const row = (name: string): AdminUserRow => ({
     name,
     email: users.get(name)!.email,
     disabled: users.get(name)!.disabled,
     is_dri: users.get(name)!.is_dri,
+    role: users.get(name)!.role,
     created_at: users.get(name)!.created_at,
     active_tokens: [...tokens.values()].filter(
       (t) => t.user === name && t.revoked_at === null,
@@ -65,10 +68,11 @@ const memStore = () => {
   });
   const store: Store = {
     migrate: async () => {},
-    appendEvents: async (events_: unknown[]) => {
+    appendEvents: async (events_: unknown[], userId) => {
       for (const e of events_ as { session_id: string }[]) {
         if (!seenSessions.has(e.session_id)) {
           seenSessions.add(e.session_id);
+          owners.set(e.session_id, userId ?? null);
           sessions += 1;
         }
         events += 1;
@@ -111,6 +115,7 @@ const memStore = () => {
         email,
         disabled: false,
         is_dri: false,
+        role: "member",
         created_at: new Date().toISOString(),
         team_id: null,
         team_name: null,
@@ -128,6 +133,51 @@ const memStore = () => {
       if (!users.has(name)) return null;
       users.get(name)!.is_dri = isDri;
       return row(name);
+    },
+    roleOf: async (name) => users.get(name)?.role ?? "member",
+    setUserRole: async (name, role) => {
+      if (!users.has(name)) return null;
+      users.get(name)!.role = role;
+      return row(name);
+    },
+    ensureUser: async (name) => {
+      if (!users.has(name))
+        users.set(name, {
+          email: null,
+          disabled: false,
+          is_dri: false,
+          role: "member",
+          created_at: new Date().toISOString(),
+          team_id: null,
+          team_name: null,
+        });
+    },
+    ensureAdmin: async (name) => {
+      if (!users.has(name))
+        users.set(name, {
+          email: null,
+          disabled: false,
+          is_dri: false,
+          role: "admin",
+          created_at: new Date().toISOString(),
+          team_id: null,
+          team_name: null,
+        });
+      else users.get(name)!.role = "admin";
+    },
+    sessionOwner: async (sessionId) =>
+      seenSessions.has(sessionId) ? (owners.get(sessionId) ?? null) : null,
+    ownUsage: async (name) => {
+      let owned = 0;
+      for (const user of owners.values()) if (user === name) owned += 1;
+      return {
+        sessions: owned,
+        first_seen_at: null,
+        last_seen_at: null,
+        turns: 0,
+        tool_calls: 0,
+        model_totals: [],
+      };
     },
     setUserTeam: async (name, teamId) => {
       if (!users.has(name)) return null;
@@ -253,6 +303,7 @@ const appWith = (opts: {
   adminToken?: string;
   store: Store;
   archive?: { getObject(key: string): Promise<string> };
+  defaultRawTtlDays?: number;
 }): App => createApp({ tokens: new Map(), ...opts });
 
 const admin = (
@@ -274,16 +325,9 @@ const admin = (
   );
 
 describe("admin plane auth", () => {
-  const { store } = memStore();
-
-  test("404 when the admin token is not configured", async () => {
-    const res = await admin(appWith({ store }), "GET", "/admin/users");
-    expect(res.status).toBe(404);
-  });
-
   test("401 without a bearer token", async () => {
     const res = await admin(
-      appWith({ adminToken: "admin-tok", store }),
+      appWith({ adminToken: "admin-tok", store: memStore().store }),
       "GET",
       "/admin/users",
       undefined,
@@ -294,13 +338,51 @@ describe("admin plane auth", () => {
 
   test("401 with the wrong token", async () => {
     const res = await admin(
-      appWith({ adminToken: "admin-tok", store }),
+      appWith({ adminToken: "admin-tok", store: memStore().store }),
       "GET",
       "/admin/users",
       undefined,
       "nope",
     );
     expect(res.status).toBe(401);
+  });
+
+  test("403 for a signed-in member — the plane is role-gated now", async () => {
+    const { store } = memStore();
+    await store.createUser("member-sam", null);
+    const minted = await store.mintToken("member-sam");
+    const res = await admin(
+      appWith({ adminToken: "admin-tok", store }),
+      "GET",
+      "/admin/users",
+      undefined,
+      minted.token,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  test("200 for an admin-role user token — no operator token configured", async () => {
+    const { store } = memStore();
+    await store.createUser("root", null);
+    await store.setUserRole("root", "admin");
+    const minted = await store.mintToken("root");
+    const res = await admin(
+      appWith({ store }),
+      "GET",
+      "/admin/users",
+      undefined,
+      minted.token,
+    );
+    expect(res.status).toBe(200);
+  });
+
+  test("the operator bypass still works alongside role admins", async () => {
+    const res = await admin(
+      appWith({ adminToken: "admin-tok", store: memStore().store }),
+      "GET",
+      "/admin/users",
+    );
+    expect(res.status).toBe(200);
   });
 });
 
@@ -361,6 +443,66 @@ describe("admin user CRUD over the in-memory store", () => {
     expect((await admin(app, "DELETE", "/admin/users/nobody")).status).toBe(
       404,
     );
+  });
+
+  test("role changes: promote, demote, garbage, and the self-guard", async () => {
+    await admin(app, "POST", "/admin/users", { name: "pri" });
+    const up = await admin(app, "PATCH", "/admin/users/pri", {
+      role: "admin",
+    });
+    expect(((await up.json()) as { user: AdminUserRow }).user.role).toBe(
+      "admin",
+    );
+
+    const down = await admin(app, "PATCH", "/admin/users/pri", {
+      role: "member",
+    });
+    expect(((await down.json()) as { user: AdminUserRow }).user.role).toBe(
+      "member",
+    );
+
+    expect(
+      (await admin(app, "PATCH", "/admin/users/pri", { role: "root" })).status,
+    ).toBe(400);
+
+    // The caller here is the operator bypass (no user identity), so the
+    // self-guard must not fire on a same-named user.
+    await admin(app, "POST", "/admin/users", { name: "admin-tok" });
+    expect(
+      (await admin(app, "PATCH", "/admin/users/admin-tok", { role: "member" }))
+        .status,
+    ).toBe(200);
+  });
+
+  test("an admin-role caller cannot demote themselves", async () => {
+    const { store } = memStore();
+    await store.createUser("boss", null);
+    await store.setUserRole("boss", "admin");
+    const minted = await store.mintToken("boss");
+    const app = appWith({ adminToken: "admin-tok", store });
+    const res = await admin(
+      app,
+      "PATCH",
+      "/admin/users/boss",
+      {
+        role: "member",
+      },
+      minted.token,
+    );
+    expect(res.status).toBe(400);
+    // someone else's role is still theirs to change
+    await store.createUser("peer", null);
+    await store.setUserRole("peer", "admin");
+    const ok = await admin(
+      app,
+      "PATCH",
+      "/admin/users/peer",
+      {
+        role: "member",
+      },
+      minted.token,
+    );
+    expect(ok.status).toBe(200);
   });
 
   test("delete removes the user and cascades token resolution", async () => {
@@ -548,10 +690,12 @@ describe("operator settings (decision 25)", () => {
       webhook_url: null,
     });
     expect(cleared.status).toBe(200);
+    // Settings answer with effective values: a cleared URL reads back empty,
+    // not missing.
     expect(
       ((await cleared.json()) as { settings: Record<string, string> }).settings
         .webhook_url,
-    ).toBeUndefined();
+    ).toBe("");
   });
 
   test("invalid values still 400", async () => {
@@ -562,6 +706,56 @@ describe("operator settings (decision 25)", () => {
     expect(
       (await admin(app, "PUT", "/admin/settings", { nope: "x" })).status,
     ).toBe(400);
+  });
+
+  test("raw_ttl_days accepts a positive integer, rejects the rest", async () => {
+    expect(
+      (await admin(app, "PUT", "/admin/settings", { raw_ttl_days: 30 })).status,
+    ).toBe(200);
+    expect(
+      (await admin(app, "PUT", "/admin/settings", { raw_ttl_days: "45" }))
+        .status,
+    ).toBe(200);
+    expect(
+      (await admin(app, "PUT", "/admin/settings", { raw_ttl_days: 0 })).status,
+    ).toBe(400);
+    expect(
+      (await admin(app, "PUT", "/admin/settings", { raw_ttl_days: -3 })).status,
+    ).toBe(400);
+    expect(
+      (await admin(app, "PUT", "/admin/settings", { raw_ttl_days: "ten" }))
+        .status,
+    ).toBe(400);
+    // null clears the override, and the effective value falls back to the
+    // boot default the app was configured with.
+    const cleared = await admin(app, "PUT", "/admin/settings", {
+      raw_ttl_days: null,
+    });
+    expect(cleared.status).toBe(200);
+    expect(
+      ((await cleared.json()) as { settings: Record<string, string> }).settings
+        .raw_ttl_days,
+    ).toBe("90");
+  });
+
+  test("GET answers effective values even with nothing stored", async () => {
+    const fresh = appWith({
+      adminToken: "admin-tok",
+      store: memStore().store,
+      defaultRawTtlDays: 45,
+    });
+    const res = await admin(fresh, "GET", "/admin/settings");
+    expect(res.status).toBe(200);
+    expect(
+      (await res.json()) as Record<string, Record<string, string>>,
+    ).toEqual({
+      settings: {
+        webhook_url: "",
+        webhook_enabled: "true",
+        webhook_format: "slack",
+        raw_ttl_days: "45",
+      },
+    });
   });
 });
 
@@ -672,6 +866,60 @@ describe.skipIf(!dbTests())("admin store semantics against Postgres", () => {
     expect(store!.createUser(name, null)).rejects.toBeInstanceOf(
       UserExistsError,
     );
+  });
+
+  test("roles: default member, promote, self-scope reads, ensureUser/Admin", async () => {
+    await ensure();
+    const name = `admin-pg-role-${crypto.randomUUID().slice(0, 8)}`;
+    await store!.createUser(name, null);
+    expect(await store!.roleOf(name)).toBe("member");
+    expect(await store!.roleOf("never-existed")).toBe("member");
+
+    const promoted = await store!.setUserRole(name, "admin");
+    expect(promoted?.role).toBe("admin");
+    expect(await store!.roleOf(name)).toBe("admin");
+    await store!.setUserRole(name, "member");
+    expect(await store!.roleOf(name)).toBe("member");
+
+    // ensureUser provisions without clobbering; ensureAdmin grants the role
+    await store!.ensureUser(name);
+    expect(await store!.roleOf(name)).toBe("member");
+    const stranger = `admin-pg-stranger-${crypto.randomUUID().slice(0, 8)}`;
+    await store!.ensureAdmin(stranger);
+    expect(await store!.roleOf(stranger)).toBe("admin");
+
+    // member-scoped reads: sessions are filtered by owner
+    const { SCHEMA_VERSION } = await import("@slopwatch/events");
+    const sessionId = `sess_role-${crypto.randomUUID().slice(0, 8)}`;
+    await store!.appendEvents(
+      [
+        {
+          schema_version: SCHEMA_VERSION,
+          agent: "zcode",
+          session_id: sessionId,
+          occurred_at: new Date().toISOString(),
+          kind: "session",
+          event: "start",
+          cwd: "D:\\demo",
+          hostname: "DEV-01",
+        },
+      ] as never,
+      name,
+    );
+    const mine = await store!.listSessions(undefined, name);
+    expect(mine.some((s) => s.session_id === sessionId)).toBe(true);
+    const others = await store!.listSessions(undefined, "somebody-else");
+    expect(others.some((s) => s.session_id === sessionId)).toBe(false);
+    expect(await store!.sessionOwner(sessionId)).toBe(name);
+    expect(await store!.sessionOwner("sess_absent")).toBeNull();
+
+    // the /me usage block answers the owner's own numbers
+    const usage = await store!.ownUsage(name);
+    expect(usage.sessions).toBe(1);
+    expect(usage.first_seen_at).not.toBeNull();
+
+    await store!.deleteUser(name);
+    await store!.deleteUser(stranger);
   });
 
   test("health reports sessions and events counts", async () => {

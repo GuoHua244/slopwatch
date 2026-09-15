@@ -11,16 +11,15 @@ const scriptedStore = (): Store & { calls: string[] } => {
   const base = {
     migrate: async () => {},
     appendEvents: async () => ({ accepted: 0 }),
-    listSessions: async (teamId?: string) => {
-      calls.push(
-        teamId === undefined ? "listSessions" : `listSessions:${teamId}`,
-      );
+    listSessions: async (teamId?: string, userId?: string) => {
+      calls.push(`listSessions:${teamId ?? "-"}:${userId ?? "-"}`);
       return [];
     },
     eventsSince: async () => {
       calls.push("eventsSince");
       return [];
     },
+    sessionOwner: async () => "alice",
     deleteSession: async () => false,
     pruneRaw: async () => ({ archived: 0, pruned: 0 }),
     getSetting: async () => null,
@@ -72,6 +71,18 @@ const scriptedStore = (): Store & { calls: string[] } => {
     },
     isDri: async () => false,
     setUserDri: async () => null,
+    roleOf: async () => "member" as const,
+    setUserRole: async () => null,
+    ensureUser: async () => {},
+    ensureAdmin: async () => {},
+    ownUsage: async () => ({
+      sessions: 0,
+      first_seen_at: null,
+      last_seen_at: null,
+      turns: 0,
+      tool_calls: 0,
+      model_totals: [],
+    }),
     health: async () => ({
       sessions: 0,
       events: 0,
@@ -149,20 +160,88 @@ describe("read-plane authentication (decision 22)", () => {
     expect(res.status).toBe(401);
   });
 
-  test("the team filter reaches the store verbatim", async () => {
+  test("the team filter reaches the store verbatim; a member is self-scoped", async () => {
     const store = scriptedStore();
     const a = createApp({
       tokens: new Map([["tok-alice", "alice"]]),
       store,
     });
+    // scriptedStore defaults to the member role: every read carries the
+    // caller's own user_id alongside whatever team filter was requested.
     await get(a, "/sessions?team_id=team-1", "tok-alice");
     await get(a, "/sessions?team_id=unassigned", "tok-alice");
     await get(a, "/sessions", "tok-alice");
     expect(store.calls).toEqual([
-      "listSessions:team-1",
-      "listSessions:unassigned",
-      "listSessions",
+      "listSessions:team-1:alice",
+      "listSessions:unassigned:alice",
+      "listSessions:-:alice",
     ]);
+  });
+
+  test("an admin reads org-wide: no self scoping on sessions or rollups", async () => {
+    const store = scriptedStore();
+    store.roleOf = async (name) => (name === "alice" ? "admin" : "member");
+    const a = createApp({
+      tokens: new Map([["tok-alice", "alice"]]),
+      store,
+    });
+    expect((await get(a, "/sessions", "tok-alice")).status).toBe(200);
+    expect((await get(a, "/rollups", "tok-alice")).status).toBe(200);
+    expect(store.calls).toEqual(["listSessions:-:-", "listRollups"]);
+  });
+
+  test("a member's rollups are scoped to their own user_id", async () => {
+    const store = scriptedStore();
+    let seenUserId: string | undefined;
+    store.listRollups = async (_day, _hour, _teamId, userId) => {
+      seenUserId = userId;
+      return {
+        totals: [],
+        model_totals: [],
+        daily: [],
+        user_hourly: [],
+        model_daily: [],
+        model_hourly: [],
+      };
+    };
+    const a = createApp({
+      tokens: new Map([["tok-alice", "alice"]]),
+      store,
+    });
+    await get(a, "/rollups?days=7", "tok-alice");
+    expect(seenUserId).toBe("alice");
+  });
+
+  test("a member reading someone else's session events gets a 404", async () => {
+    const store = scriptedStore();
+    // The session exists but belongs to bob.
+    store.sessionOwner = async () => "bob";
+    const a = createApp({
+      tokens: new Map([["tok-alice", "alice"]]),
+      store,
+    });
+    expect((await get(a, "/sessions/sess_x/events", "tok-alice")).status).toBe(
+      404,
+    );
+    // ...and her own session reads fine.
+    store.sessionOwner = async () => "alice";
+    expect((await get(a, "/sessions/sess_x/events", "tok-alice")).status).toBe(
+      200,
+    );
+  });
+
+  test("an admin reads any session's events", async () => {
+    const store = scriptedStore();
+    store.roleOf = async () => "admin";
+    // owner is someone else entirely — role wins
+    store.sessionOwner = async () => "bob";
+    const a = createApp({
+      tokens: new Map([["tok-alice", "alice"]]),
+      store,
+    });
+    expect((await get(a, "/sessions/sess_x/events", "tok-alice")).status).toBe(
+      200,
+    );
   });
 
   test("an IdP-issued bearer resolves through the OIDC verifier (ADR 0005)", async () => {

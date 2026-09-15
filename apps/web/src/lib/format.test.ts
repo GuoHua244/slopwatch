@@ -6,6 +6,7 @@ import {
   fmtDuration,
   fmtTokens,
   shortId,
+  sinceDuration,
   summarizeArgs,
 } from "./format";
 
@@ -106,5 +107,27 @@ describe("fmtDelta", () => {
     expect(fmtDelta(0)).toBe("↑ 0%");
     expect(fmtDelta(0.2534)).toBe("↑ 25%");
     expect(fmtDelta(-0.2534)).toBe("↓ 25%");
+  });
+});
+
+describe("sinceDuration", () => {
+  const now = Date.parse("2026-09-15T12:00:00.000Z");
+  test("minutes under an hour", () => {
+    expect(sinceDuration("2026-09-15T11:40:00.000Z", now)).toBe("20m");
+  });
+  test("hours under two days", () => {
+    expect(sinceDuration("2026-09-15T06:00:00.000Z", now)).toBe("6h");
+  });
+  test("days under two months", () => {
+    expect(sinceDuration("2026-08-20T12:00:00.000Z", now)).toBe("26d");
+  });
+  test("months under two years", () => {
+    expect(sinceDuration("2026-04-01T12:00:00.000Z", now)).toBe("5.5mo");
+  });
+  test("years beyond", () => {
+    expect(sinceDuration("2024-01-01T12:00:00.000Z", now)).toBe("2.7y");
+  });
+  test("a future timestamp clamps to zero", () => {
+    expect(sinceDuration("2026-09-15T12:30:00.000Z", now)).toBe("0m");
   });
 });

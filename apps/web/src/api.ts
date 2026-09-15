@@ -38,8 +38,30 @@ export type CommentRow = {
   created_at: string;
 };
 
-/** GET /me — the identity behind the reader's bearer token. */
-export type MeInfo = { user: string; is_dri: boolean };
+/** One signed-in user's lifetime footprint, scoped to them on the server. */
+export type MeUsage = {
+  sessions: number;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  turns: number;
+  tool_calls: number;
+  /** Model-grain all-time token sums; cost stays a client-side estimate. */
+  model_totals: ModelRollupRow[];
+};
+
+/**
+ * GET /me — the identity behind the reader's bearer token, their role, and
+ * their own usage; everything the profile page shows in one payload.
+ */
+export type MeInfo = {
+  user: string;
+  role: "admin" | "member";
+  email: string | null;
+  team_name: string | null;
+  is_dri: boolean;
+  created_at: string | null;
+  usage: MeUsage;
+};
 
 /** Row of GET /rollups — per-day turn/tool counts for one user. */
 export type DailyRollupRow = {
@@ -107,11 +129,24 @@ export class ApiError extends Error {
     readonly status: number,
     readonly path: string,
     readonly method = "GET",
+    detail?: string,
   ) {
-    super(`${method} ${path} failed with ${status}`);
+    super(
+      `${method} ${path} failed with ${status}${detail ? ` — ${detail}` : ""}`,
+    );
     this.name = "ApiError";
   }
 }
+
+/** The server's `{ error }` body text, when it sent one. */
+const errorDetail = async (res: Response): Promise<string | undefined> => {
+  try {
+    const body = (await res.json()) as { error?: unknown };
+    return typeof body.error === "string" ? body.error : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 export type Api = {
   listSessions(teamId?: string): Promise<SessionSummary[]>;
@@ -138,6 +173,7 @@ export type AdminUserRow = {
   email: string | null;
   disabled: boolean;
   is_dri: boolean;
+  role: "admin" | "member";
   created_at: string;
   active_tokens: number;
   team_id: string | null;
@@ -197,6 +233,7 @@ export type AdminApi = {
   createUser(name: string, email: string | null): Promise<AdminUserRow>;
   setUserDisabled(name: string, disabled: boolean): Promise<void>;
   setUserDri(name: string, isDri: boolean): Promise<void>;
+  setUserRole(name: string, role: "admin" | "member"): Promise<void>;
   deleteUser(name: string): Promise<void>;
   mintToken(name: string): Promise<MintedToken>;
   tokens(name: string): Promise<AdminTokenRow[]>;
@@ -235,7 +272,8 @@ const getJson = async <T>(
   init: RequestInit = {},
 ): Promise<T> => {
   const res = await doFetch(path, init);
-  if (!res.ok) throw new ApiError(res.status, path);
+  if (!res.ok)
+    throw new ApiError(res.status, path, "GET", await errorDetail(res));
   return (await res.json()) as T;
 };
 
@@ -246,7 +284,8 @@ const unwrapJson = async <T = void>(
   method: string,
 ): Promise<T> => {
   const res = await doFetch(path, init);
-  if (!res.ok) throw new ApiError(res.status, path, method);
+  if (!res.ok)
+    throw new ApiError(res.status, path, method, await errorDetail(res));
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 };
@@ -407,7 +446,8 @@ export const createAdminApi = (
     });
   const unwrap = async <T>(path: string, init: RequestInit): Promise<T> => {
     const res = await doFetch(path, init);
-    if (!res.ok) throw new ApiError(res.status, path);
+    if (!res.ok)
+      throw new ApiError(res.status, path, "GET", await errorDetail(res));
     return (await res.json()) as T;
   };
   return {
@@ -435,6 +475,12 @@ export const createAdminApi = (
       await unwrap(
         `/admin/users/${encodeURIComponent(name)}`,
         authedJson("PATCH", { is_dri: isDri }),
+      );
+    },
+    setUserRole: async (name, role) => {
+      await unwrap(
+        `/admin/users/${encodeURIComponent(name)}`,
+        authedJson("PATCH", { role }),
       );
     },
     deleteUser: async (name) => {

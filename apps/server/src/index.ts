@@ -13,20 +13,36 @@ if (config.tokens.size === 0) {
 }
 if (config.adminToken === undefined) {
   console.warn(
-    "warning: SLOPWATCH_ADMIN_TOKEN is unset — the admin plane is disabled",
+    "warning: SLOPWATCH_ADMIN_TOKEN is unset — the operator bypass is off; " +
+      "the admin plane stays open to users with the admin role " +
+      "(grant the first one via SLOPWATCH_ADMINS)",
   );
 }
 
 const store = createPgStore(config.databaseUrl);
 await store.migrate();
 
+// Role-based admin bootstrap: names in SLOPWATCH_ADMINS get the admin role
+// idempotently at boot, so the first admin needs no operator-token dance.
+for (const name of config.adminNames) {
+  await store.ensureAdmin(name);
+  console.log(`admin role granted to "${name}"`);
+}
+
 // Decision 11 + v2 decision 24: expire raw payloads past their effective
 // per-team TTL (and once at boot), archiving to the S3-compatible cold store
-// when one is configured.
+// when one is configured. The global default is the operator's stored
+// raw_ttl_days setting, falling back to the boot-time env value.
 const archive = config.s3 ? createS3Client(config.s3) : undefined;
 const prune = () =>
   store
-    .pruneRaw({ defaultDays: config.rawTtlDays, archive })
+    .getSetting("raw_ttl_days")
+    .then((days) =>
+      store.pruneRaw({
+        defaultDays: Number(days) || config.rawTtlDays,
+        archive,
+      }),
+    )
     .then(({ archived, pruned }) => {
       if (pruned > 0) {
         console.log(
@@ -55,6 +71,7 @@ const app = createApp({
   store,
   staticRoot,
   adminToken: config.adminToken,
+  defaultRawTtlDays: config.rawTtlDays,
   archive,
   oidc,
 });

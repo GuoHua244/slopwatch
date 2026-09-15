@@ -111,6 +111,7 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
             <th>team</th>
             <th>status</th>
             <th>role</th>
+            <th>dri</th>
             <th>tokens</th>
             <th>created</th>
             <th>actions</th>
@@ -144,6 +145,9 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
               <td className={u.disabled ? "cell-down" : "cell-live"}>
                 {u.disabled ? "disabled" : "active"}
               </td>
+              <td className={u.role === "admin" ? "cell-live" : undefined}>
+                {u.role}
+              </td>
               <td>{u.is_dri ? "dri" : "—"}</td>
               <td className="num">{u.active_tokens}</td>
               <td>{clock(u.created_at)}</td>
@@ -154,6 +158,18 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
                   }
                 >
                   {u.disabled ? "enable" : "disable"}
+                </button>
+                <button
+                  onClick={() =>
+                    run(() =>
+                      api.setUserRole(
+                        u.name,
+                        u.role === "admin" ? "member" : "admin",
+                      ),
+                    )
+                  }
+                >
+                  {u.role === "admin" ? "demote" : "make admin"}
                 </button>
                 <button
                   onClick={() => run(() => api.setUserDri(u.name, !u.is_dri))}
@@ -178,7 +194,7 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
             ...(openTokens[u.name]
               ? [
                   <tr key={`${u.name}-tokens`} className="token-row">
-                    <td colSpan={7}>
+                    <td colSpan={9}>
                       {openTokens[u.name]!.length === 0
                         ? "no tokens minted"
                         : openTokens[u.name]!.map((t) => (

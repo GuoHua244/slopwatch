@@ -24,17 +24,35 @@ export type SessionRow = {
 
 export type StoredEvent = { event_seq: number; event: NormalEvent };
 
+/** Authorization role: admins manage the operator plane and read org-wide. */
+export type Role = "admin" | "member";
+
 /** Row of GET /admin/users (decision 13). */
 export type AdminUserRow = {
   name: string;
   email: string | null;
   disabled: boolean;
   is_dri: boolean;
+  role: Role;
   created_at: string;
   active_tokens: number;
   /** The user's one team (v2 decision 23); null until the admin assigns one. */
   team_id: string | null;
   team_name: string | null;
+};
+
+/**
+ * One signed-in user's lifetime footprint, all scoped to them regardless of
+ * role — GET /me packs it so the profile page needs no second endpoint.
+ */
+export type MeUsage = {
+  sessions: number;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  turns: number;
+  tool_calls: number;
+  /** Model-grain all-time token sums; cost stays a client-side estimate. */
+  model_totals: ModelRollupRow[];
 };
 
 /** Row of GET /admin/teams (v2 decision 23). */
@@ -189,10 +207,13 @@ export type Store = {
   /**
    * All sessions, newest first. `teamId` narrows to one team's snapshot
    * (the team-scoped DRI filter); the sentinel "unassigned" selects the
-   * NULL-team bucket.
+   * NULL-team bucket. `userId` narrows to one owner's sessions — the
+   * read-plane hands it in for members so a user only ever sees their own.
    */
-  listSessions(teamId?: string): Promise<SessionRow[]>;
+  listSessions(teamId?: string, userId?: string): Promise<SessionRow[]>;
   eventsSince(sessionId: string, sinceSeq: number): Promise<StoredEvent[]>;
+  /** The session's owning user, or null when the session does not exist. */
+  sessionOwner(sessionId: string): Promise<string | null>;
   /**
    * Decision 13: remove a whole session — normalized events, raw payloads,
    * and the row itself. The leak-remediation action. False when absent.
@@ -224,12 +245,14 @@ export type Store = {
    * Decision 18: per-developer usage rollups, UTC-bucketed. `sinceDay` and
    * `sinceHour` ("YYYY-MM-DD" / "YYYY-MM-DDTHH") are inclusive lower bounds.
    * `teamId` narrows every window to one team's members ("unassigned" = users
-   * with no team) via users.team_id; totals are scoped the same way.
+   * with no team) via users.team_id; totals are scoped the same way. `userId`
+   * narrows every window to one user — the read-plane hands it in for members.
    */
   listRollups(
     sinceDay: string,
     sinceHour: string,
     teamId?: string,
+    userId?: string,
   ): Promise<RollupsSnapshot>;
   /** Full recompute of every rollup table from the events table. Rows written. */
   backfillRollups(): Promise<number>;
@@ -280,6 +303,19 @@ export type Store = {
   /** Decision 10: the DRI role attribute. False for unknown users. */
   isDri(name: string): Promise<boolean>;
   setUserDri(name: string, isDri: boolean): Promise<AdminUserRow | null>;
+  /** The user's authorization role; "member" for unknown users. */
+  roleOf(name: string): Promise<Role>;
+  /** Promote/demote between admin and member. Null when the user is unknown. */
+  setUserRole(name: string, role: Role): Promise<AdminUserRow | null>;
+  /**
+   * Provision the row on first sight so env-token users become manageable
+   * (team, DRI, role) without a manual create; a no-op when it exists.
+   */
+  ensureUser(name: string): Promise<void>;
+  /** Bootstrap: grant the admin role idempotently (SLOPWATCH_ADMINS). */
+  ensureAdmin(name: string): Promise<void>;
+  /** GET /me's usage block: one user's lifetime footprint. */
+  ownUsage(name: string): Promise<MeUsage>;
   health(): Promise<HealthInfo>;
   /** v2 decision 21: recent quarantined lines, newest first. */
   listQuarantine(limit: number): Promise<QuarantineRow[]>;
@@ -363,6 +399,9 @@ CREATE TABLE IF NOT EXISTS tokens (
   revoked_at TIMESTAMPTZ
 );
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_dri BOOLEAN NOT NULL DEFAULT FALSE;
+-- Role-based authorization: admins run the operator plane and read org-wide;
+-- everyone else reads only their own rows. Existing rows default to member.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'member';
 CREATE TABLE IF NOT EXISTS session_reviews (
   session_id  TEXT PRIMARY KEY REFERENCES sessions (session_id) ON DELETE CASCADE,
   reviewer_id TEXT NOT NULL,
@@ -445,16 +484,20 @@ CREATE TABLE IF NOT EXISTS settings (
 `;
 
 const USER_SELECT = `
-  SELECT u.name, u.email, u.disabled, u.is_dri, u.created_at,
+  SELECT u.name, u.email, u.disabled, u.is_dri, u.role, u.created_at,
          u.team_id, t.name AS team_name,
          (SELECT COUNT(*) FROM tokens t2 WHERE t2.user_name = u.name AND t2.revoked_at IS NULL) AS active_tokens
   FROM users u LEFT JOIN teams t ON t.id = u.team_id`;
+
+const asRole = (value: unknown): Role =>
+  value === "admin" ? "admin" : "member";
 
 const pgUserRow = (r: Record<string, unknown>): AdminUserRow => ({
   name: r.name as string,
   email: (r.email as string | null) ?? null,
   disabled: r.disabled === true,
   is_dri: r.is_dri === true,
+  role: asRole(r.role),
   created_at: new Date(r.created_at as string).toISOString(),
   active_tokens: Number(r.active_tokens ?? 0),
   team_id: (r.team_id as string | null) ?? null,
@@ -772,16 +815,24 @@ export const createPgStore = (databaseUrl: string): Store => {
       }
     },
 
-    async listSessions(teamId) {
-      const filter =
-        teamId === undefined
-          ? ""
-          : teamId === "unassigned"
-            ? "WHERE team_id IS NULL"
-            : "WHERE team_id = $1";
+    async listSessions(teamId, userId) {
+      const filters: string[] = [];
+      const args: unknown[] = [];
+      if (teamId !== undefined) {
+        if (teamId === "unassigned") filters.push("team_id IS NULL");
+        else {
+          args.push(teamId);
+          filters.push(`team_id = $${args.length}`);
+        }
+      }
+      if (userId !== undefined) {
+        args.push(userId);
+        filters.push(`user_id = $${args.length}`);
+      }
+      const where = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
       const { rows } = await pool.query(
-        `SELECT session_id, agent, user_id, team_id, first_seen_at, last_event_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions ${filter} ORDER BY COALESCE(last_event_at, first_seen_at) DESC`,
-        teamId !== undefined && teamId !== "unassigned" ? [teamId] : [],
+        `SELECT session_id, agent, user_id, team_id, first_seen_at, last_event_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens FROM sessions ${where} ORDER BY COALESCE(last_event_at, first_seen_at) DESC`,
+        args,
       );
       return rows.map((r) => ({
         session_id: r.session_id as string,
@@ -927,24 +978,43 @@ export const createPgStore = (databaseUrl: string): Store => {
       }
     },
 
-    async listRollups(sinceDay, sinceHour, teamId) {
+    async sessionOwner(sessionId) {
+      const { rows } = await pool.query(
+        "SELECT user_id FROM sessions WHERE session_id = $1",
+        [sessionId],
+      );
+      return (rows[0]?.user_id as string | null | undefined) ?? null;
+    },
+
+    async listRollups(sinceDay, sinceHour, teamId, userId) {
       // Team scope (v2 decision 27): rollups are user-grain, so membership
       // resolves through users.team_id — never sessions' creation-time snapshot.
-      // `WHERE TRUE` gives every query an anchor for the AND.
+      // The self scope carries the caller's own user_id straight in. `WHERE
+      // TRUE` gives every query an anchor for the AND.
       const scope = (
         baseParams: unknown[],
-      ): { sql: string; params: unknown[] } =>
-        teamId === undefined
-          ? { sql: "", params: baseParams }
-          : teamId === "unassigned"
-            ? {
-                sql: " AND user_id NOT IN (SELECT name FROM users WHERE team_id IS NOT NULL)",
-                params: baseParams,
-              }
-            : {
-                sql: ` AND user_id IN (SELECT name FROM users WHERE team_id = $${baseParams.length + 1})`,
-                params: [...baseParams, teamId],
-              };
+      ): { sql: string; params: unknown[] } => {
+        const sql: string[] = [];
+        const params = [...baseParams];
+        if (teamId === "unassigned")
+          sql.push(
+            "user_id NOT IN (SELECT name FROM users WHERE team_id IS NOT NULL)",
+          );
+        else if (teamId !== undefined) {
+          params.push(teamId);
+          sql.push(
+            `user_id IN (SELECT name FROM users WHERE team_id = $${params.length})`,
+          );
+        }
+        if (userId !== undefined) {
+          params.push(userId);
+          sql.push(`user_id = $${params.length}`);
+        }
+        return {
+          sql: sql.length > 0 ? ` AND ${sql.join(" AND ")}` : "",
+          params,
+        };
+      };
       const modelSelect =
         "user_id, day AS bucket, model, model_requests, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens";
       const totalsScope = scope([]);
@@ -1052,6 +1122,77 @@ export const createPgStore = (databaseUrl: string): Store => {
         isDri,
       ]);
       return this.getUser(name);
+    },
+
+    async roleOf(name) {
+      const { rows } = await pool.query(
+        "SELECT role FROM users WHERE name = $1",
+        [name],
+      );
+      return asRole(rows[0]?.role);
+    },
+
+    async setUserRole(name, role) {
+      await pool.query("UPDATE users SET role = $2 WHERE name = $1", [
+        name,
+        role,
+      ]);
+      return this.getUser(name);
+    },
+
+    async ensureUser(name) {
+      await pool.query(
+        "INSERT INTO users (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
+        [name],
+      );
+    },
+
+    async ensureAdmin(name) {
+      await pool.query(
+        `INSERT INTO users (name, role) VALUES ($1, 'admin')
+         ON CONFLICT (name) DO UPDATE SET role = 'admin', disabled = FALSE`,
+        [name],
+      );
+    },
+
+    async ownUsage(name) {
+      const sessionStats = await pool.query(
+        `SELECT COUNT(*) AS sessions,
+                MIN(first_seen_at) AS first_seen_at,
+                MAX(COALESCE(last_event_at, first_seen_at)) AS last_seen_at
+         FROM sessions WHERE user_id = $1`,
+        [name],
+      );
+      const totals = await pool.query(
+        `SELECT SUM(turns) AS turns, SUM(tool_calls) AS tool_calls
+         FROM user_daily_rollup WHERE user_id = $1`,
+        [name],
+      );
+      const modelTotals = await pool.query(
+        `SELECT user_id, '' AS bucket, model,
+                SUM(model_requests) AS model_requests,
+                SUM(input_tokens) AS input_tokens,
+                SUM(output_tokens) AS output_tokens,
+                SUM(cache_read_tokens) AS cache_read_tokens,
+                SUM(cache_write_tokens) AS cache_write_tokens
+         FROM model_daily_rollup WHERE user_id = $1
+         GROUP BY user_id, model ORDER BY model`,
+        [name],
+      );
+      return {
+        sessions: Number(sessionStats.rows[0]?.sessions ?? 0),
+        first_seen_at: sessionStats.rows[0]?.first_seen_at
+          ? new Date(
+              sessionStats.rows[0]!.first_seen_at as string,
+            ).toISOString()
+          : null,
+        last_seen_at: sessionStats.rows[0]?.last_seen_at
+          ? new Date(sessionStats.rows[0]!.last_seen_at as string).toISOString()
+          : null,
+        turns: Number(totals.rows[0]?.turns ?? 0),
+        tool_calls: Number(totals.rows[0]?.tool_calls ?? 0),
+        model_totals: modelTotals.rows.map(modelRollupRow),
+      };
     },
 
     async setUserDisabled(name, disabled) {

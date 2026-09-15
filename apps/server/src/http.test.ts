@@ -93,6 +93,19 @@ const refusingStore = (): Store => ({
   },
   isDri: async () => false,
   setUserDri: async () => null,
+  roleOf: async () => "member" as const,
+  setUserRole: async () => null,
+  ensureUser: async () => {},
+  ensureAdmin: async () => {},
+  sessionOwner: async () => null,
+  ownUsage: async () => ({
+    sessions: 0,
+    first_seen_at: null,
+    last_seen_at: null,
+    turns: 0,
+    tool_calls: 0,
+    model_totals: [],
+  }),
   health: () => {
     throw new Error("store must not be touched");
   },

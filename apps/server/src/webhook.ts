@@ -12,6 +12,7 @@ export const SETTING_KEYS = [
   "webhook_url",
   "webhook_enabled",
   "webhook_format",
+  "raw_ttl_days",
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];

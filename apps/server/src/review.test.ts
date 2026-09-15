@@ -63,6 +63,19 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
   deleteComment: async () => false,
   isDri: async () => false,
   setUserDri: async () => null,
+  roleOf: async () => "member" as const,
+  setUserRole: async () => null,
+  ensureUser: async () => {},
+  ensureAdmin: async () => {},
+  sessionOwner: async () => null,
+  ownUsage: async () => ({
+    sessions: 0,
+    first_seen_at: null,
+    last_seen_at: null,
+    turns: 0,
+    tool_calls: 0,
+    model_totals: [],
+  }),
   health: async () => ({
     sessions: 0,
     events: 0,
@@ -287,17 +300,76 @@ describe("review plane authorization (in memory)", () => {
     ).toBe(404);
   });
 
-  test("GET /me identifies the token's user and DRI flag", async () => {
-    const store = scriptedStore({ isDri: async (name) => name === "dri" });
+  test("GET /me identifies the token's user, role, and DRI flag", async () => {
+    const store = scriptedStore({
+      getUser: async (name) => ({
+        name,
+        email: null,
+        disabled: false,
+        is_dri: name === "dri",
+        role: "member",
+        created_at: "2026-09-10T00:00:00.000Z",
+        active_tokens: 0,
+        team_id: null,
+        team_name: null,
+      }),
+    });
     const app = appWith(store, { "tok-dri": "dri", "tok-dev": "dev" });
     const dri = await req(app, "/me", {}, "tok-dri");
     expect(dri.status).toBe(200);
     expect((await dri.json()) as Record<string, unknown>).toEqual({
       user: "dri",
+      role: "member",
+      email: null,
+      team_name: null,
       is_dri: true,
+      created_at: "2026-09-10T00:00:00.000Z",
+      usage: {
+        sessions: 0,
+        first_seen_at: null,
+        last_seen_at: null,
+        turns: 0,
+        tool_calls: 0,
+        model_totals: [],
+      },
     });
     expect((await req(app, "/me", {}, "tok-dev")).status).toBe(200);
     expect((await req(app, "/me")).status).toBe(401);
+  });
+
+  test("GET /me provisions a missing user row on first sight", async () => {
+    let provisioned: string | undefined;
+    const store = scriptedStore({
+      ensureUser: async (name) => {
+        provisioned = name;
+      },
+      getUser: async (name) => ({
+        name,
+        email: "alice@corp.dev",
+        disabled: false,
+        is_dri: false,
+        role: "admin",
+        created_at: "2026-09-01T00:00:00.000Z",
+        active_tokens: 1,
+        team_id: null,
+        team_name: "platform",
+      }),
+      roleOf: async () => "admin",
+    });
+    const app = appWith(store, { "tok-alice": "alice" });
+    const res = await req(app, "/me", {}, "tok-alice");
+    expect(res.status).toBe(200);
+    expect(provisioned).toBe("alice");
+    const body = (await res.json()) as {
+      role: string;
+      email: string | null;
+      team_name: string | null;
+      created_at: string | null;
+    };
+    expect(body.role).toBe("admin");
+    expect(body.email).toBe("alice@corp.dev");
+    expect(body.team_name).toBe("platform");
+    expect(body.created_at).toBe("2026-09-01T00:00:00.000Z");
   });
 
   test("admin PATCH accepts is_dri alone and persists it", async () => {
@@ -306,6 +378,7 @@ describe("review plane authorization (in memory)", () => {
       email: null,
       disabled: false,
       is_dri: true,
+      role: "member",
       created_at: "2026-09-10T00:00:00.000Z",
       active_tokens: 0,
       team_id: null,

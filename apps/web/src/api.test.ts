@@ -5,6 +5,7 @@ import {
   createAdminApi,
   createReviewApi,
   createApi,
+  type MeInfo,
   type SessionSummary,
 } from "./api";
 
@@ -354,12 +355,84 @@ describe("createReviewApi", () => {
     ]);
   });
 
-  test("me() reports the token's user and DRI flag", async () => {
+  test("me() reports the token's user, role, and own usage", async () => {
+    const me: MeInfo = {
+      user: "dri",
+      role: "admin",
+      email: "dri@corp.dev",
+      team_name: "platform",
+      is_dri: true,
+      created_at: "2026-09-01T00:00:00.000Z",
+      usage: {
+        sessions: 3,
+        first_seen_at: null,
+        last_seen_at: null,
+        turns: 12,
+        tool_calls: 40,
+        model_totals: [],
+      },
+    };
     const api = createReviewApi(
       () => "sw_tok",
-      () => Promise.resolve(jsonResponse(200, { user: "dri", is_dri: true })),
+      () => Promise.resolve(jsonResponse(200, me)),
     );
-    expect(await api.me()).toEqual({ user: "dri", is_dri: true });
+    expect(await api.me()).toEqual(me);
+  });
+});
+
+describe("ApiError", () => {
+  test("carries the server's error reason when the body has one", async () => {
+    const api = createReviewApi(
+      () => "sw_tok",
+      () =>
+        Promise.resolve(
+          jsonResponse(403, { error: "the admin role is required" }),
+        ),
+    );
+    const err = await api.me().then(
+      () => {
+        throw new Error("expected rejection");
+      },
+      (e: Error) => e,
+    );
+    expect(err.message).toBe(
+      "GET /me failed with 403 — the admin role is required",
+    );
+  });
+
+  test("falls back to status-only when the body is not JSON", async () => {
+    const api = createReviewApi(
+      () => "sw_tok",
+      () => Promise.resolve(new Response("nope", { status: 500 })),
+    );
+    const err = await api.me().then(
+      () => {
+        throw new Error("expected rejection");
+      },
+      (e: Error) => e,
+    );
+    expect(err.message).toBe("GET /me failed with 500");
+  });
+});
+
+describe("createAdminApi.setUserRole", () => {
+  test("PATCHes role under the admin bearer", async () => {
+    const calls: { path: string; method: string; body: unknown }[] = [];
+    const api = createAdminApi(
+      () => "adm",
+      (input, init) => {
+        calls.push({
+          path: String(input),
+          method: init?.method ?? "GET",
+          body: JSON.parse(String(init?.body)),
+        });
+        return Promise.resolve(jsonResponse(200, { ok: true }));
+      },
+    );
+    await api.setUserRole("alice", "admin");
+    expect(calls).toEqual([
+      { path: "/admin/users/alice", method: "PATCH", body: { role: "admin" } },
+    ]);
   });
 });
 

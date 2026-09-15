@@ -36,6 +36,33 @@ export const fmtDuration = (ms: number): string => {
   return `${Math.floor(total / 60)}m${pad2(total % 60)}s`;
 };
 
+/** ISO 8601 timestamp → local "2026-09-15 17:39". */
+export const fmtDate = (iso: string): string => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(
+    d.getDate(),
+  )} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+
+/**
+ * Elapsed time since an ISO timestamp, coarse: 90min → "1h", 6days → "6d",
+ * 40days → "1.3mo", 400days → "1.1y". The "how long has this been live"
+ * number for the profile page.
+ */
+export const sinceDuration = (iso: string, now = Date.now()): string => {
+  const ms = now - new Date(iso).getTime();
+  if (ms < 0) return "0m";
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 60) return `${days}d`;
+  const months = days / 30.44;
+  if (months < 24) return `${months.toFixed(1)}mo`;
+  return `${(days / 365.25).toFixed(1)}y`;
+};
+
 /** "sess_ec0623ae-…" → "ec0623ae"; ids without a kind prefix pass through. */
 export const shortId = (id: string): string =>
   id.replace(/^[a-z]+_/, "").slice(0, 8);

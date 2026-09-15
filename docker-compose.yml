@@ -14,7 +14,9 @@ services:
       # v0 bootstrap tokens ("name:token"), one per member; admin-minted
       # tokens (decision 6) take over once you create users via /admin.
       SLOPWATCH_TOKENS: ${SLOPWATCH_TOKENS:?set SLOPWATCH_TOKENS in .env}
-      SLOPWATCH_ADMIN_TOKEN: ${SLOPWATCH_ADMIN_TOKEN:?set SLOPWATCH_ADMIN_TOKEN in .env}
+      SLOPWATCH_ADMIN_TOKEN: ${SLOPWATCH_ADMIN_TOKEN:-}
+      # users granted the admin role at boot (ADR 0006)
+      SLOPWATCH_ADMINS: ${SLOPWATCH_ADMINS:-}
       RAW_TTL_DAYS: ${RAW_TTL_DAYS:-90}
       SLOPWATCH_S3_ENDPOINT: http://minio:9000
       SLOPWATCH_S3_REGION: us-east-1

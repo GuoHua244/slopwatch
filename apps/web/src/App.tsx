@@ -6,10 +6,13 @@ import { clock } from "./lib/format";
 import { DeveloperDetail } from "./views/DeveloperDetail";
 import { LeaderboardView } from "./views/LeaderboardView";
 import { AdminView } from "./views/AdminView";
+import { MeView } from "./views/MeView";
 import { SessionDetail } from "./views/SessionDetail";
 import { SessionList } from "./views/SessionList";
 
-type Route = "sessions" | "leaderboard" | "admin";
+type Route = "sessions" | "leaderboard" | "admin" | "me";
+
+type Role = "admin" | "member";
 
 /** "#/sessions/sess_x" deep-links into a session detail, "#/leaderboard/dev" into a developer. */
 const parseHash = (
@@ -34,6 +37,7 @@ const parseHash = (
     return { route: "leaderboard", sessionId: null, userId: null };
   if (path === "admin")
     return { route: "admin", sessionId: null, userId: null };
+  if (path === "me") return { route: "me", sessionId: null, userId: null };
   return { route: "sessions", sessionId: null, userId: null };
 };
 
@@ -54,8 +58,14 @@ const useHashRoute = (): {
 /**
  * Sign-in gate (v2 decision 22 / ADR 0003): the dashboard renders nothing
  * until a user token verifies against GET /me — reads are no longer anonymous.
+ * The verify answer also carries the role, so the whole shell knows what the
+ * signed-in user may see.
  */
-const SignInGate = ({ onSignedIn }: { onSignedIn: (user: string) => void }) => {
+const SignInGate = ({
+  onSignedIn,
+}: {
+  onSignedIn: (user: string, role: Role) => void;
+}) => {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -78,7 +88,7 @@ const SignInGate = ({ onSignedIn }: { onSignedIn: (user: string) => void }) => {
             .me()
             .then((info) => {
               saveToken(token);
-              onSignedIn(info.user);
+              onSignedIn(info.user, info.role);
             })
             .catch(() => {
               setError("that token did not verify — check it and try again");
@@ -106,11 +116,25 @@ const SignInGate = ({ onSignedIn }: { onSignedIn: (user: string) => void }) => {
 type AuthState =
   | { status: "anon" }
   | { status: "checking" }
-  | { status: "signed-in"; user: string };
+  | { status: "signed-in"; user: string; role: Role };
+
+/** Shown when a signed-in user opens a route their role may not see. */
+const NotAuthorized = ({ route }: { route: string }) => (
+  <main className="full">
+    <section className="admin">
+      <h2>not authorized</h2>
+      <p className="dim">
+        The {route} area is for admins. Your account has the member role — ask
+        an admin to promote you if you need access.
+      </p>
+      <p>
+        <a href="#/sessions">back to sessions</a>
+      </p>
+    </section>
+  </main>
+);
 
 export const App = () => {
-  // The admin route keeps its own separate gate; everything else needs a
-  // verified user token first.
   const [auth, setAuth] = useState<AuthState>(() =>
     storedToken() ? { status: "checking" } : { status: "anon" },
   );
@@ -119,7 +143,13 @@ export const App = () => {
     if (!storedToken()) return;
     void createReviewApi(storedToken)
       .me()
-      .then((info) => setAuth({ status: "signed-in", user: info.user }))
+      .then((info) =>
+        setAuth({
+          status: "signed-in",
+          user: info.user,
+          role: info.role,
+        }),
+      )
       .catch(() => {
         clearToken();
         setAuth({ status: "anon" });
@@ -127,72 +157,71 @@ export const App = () => {
   }, []);
   const { route, sessionId, userId } = useHashRoute();
 
-  // The data hooks stay unmounted until the token verifies — polling before a
-  // token exists only produced 401 noise and a "connection lost" flash right
-  // after sign-in.
+  // Every route — admin included — now sits behind the one user-token gate;
+  // the role decides what renders inside.
   const signedIn = auth.status === "signed-in";
-  if (!signedIn && route !== "admin") {
+  if (!signedIn) {
     return auth.status === "checking" ? (
       <p className="empty">verifying saved token…</p>
     ) : (
       <SignInGate
-        onSignedIn={(user) => setAuth({ status: "signed-in", user })}
+        onSignedIn={(user, role) =>
+          setAuth({ status: "signed-in", user, role })
+        }
       />
     );
   }
   return (
     <Dashboard
-      user={signedIn ? auth.user : null}
+      user={auth.user}
+      role={auth.role}
       route={route}
       sessionId={sessionId}
       userId={userId}
-      poll={signedIn}
-      onSignOut={
-        signedIn
-          ? () => {
-              clearToken();
-              setAuth({ status: "anon" });
-            }
-          : undefined
-      }
+      onSignOut={() => {
+        clearToken();
+        setAuth({ status: "anon" });
+      }}
     />
   );
 };
 
-/** Everything behind the gate: header, live feed, and the three routes. */
+/** Everything behind the gate: header, live feed, and the role-scoped routes. */
 const Dashboard = ({
   user,
+  role,
   route,
   sessionId,
   userId,
-  poll,
   onSignOut,
 }: {
-  user: string | null;
+  user: string;
+  role: Role;
   route: Route;
   sessionId: string | null;
   userId: string | null;
-  poll: boolean;
-  onSignOut?: () => void;
+  onSignOut: () => void;
 }) => {
+  const isAdmin = role === "admin";
   const [teamFilter, setTeamFilter] = useState<string>("all");
   const feed = useSessions(
     teamFilter === "all" ? null : teamFilter,
     5000,
-    poll,
+    true,
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Team-scoped DRI filter: the roster feeds the sessions dropdown; fetched
-  // once per sign-in.
+  // Team-scoped DRI filter: the roster feeds the admin's sessions dropdown;
+  // fetched once per sign-in. Members see only their own sessions, so the
+  // filter (and the roster fetch) is admin-only.
   const [teams, setTeams] = useState<TeamInfo[]>([]);
   useEffect(() => {
-    if (!poll) return;
+    if (!isAdmin) return;
     void createApi()
       .teams()
       .then(setTeams)
       .catch(() => {});
-  }, [poll]);
+  }, [isAdmin]);
 
   // Follow the newest session until the operator picks one.
   useEffect(() => {
@@ -216,74 +245,89 @@ const Dashboard = ({
           <a href="#/sessions" className={route === "sessions" ? "active" : ""}>
             sessions
           </a>
-          <a
-            href="#/leaderboard"
-            className={route === "leaderboard" ? "active" : ""}
-          >
-            leaderboard
-          </a>
-          <a href="#/admin" className={route === "admin" ? "active" : ""}>
-            admin
+          {isAdmin && (
+            <a
+              href="#/leaderboard"
+              className={route === "leaderboard" ? "active" : ""}
+            >
+              leaderboard
+            </a>
+          )}
+          {isAdmin && (
+            <a href="#/admin" className={route === "admin" ? "active" : ""}>
+              admin
+            </a>
+          )}
+          <a href="#/me" className={route === "me" ? "active" : ""}>
+            me
           </a>
         </nav>
-        {poll && (
-          <span className={`status ${feed.status}`}>
-            {feed.status === "live"
-              ? `live · ${feed.lastUpdated ? clock(feed.lastUpdated.toISOString()) : ""}`
-              : feed.status === "down"
-                ? `connection lost${feed.lastError ? ` · ${feed.lastError}` : ""}`
-                : "connecting…"}
-          </span>
-        )}
-        {user !== null && onSignOut && (
-          <span className="dim">
-            {user}
-            <button className="signout" onClick={onSignOut}>
-              sign out
-            </button>
-          </span>
-        )}
+        <span className={`status ${feed.status}`}>
+          {feed.status === "live"
+            ? `live · ${feed.lastUpdated ? clock(feed.lastUpdated.toISOString()) : ""}`
+            : feed.status === "down"
+              ? `connection lost${feed.lastError ? ` · ${feed.lastError}` : ""}`
+              : "connecting…"}
+        </span>
+        {/* The name links to the profile — identity, usage, and sign-out live there. */}
+        <a className="header-user" href="#/me" title="my profile">
+          {user}
+        </a>
       </header>
       {route === "leaderboard" ? (
-        <main className="full">
-          <section>
-            {userId ? (
-              <DeveloperDetail userId={userId} />
-            ) : (
-              <>
-                <h2>developer leaderboard</h2>
-                <LeaderboardView />
-              </>
-            )}
-          </section>
-        </main>
+        isAdmin ? (
+          <main className="full">
+            <section>
+              {userId ? (
+                <DeveloperDetail userId={userId} />
+              ) : (
+                <>
+                  <h2>developer leaderboard</h2>
+                  <LeaderboardView />
+                </>
+              )}
+            </section>
+          </main>
+        ) : (
+          <NotAuthorized route="leaderboard" />
+        )
       ) : route === "admin" ? (
+        isAdmin ? (
+          <main className="full">
+            <AdminView />
+          </main>
+        ) : (
+          <NotAuthorized route="admin" />
+        )
+      ) : route === "me" ? (
         <main className="full">
-          <AdminView />
+          <MeView onSignOut={onSignOut} />
         </main>
       ) : (
         <main>
           <aside>
-            <form className="admin-form" onSubmit={(e) => e.preventDefault()}>
-              <label className="dim">
-                team{" "}
-                <select
-                  value={teamFilter}
-                  onChange={(e) => {
-                    setTeamFilter(e.target.value);
-                    setSelectedId(null);
-                  }}
-                >
-                  <option value="all">all</option>
-                  {teams.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                  <option value="unassigned">unassigned</option>
-                </select>
-              </label>
-            </form>
+            {isAdmin && (
+              <form className="admin-form" onSubmit={(e) => e.preventDefault()}>
+                <label className="dim">
+                  team{" "}
+                  <select
+                    value={teamFilter}
+                    onChange={(e) => {
+                      setTeamFilter(e.target.value);
+                      setSelectedId(null);
+                    }}
+                  >
+                    <option value="all">all</option>
+                    {teams.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                    <option value="unassigned">unassigned</option>
+                  </select>
+                </label>
+              </form>
+            )}
             <SessionList
               sessions={feed.sessions}
               selectedId={selectedId}

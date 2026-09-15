@@ -9,6 +9,7 @@ import {
   NoSuchTeamError,
   TeamExistsError,
   UserExistsError,
+  type Role,
   type Store,
 } from "./store";
 import {
@@ -31,8 +32,17 @@ export type AppOptions = {
    * (decision 12). Absent or unbuilt, GET / answers 503 with a build hint.
    */
   staticRoot?: string;
-  /** Admin plane bearer token (decision 13). Unset disables /admin/*. */
+  /**
+   * Operator bypass bearer for the admin plane (decision 13). Optional and
+   * no longer the only way in: a signed-in user with the admin role passes
+   * the same gate. Unset simply removes the bypass.
+   */
   adminToken?: string;
+  /**
+   * The raw-TTL default the settings plane falls back to when the operator
+   * has not stored an override (the env RAW_TTL_DAYS at boot).
+   */
+  defaultRawTtlDays?: number;
   /**
    * The S3-compatible cold archive (v2 decision 21). Present, GET
    * /admin/archive can fetch an archived raw payload back by key; absent the
@@ -168,6 +178,7 @@ export const createApp = ({
   store,
   staticRoot,
   adminToken,
+  defaultRawTtlDays = 90,
   archive,
   oidc,
 }: AppOptions): App => ({
@@ -185,6 +196,18 @@ export const createApp = ({
       const identity = oidc === undefined ? null : await oidc.verify(bearer);
       if (identity === null) return null;
       return store.resolveOidcUser(identity);
+    };
+
+    // The signed-in reader plus their authorization role. Role-based reads:
+    // members see only their own rows; admins see the org (decision: role
+    // plane). One extra primary-key lookup per read is the whole cost.
+    const resolveReader = async (): Promise<{
+      user: string;
+      role: Role;
+    } | null> => {
+      const user = await resolveUser();
+      if (user === null) return null;
+      return { user, role: await store.roleOf(user) };
     };
 
     if (url.pathname === "/healthz") return json(200, { ok: true });
@@ -238,31 +261,43 @@ export const createApp = ({
     // /healthz above stays anonymous as the ops probe. ---
     const eventsMatch = url.pathname.match(/^\/sessions\/([^/]+)\/events$/);
     if (eventsMatch && req.method === "GET") {
-      const user = await resolveUser();
-      if (user === null) return json(401, { error: "unauthorized" });
+      const reader = await resolveReader();
+      if (reader === null) return json(401, { error: "unauthorized" });
+      const sessionId = decodeURIComponent(eventsMatch[1]!);
+      // Members may only read their own sessions' payloads; a foreign or
+      // unknown id answers 404 so existence never leaks across users.
+      if (reader.role !== "admin") {
+        const owner = await store.sessionOwner(sessionId);
+        if (owner !== reader.user)
+          return json(404, { error: "no such session" });
+      }
       const sinceSeq = Number(url.searchParams.get("since_seq") ?? 0);
       const events = await store.eventsSince(
-        decodeURIComponent(eventsMatch[1]!),
+        sessionId,
         Number.isFinite(sinceSeq) && sinceSeq >= 0 ? sinceSeq : 0,
       );
-      return json(200, {
-        session_id: decodeURIComponent(eventsMatch[1]!),
-        events,
-      });
+      return json(200, { session_id: sessionId, events });
     }
 
     if (url.pathname === "/sessions" && req.method === "GET") {
-      const user = await resolveUser();
-      if (user === null) return json(401, { error: "unauthorized" });
-      // Team-scoped DRI filter: "unassigned" is the NULL-team bucket.
+      const reader = await resolveReader();
+      if (reader === null) return json(401, { error: "unauthorized" });
+      // Team-scoped DRI filter: "unassigned" is the NULL-team bucket. Members
+      // are always scoped to their own sessions regardless of the filter.
       const teamId = url.searchParams.get("team_id")?.trim() || undefined;
-      return json(200, { sessions: await store.listSessions(teamId) });
+      return json(200, {
+        sessions: await store.listSessions(
+          teamId,
+          reader.role === "admin" ? undefined : reader.user,
+        ),
+      });
     }
 
-    // Decision 18: per-developer usage rollups (org-wide read like /sessions).
+    // Decision 18: per-developer usage rollups. Admins read org-wide (the
+    // leaderboard); members only ever receive their own rows.
     if (url.pathname === "/rollups" && req.method === "GET") {
-      const user = await resolveUser();
-      if (user === null) return json(401, { error: "unauthorized" });
+      const reader = await resolveReader();
+      if (reader === null) return json(401, { error: "unauthorized" });
       const days = windowParam(url.searchParams.get("days"), 3650, 30);
       // hourly ceiling = 31 days so the local-calendar-day charts (decision 27)
       // can re-bucket a full month of UTC hours
@@ -275,7 +310,15 @@ export const createApp = ({
       const sinceHour = new Date(now - (hours - 1) * 3_600_000)
         .toISOString()
         .slice(0, 13);
-      return json(200, await store.listRollups(sinceDay, sinceHour, teamId));
+      return json(
+        200,
+        await store.listRollups(
+          sinceDay,
+          sinceHour,
+          teamId,
+          reader.role === "admin" ? undefined : reader.user,
+        ),
+      );
     }
 
     // v2 decision 23: the roster, for the leaderboard's team grouping.
@@ -285,15 +328,29 @@ export const createApp = ({
       return json(200, { teams: await store.teamsWithMembers() });
     }
 
+    // --- Read-plane identity: GET /me — the signed-in user plus their
+    // lifetime footprint, the one payload the profile page needs. First
+    // sight also provisions the users row, so env-token users become
+    // manageable by role and team without a manual create. ---
+    if (url.pathname === "/me" && req.method === "GET") {
+      const reader = await resolveReader();
+      if (reader === null) return json(401, { error: "unauthorized" });
+      await store.ensureUser(reader.user);
+      const row = await store.getUser(reader.user);
+      return json(200, {
+        user: reader.user,
+        role: reader.role,
+        email: row?.email ?? null,
+        team_name: row?.team_name ?? null,
+        is_dri: row?.is_dri ?? false,
+        created_at: row?.created_at ?? null,
+        usage: await store.ownUsage(reader.user),
+      });
+    }
+
     // --- Review plane (decision 10): reads are org-wide for token holders;
     // writes carry the reader's user token; the review marker itself is
     // DRI-exclusive. ---
-    if (url.pathname === "/me" && req.method === "GET") {
-      const user = await resolveUser();
-      if (user === null) return json(401, { error: "unauthorized" });
-      return json(200, { user, is_dri: await store.isDri(user) });
-    }
-
     const reviewMatch = url.pathname.match(/^\/sessions\/([^/]+)\/review$/);
     if (reviewMatch) {
       const sessionId = decodeURIComponent(reviewMatch[1]!);
@@ -356,12 +413,23 @@ export const createApp = ({
         : json(404, { error: "no such note" });
     }
 
-    // --- Admin plane (decision 13). Disabled unless SLOPWATCH_ADMIN_TOKEN is set.
+    // --- Admin plane (decision 13, now role-based): a signed-in user with
+    // the admin role passes; SLOPWATCH_ADMIN_TOKEN stays as the operator
+    // bypass for bootstrapping the first admin and break-glass access. ---
     if (url.pathname === "/admin" || url.pathname.startsWith("/admin/")) {
-      if (adminToken === undefined)
-        return json(404, { error: "admin plane disabled" });
-      if (bearerToken(req) !== adminToken)
-        return json(401, { error: "unauthorized" });
+      const bearer = bearerToken(req);
+      // Null when the caller is the operator bypass — there is no user
+      // identity to attribute, which only the self-role guard below cares
+      // about.
+      let caller: string | null = null;
+      if (bearer === null) return json(401, { error: "unauthorized" });
+      if (bearer !== adminToken) {
+        const reader = await resolveReader();
+        if (reader === null) return json(401, { error: "unauthorized" });
+        if (reader.role !== "admin")
+          return json(403, { error: "the admin role is required" });
+        caller = reader.user;
+      }
 
       if (url.pathname === "/admin/health" && req.method === "GET")
         return json(200, { ok: true, ...(await store.health()) });
@@ -480,7 +548,7 @@ export const createApp = ({
         if (req.method === "PATCH") {
           const body = await readJson(req);
           if (body === null) return json(400, { error: "invalid json" });
-          const { disabled, is_dri, team_id } = body;
+          const { disabled, is_dri, team_id, role } = body;
           if (disabled !== undefined && typeof disabled !== "boolean")
             return json(400, { error: "disabled must be a boolean" });
           if (is_dri !== undefined && typeof is_dri !== "boolean")
@@ -491,10 +559,18 @@ export const createApp = ({
             typeof team_id !== "string"
           )
             return json(400, { error: "team_id must be a string or null" });
+          if (role !== undefined && role !== "admin" && role !== "member")
+            return json(400, { error: 'role must be "admin" or "member"' });
+          // An admin who demotes themselves may strand the plane with no
+          // admin left; changing your own role goes through another admin
+          // (or the operator bypass).
+          if (role !== undefined && role !== "admin" && caller === name)
+            return json(400, { error: "cannot change your own role" });
           if (
             disabled === undefined &&
             is_dri === undefined &&
-            team_id === undefined
+            team_id === undefined &&
+            role === undefined
           ) {
             return json(400, { error: "nothing to update" });
           }
@@ -509,6 +585,10 @@ export const createApp = ({
             }
             if (team_id !== undefined) {
               const user = await store.setUserTeam(name, team_id);
+              if (user === null) return json(404, { error: "no such user" });
+            }
+            if (role !== undefined) {
+              const user = await store.setUserRole(name, role);
               if (user === null) return json(404, { error: "no such user" });
             }
           } catch (e) {
@@ -550,10 +630,24 @@ export const createApp = ({
         }
       }
 
-      // v2 decision 25: operator settings + a webhook test push.
+      // v2 decision 25, broadened: operator settings as their effective
+      // values — stored overrides merged over the boot defaults, so the
+      // settings page shows what the server actually does, not just what was
+      // explicitly saved.
       if (url.pathname === "/admin/settings") {
+        // Stored overrides merged over the boot defaults — both GET and the
+        // PUT answer show what the server actually does.
+        const effective = async (): Promise<Record<string, string>> => {
+          const stored = await store.listSettings();
+          return {
+            webhook_url: stored.webhook_url ?? "",
+            webhook_enabled: stored.webhook_enabled ?? "true",
+            webhook_format: stored.webhook_format ?? "slack",
+            raw_ttl_days: stored.raw_ttl_days ?? String(defaultRawTtlDays),
+          };
+        };
         if (req.method === "GET")
-          return json(200, { settings: await store.listSettings() });
+          return json(200, { settings: await effective() });
         if (req.method === "PUT") {
           const body = await readJson(req);
           if (body === null) return json(400, { error: "invalid json" });
@@ -588,6 +682,16 @@ export const createApp = ({
                   error: "webhook_format must be slack, feishu, or dingtalk",
                 });
             }
+            if (key === "raw_ttl_days" && value !== null) {
+              const days =
+                typeof value === "number"
+                  ? value
+                  : Number(String(value).trim());
+              if (!Number.isInteger(days) || days < 1)
+                return json(400, {
+                  error: "raw_ttl_days must be a positive integer",
+                });
+            }
           }
           for (const [key, value] of Object.entries(body)) {
             // explicit null clears the setting (e.g. unset webhook_url);
@@ -599,7 +703,7 @@ export const createApp = ({
             if (value === undefined) continue;
             await store.setSetting(key, String(value));
           }
-          return json(200, { settings: await store.listSettings() });
+          return json(200, { settings: await effective() });
         }
       }
 

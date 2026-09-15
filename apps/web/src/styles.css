@@ -336,8 +336,29 @@ main.full {
 .admin-form input:focus {
   outline: 1px solid var(--accent);
 }
+/* selects and checkboxes share the input's dark treatment everywhere */
+.admin-form select,
+.settings-form select,
+.settings-form input {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  padding: 6px 10px;
+}
+.settings-form input:focus,
+.settings-form select:focus {
+  outline: 1px solid var(--accent);
+}
+.settings-form input[type="checkbox"] {
+  padding: 0;
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+}
 .admin-form button,
 .admin-table button,
+.settings-form button,
 .tabs button.signout {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -348,8 +369,87 @@ main.full {
   cursor: pointer;
 }
 .admin-form button:hover,
-.admin-table button:hover {
+.admin-table button:hover,
+.settings-form button:hover:not(:disabled) {
   border-color: var(--accent);
+}
+.settings-form button:disabled {
+  color: var(--dim);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+/* the profile/account sign-out is a deliberate standalone action */
+button.signout {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+button.signout:hover {
+  border-color: var(--down);
+  color: var(--down);
+}
+.header-user {
+  margin-left: auto;
+  color: var(--dim);
+  font-size: 12px;
+  text-decoration: none;
+}
+.header-user:hover {
+  color: var(--text);
+}
+/* --- settings page (task: readable sections instead of one cramped row) --- */
+.settings-section {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  padding: 10px 14px 14px;
+  margin: 10px 0;
+  max-width: 760px;
+}
+.settings-section h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+.settings-section .dim {
+  margin: 4px 0 8px;
+}
+.settings-form {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 10px 16px;
+  align-items: end;
+  margin: 8px 0 0;
+}
+.settings-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.settings-form .field.wide {
+  grid-column: 1 / -1;
+}
+.settings-form .field > span {
+  color: var(--dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.settings-form .field.checkbox .checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+}
+.settings-form .field.actions {
+  flex-direction: row;
+  gap: 8px;
+}
+/* --- me page --- */
+.me .signout {
+  margin-top: 6px;
 }
 .admin-table button.danger {
   color: var(--down);

@@ -6,14 +6,13 @@ import {
   type QuarantineRow,
   ApiError,
 } from "../api";
+import { storedToken } from "../auth";
 import { clock } from "../lib/format";
 import { createPoller } from "../lib/poller";
 import { AdminSessionsPanel } from "./AdminSessionsPanel";
 import { AdminSettingsPanel } from "./AdminSettingsPanel";
 import { AdminTeamsPanel } from "./AdminTeamsPanel";
 import { AdminUsersPanel } from "./AdminUsersPanel";
-
-const TOKEN_KEY = "slopwatch.admin-token";
 
 export type PollError = { message: string; status: number | null };
 
@@ -55,42 +54,6 @@ export const usePolled = <T,>(
     // fetcher closes over the current api/token; refreshKey marks changes
   }, [refreshKey]);
   return { data, error };
-};
-
-const TokenGate = ({
-  error,
-  onSave,
-}: {
-  error: string | null;
-  onSave: (token: string) => void;
-}) => {
-  const [value, setValue] = useState("");
-  return (
-    <section className="admin">
-      <h2>admin sign-in</h2>
-      <p className="dim">
-        Enter the operator token (<code>SLOPWATCH_ADMIN_TOKEN</code>). It is
-        kept in this browser's localStorage only.
-      </p>
-      {error && <p className="banner-error">{error}</p>}
-      <form
-        className="admin-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (value.trim()) onSave(value.trim());
-        }}
-      >
-        <input
-          type="password"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="admin token"
-          autoFocus
-        />
-        <button type="submit">sign in</button>
-      </form>
-    </section>
-  );
 };
 
 const HealthPanel = ({
@@ -183,28 +146,21 @@ const HealthPanel = ({
 
 type AdminTab = "users" | "teams" | "sessions" | "settings" | "health";
 
-const AdminHome = ({
-  api,
-  onSignOut,
-}: {
-  api: AdminApi;
-  /** Optional reason — a rejected token bounces back to the gate with it. */
-  onSignOut: (reason?: string) => void;
-}) => {
+const AdminHome = ({ api }: { api: AdminApi }) => {
   const [tab, setTab] = useState<AdminTab>("users");
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = () => setRefreshKey((k) => k + 1);
   const health = usePolled(() => api.health(), refreshKey);
   const quarantine = usePolled(() => api.quarantine(50), refreshKey);
 
-  // A stored-but-stale token 401s on every panel; bounce to the gate with a
-  // recovery hint instead of leaving the operator staring at failures.
-  useEffect(() => {
-    if (health.error?.status === 401)
-      onSignOut(
-        "admin token was rejected — paste the current SLOPWATCH_ADMIN_TOKEN",
-      );
-  }, [health.error, onSignOut]);
+  // A revoked token or a role pulled mid-session shows as one honest banner
+  // instead of five panels each 401/403-ing.
+  const gate =
+    health.error?.status === 401
+      ? "your user token is no longer valid — sign in again from the me page"
+      : health.error?.status === 403
+        ? "the admin role is required for this area"
+        : null;
 
   return (
     <section className="admin">
@@ -239,16 +195,10 @@ const AdminHome = ({
         >
           health
         </button>
-        <button
-          className="signout"
-          onClick={() => {
-            onSignOut();
-          }}
-        >
-          sign out
-        </button>
       </nav>
-      {tab === "users" ? (
+      {gate ? (
+        <p className="banner-error">{gate}</p>
+      ) : tab === "users" ? (
         <AdminUsersPanel api={api} refreshKey={refreshKey} refresh={refresh} />
       ) : tab === "teams" ? (
         <AdminTeamsPanel api={api} refreshKey={refreshKey} refresh={refresh} />
@@ -271,41 +221,11 @@ const AdminHome = ({
   );
 };
 
-/** Admin plane entry: token gate, then the users/health tabs. */
-export const AdminView = () => {
-  const [token, setToken] = useState<string | null>(() =>
-    localStorage.getItem(TOKEN_KEY),
-  );
-  const [gateError, setGateError] = useState<string | null>(null);
-  if (token === null)
-    return (
-      <TokenGate
-        error={gateError}
-        onSave={(t) => {
-          // Verify against a cheap admin endpoint before trusting the gate —
-          // an unverified save leaves every panel 401-ing afterwards.
-          createAdminApi(() => t)
-            .health()
-            .then(() => {
-              localStorage.setItem(TOKEN_KEY, t);
-              setToken(t);
-            })
-            .catch(() =>
-              setGateError(
-                "that token did not verify — paste SLOPWATCH_ADMIN_TOKEN and try again",
-              ),
-            );
-        }}
-      />
-    );
-  return (
-    <AdminHome
-      api={createAdminApi(() => token)}
-      onSignOut={(reason) => {
-        localStorage.removeItem(TOKEN_KEY);
-        setToken(null);
-        setGateError(reason ?? null);
-      }}
-    />
-  );
-};
+/**
+ * Admin plane entry (decision 13, role-based): no separate operator token —
+ * the signed-in user's own token authorizes, and the server checks the admin
+ * role on every call.
+ */
+export const AdminView = () => (
+  <AdminHome api={createAdminApi(() => storedToken() ?? "")} />
+);

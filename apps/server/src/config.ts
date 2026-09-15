@@ -3,8 +3,12 @@ export type Config = {
   databaseUrl: string;
   /** "name:token,name:token" → bearer token → user name. */
   tokens: Map<string, string>;
-  /** Decision 13: admin plane bearer token; unset disables /admin/*. */
+  /** Decision 13: admin plane bearer token; unset removes the bypass only —
+   * role-based admins (users.role = 'admin') always keep the plane open. */
   adminToken: string | undefined;
+  /** Names granted the admin role at boot (SLOPWATCH_ADMINS), the
+   * bootstrap path to the first admin. */
+  adminNames: string[];
   /** Decision 11: raw payload TTL in days. */
   rawTtlDays: number;
   /** v2 decision 24: the S3-compatible cold archive; null = archiving off. */
@@ -77,6 +81,10 @@ export const loadConfig = (
     databaseUrl,
     tokens,
     adminToken: env.SLOPWATCH_ADMIN_TOKEN,
+    adminNames: (env.SLOPWATCH_ADMINS ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0),
     rawTtlDays: Number(env.RAW_TTL_DAYS ?? 90),
     s3,
     oidc,

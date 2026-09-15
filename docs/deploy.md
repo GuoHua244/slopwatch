@@ -22,8 +22,11 @@ command, not a procedure.
    cat > .env <<'EOF'
    # bootstrap ingest tokens, "name:token" pairs (v0 path, decision 6)
    SLOPWATCH_TOKENS=alice:change-me-alice-token,bob:change-me-bob-token
-   # admin plane bearer token (decision 13); unset value disables /admin
+   # operator bypass for the admin plane (decision 13 + ADR 0006); optional
+   # once real admins exist — the role, not this token, is the normal door
    SLOPWATCH_ADMIN_TOKEN=change-me-admin-token
+   # users granted the admin role at boot (ADR 0006) — the first admin
+   SLOPWATCH_ADMINS=alice
    # global raw-payload retention fallback in days (decision 11)
    RAW_TTL_DAYS=90
    # MinIO console/object-store password (8+ characters)
@@ -48,13 +51,17 @@ command, not a procedure.
 
 ## Onboarding the team
 
-1. Open `/#/admin`, sign in with `SLOPWATCH_ADMIN_TOKEN`.
+1. Open `/#/me` and sign in as one of the `SLOPWATCH_ADMINS` names — the
+   admin role was granted at boot, and the admin panel opens with your user
+   token (no second secret to paste; ADR 0006).
 2. Create the users (name + email), create the teams, assign each user to
    their team (decision 23 — unassigned users land in the "unassigned"
    bucket until filed).
 3. Mint a token per user and hand it over out-of-band; each teammate runs
    `slopwatch install` (or `slopwatch login <token>`) against this server.
-   The same token signs into the dashboard in the browser.
+   The same token signs into the dashboard in the browser. New users start
+   with the member role — they see only their own sessions; promote someone
+   from the users panel ("make admin") when they need the admin plane.
 
 ### OIDC instead of minted tokens (optional)
 
