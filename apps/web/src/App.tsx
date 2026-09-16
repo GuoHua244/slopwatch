@@ -281,9 +281,10 @@ const Dashboard = ({
           </section>
         </main>
       )}
-      {/* One rocket for the whole dashboard: every page scrolls the document,
-          so a single document-mode button covers all routes. */}
-      <BackToTop />
+      {/* One rocket for the whole dashboard. Full-width routes scroll the
+          document; the viewport-locked sessions route scrolls the stage
+          column — keyed by route so the button re-targets on navigation. */}
+      <BackToTop key={route} />
     </>
   );
 };

@@ -245,11 +245,18 @@ header {
 main {
   display: grid;
   grid-template-columns: 340px minmax(0, 1fr);
-  flex: 1;
   min-height: 0;
+  /* Viewport-lock the rail+stage layout: the session list can't stretch the
+     document anymore, so the rail and the stage each scroll in place. flex
+     stays off — `flex: 1` implies flex-basis 0%, which would override the
+     height and let content size win again. */
+  height: calc(100vh - 52px);
+  height: calc(100dvh - 52px);
 }
 main.full {
   grid-template-columns: minmax(0, 1fr);
+  height: auto;
+  flex: 1;
 }
 
 /* --- stage: the centered reading column --- */

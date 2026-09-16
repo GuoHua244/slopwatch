@@ -5,11 +5,13 @@ import { useEffect, useRef, useState } from "react";
  * after the page has scrolled about a screen and a half, scrolls the page
  * back to the top, hides again at the top.
  *
- * Most pages scroll the document itself (#root is min-height, nothing
- * viewport-locks), so the default target is the scrolling element. An
- * internal scroll container wins only when it can actually scroll — a
- * content-height section with `overflow-y: auto` must not hijack the
- * listener, which is exactly what broke the button on the detail page.
+ * Scroll target, in order: the nearest ancestor container that can actually
+ * scroll — a content-height section with `overflow-y: auto` must not hijack
+ * the listener, which is exactly what broke the button on the detail page —
+ * then the stage column on the sessions route (`main` is viewport-locked
+ * there, so the document never scrolls and the column is the real scroller),
+ * and finally the scrolling element. The component is keyed by route in App
+ * so the resolution re-runs when the layout changes.
  */
 const findScrollParent = (node: HTMLElement | null): HTMLElement | null => {
   let current = node?.parentElement ?? null;
@@ -25,17 +27,27 @@ const findScrollParent = (node: HTMLElement | null): HTMLElement | null => {
   return null;
 };
 
+/* Matched without a scrollable check: before data arrives the stage can't
+   scroll yet but is still the scroller once it fills. */
+const stageScroller = () =>
+  document.querySelector<HTMLElement>("main:not(.full) > section");
+
+const resolveTarget = (node: HTMLElement | null): HTMLElement | null =>
+  findScrollParent(node) ?? stageScroller();
+
 export const BackToTop = () => {
   const ref = useRef<HTMLButtonElement>(null);
   const [show, setShow] = useState(false);
   useEffect(() => {
-    const container = findScrollParent(ref.current);
-    const onScroll = () =>
-      setShow(container ? container.scrollTop > 700 : window.scrollY > 700);
-    if (container) {
-      container.addEventListener("scroll", onScroll, { passive: true });
+    const onScroll = () => {
+      const el = resolveTarget(ref.current);
+      setShow(el ? el.scrollTop > 700 : window.scrollY > 700);
+    };
+    const el = resolveTarget(ref.current);
+    if (el) {
+      el.addEventListener("scroll", onScroll, { passive: true });
       onScroll();
-      return () => container.removeEventListener("scroll", onScroll);
+      return () => el.removeEventListener("scroll", onScroll);
     }
     window.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
@@ -50,8 +62,8 @@ export const BackToTop = () => {
       title="Back to top"
       tabIndex={show ? 0 : -1}
       onClick={() => {
-        const container = findScrollParent(ref.current);
-        if (container) container.scrollTo({ top: 0, behavior: "smooth" });
+        const el = resolveTarget(ref.current);
+        if (el) el.scrollTo({ top: 0, behavior: "smooth" });
         else
           document.scrollingElement?.scrollTo({ top: 0, behavior: "smooth" });
       }}
