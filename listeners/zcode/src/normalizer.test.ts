@@ -239,6 +239,25 @@ describe("taskPreviewFromRecord (first-turn task preview)", () => {
     expect(preview).not.toContain("##");
   });
 
+  test("real speech containing '>' after the block run is not truncated", () => {
+    const rec = {
+      ...mainTurnRecord,
+      request: {
+        messages: [
+          {
+            role: "user",
+            content:
+              "<system-reminder>meta</system-reminder>\n\n把 a => b 改成 arrow 函数，然后 x > y 时报错",
+          },
+        ],
+      },
+    };
+    const preview = taskPreviewFromRecord(rec, "s")?.task_preview;
+    expect(preview).toContain("a => b");
+    expect(preview).toContain("x > y");
+    expect(preview).not.toContain("meta");
+  });
+
   test("skips user messages that are pure injection blocks", () => {
     const rec = {
       ...mainTurnRecord,

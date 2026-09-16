@@ -76,8 +76,17 @@ export const loadConfig = (
         }
       : null;
 
+  // Fail visible at boot: a NaN port or TTL would otherwise surface as a
+  // listen error / daily prune failures far from the typo that caused them.
+  const port = Number(env.PORT ?? 8787);
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error("PORT must be an integer between 1 and 65535");
+  const rawTtlDays = Number(env.RAW_TTL_DAYS ?? 90);
+  if (!Number.isInteger(rawTtlDays) || rawTtlDays < 1)
+    throw new Error("RAW_TTL_DAYS must be a positive integer");
+
   return {
-    port: Number(env.PORT ?? 8787),
+    port,
     databaseUrl,
     tokens,
     adminToken: env.SLOPWATCH_ADMIN_TOKEN,
@@ -85,7 +94,7 @@ export const loadConfig = (
       .split(",")
       .map((name) => name.trim())
       .filter((name) => name.length > 0),
-    rawTtlDays: Number(env.RAW_TTL_DAYS ?? 90),
+    rawTtlDays,
     s3,
     oidc,
   };

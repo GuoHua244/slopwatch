@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildUserPrompt, foldSummary, SYSTEM_PROMPT } from "./summarize";
+import {
+  MAX_FOLD_DIGEST_BYTES,
+  buildUserPrompt,
+  foldSummary,
+  SYSTEM_PROMPT,
+} from "./summarize";
 import { summaryStore } from "./store";
 
 const tempBase = (): string =>
@@ -144,5 +149,94 @@ describe("foldSummary", () => {
     expect(event).toBeNull();
     expect(store.pendingDigests()).toEqual(["turn 1"]);
     expect(store.loadCache()?.folded).toBe(5);
+  });
+
+  test("a digest appended mid-fold survives: the fold consumes only its snapshot", async () => {
+    const base = tempBase();
+    const store = summaryStore(base);
+    store.appendDigest("turn 1: snapshot digest");
+
+    let resolveFetch!: (response: Response) => void;
+    const gated = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+    const seen: { user?: string } = {};
+    // the fetch blocks on a deferred promise; the prompt capture happens
+    // synchronously when foldSummary initiates the call
+    const inFlight = foldSummary({
+      stateBase: base,
+      agent: "zcode",
+      sessionId: "s1",
+      llm,
+      fetchImpl: asFetch(async (_url, init) => {
+        const body = JSON.parse(String((init as { body?: unknown })?.body)) as {
+          messages: { role: string; content: string }[];
+        };
+        seen.user = body.messages.find((m) => m.role === "user")?.content;
+        return gated;
+      }),
+    });
+
+    // the fold has its snapshot now (the fetch was entered above) — a new
+    // digest lands while the LLM call is still in flight
+    store.appendDigest("turn 2: appended mid-fold");
+    resolveFetch(
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: "Folded." } }] }),
+      ),
+    );
+    const event = await inFlight;
+
+    expect(event?.body).toBe("Folded.");
+    expect(seen.user).toContain("turn 1: snapshot digest");
+    expect(seen.user).not.toContain("turn 2");
+    expect(store.loadCache()?.folded).toBe(1);
+    // the mid-fold digest was NOT deleted unfolded — it folds next time
+    expect(store.pendingDigests()).toEqual(["turn 2: appended mid-fold"]);
+  });
+
+  test("a backlog bigger than the byte cap folds only the oldest digests", async () => {
+    const base = tempBase();
+    const store = summaryStore(base);
+    const big = "x".repeat(2000);
+    const total = 30; // ~60KB of digests — well past the 32KB prompt budget
+    for (let i = 0; i < total; i += 1) store.appendDigest(`${i}: ${big}`);
+
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+    const seen: { user?: string } = {};
+    let event: Awaited<ReturnType<typeof foldSummary>>;
+    try {
+      event = await foldSummary({
+        stateBase: base,
+        agent: "zcode",
+        sessionId: "s1",
+        llm,
+        fetchImpl: captureUser(seen),
+      });
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(event).not.toBeNull();
+    // the prompt holds a chronological prefix within the budget — the oldest
+    // digests, never the newest ones
+    expect(seen.user).toContain("0: ");
+    expect(seen.user).not.toContain(`${total - 1}: `);
+    // overflow is logged, not silent
+    expect(
+      errors.some((args) =>
+        String(args.join(" ")).includes("fold prompt capped"),
+      ),
+    ).toBe(true);
+    // what did not fit stays pending for the next fold
+    const remaining = store.pendingDigests();
+    expect(remaining.length).toBeGreaterThan(0);
+    expect(store.loadCache()?.folded).toBe(total - remaining.length);
+    expect(remaining.at(-1)).toBe(`${total - 1}: ${big}`);
+    expect(MAX_FOLD_DIGEST_BYTES).toBe(32_000);
   });
 });

@@ -43,10 +43,16 @@ describe("planHook", () => {
     expect(plan.kind).toBe("none");
   });
 
+  test("PostToolUse re-spawns mid-turn (idle-exit recovery)", () => {
+    const plan = planHook({ ...base, hook_event_name: "PostToolUse" });
+    expect(plan.kind).toBe("spawn");
+  });
+
   test("other hook events are ignored", () => {
-    expect(planHook({ ...base, hook_event_name: "PostToolUse" }).kind).toBe(
+    expect(planHook({ ...base, hook_event_name: "PreToolUse" }).kind).toBe(
       "none",
     );
+    expect(planHook({ ...base, hook_event_name: "Stop" }).kind).toBe("none");
   });
 
   test("malformed input is ignored, never thrown on", () => {

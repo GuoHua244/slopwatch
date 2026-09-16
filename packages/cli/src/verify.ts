@@ -4,6 +4,8 @@
  * token must fail loudly at install/login time, not silently at capture
  * time.
  */
+import { joinUrl } from "@slopwatch/events";
+
 export type VerifyResult =
   | { ok: true; user: string; isDri: boolean }
   | { ok: false; error: string };
@@ -15,8 +17,10 @@ export const verifyToken = async (
 ): Promise<VerifyResult> => {
   let res: Response;
   try {
-    res = await fetchImpl(`${serverUrl.replace(/\/+$/, "")}/me`, {
+    res = await fetchImpl(joinUrl(serverUrl, "/me"), {
       headers: { authorization: `Bearer ${token}` },
+      // a hung server must not hang the interactive install/login forever
+      signal: AbortSignal.timeout(10_000),
     });
   } catch (e) {
     return {

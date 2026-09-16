@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { createApi, type SessionSummary } from "../api";
-import { createPoller } from "../lib/poller";
+import { errorMessage } from "../lib/format";
+import { usePolledResource } from "./usePolled";
 
 export type FeedStatus = "connecting" | "live" | "down";
 
@@ -26,34 +27,23 @@ export const useSessions = (
   const [status, setStatus] = useState<FeedStatus>("connecting");
   const [lastError, setLastError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const mounted = useRef(true);
 
-  useEffect(() => {
-    if (!enabled) return () => {};
-    mounted.current = true;
-    const poller = createPoller({
-      intervalMs,
-      tick: async () => {
-        try {
-          const list = await api.listSessions(teamId ?? undefined);
-          if (!mounted.current) return;
-          setSessions(list);
-          setStatus("live");
-          setLastError(null);
-          setLastUpdated(new Date());
-        } catch (error) {
-          if (!mounted.current) return;
-          setStatus("down");
-          setLastError(error instanceof Error ? error.message : String(error));
-        }
-      },
-    });
-    poller.start();
-    return () => {
-      mounted.current = false;
-      poller.stop();
-    };
-  }, [intervalMs, teamId, enabled]);
+  usePolledResource<SessionSummary[]>({
+    deps: [intervalMs, teamId, enabled],
+    intervalMs,
+    enabled,
+    createFetch: () => () => api.listSessions(teamId ?? undefined),
+    onSuccess: (list) => {
+      setSessions(list);
+      setStatus("live");
+      setLastError(null);
+      setLastUpdated(new Date());
+    },
+    onError: (error) => {
+      setStatus("down");
+      setLastError(errorMessage(error));
+    },
+  });
 
   return { sessions, status, lastError, lastUpdated };
 };

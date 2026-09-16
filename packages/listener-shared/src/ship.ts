@@ -27,7 +27,17 @@ export const createShipPipeline = (opts: {
   stateBase: string;
   /** Called when a batch had to queue — the listener spawns a detached sweep. */
   onQueued?: () => void;
+  /** Called per event that fails validation. Defaults to a one-line stderr
+   * warning — without it stdout mode would drop invalid events silently. */
+  onInvalid?: (event: unknown) => void;
 }): ShipPipeline => {
+  const reportInvalid =
+    opts.onInvalid ??
+    ((event: unknown) =>
+      console.error(
+        "live: skipping invalid event:",
+        JSON.stringify(event).slice(0, 200),
+      ));
   const shipFlush =
     opts.serverUrl && opts.token
       ? createFlusher({
@@ -39,11 +49,7 @@ export const createShipPipeline = (opts: {
               token: opts.token!,
             }),
           queue: createDiskQueue({ file: `${opts.stateBase}.queue.jsonl` }),
-          onInvalid: (event) =>
-            console.error(
-              "live: skipping invalid event:",
-              JSON.stringify(event).slice(0, 200),
-            ),
+          onInvalid: reportInvalid,
         })
       : null;
   return {
@@ -69,8 +75,9 @@ export const createShipPipeline = (opts: {
         }
         return result;
       }
-      for (const event of batch.filter(isNormalEvent)) {
-        console.log(JSON.stringify(event));
+      for (const event of batch) {
+        if (isNormalEvent(event)) console.log(JSON.stringify(event));
+        else reportInvalid(event);
       }
       return "stdout";
     },

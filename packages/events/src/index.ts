@@ -196,6 +196,12 @@ export const isNonEmptyString = (v: unknown): v is string =>
 const isNonNegativeNumber = (v: unknown): boolean =>
   typeof v === "number" && Number.isFinite(v) && v >= 0;
 
+/** Token counts are summed into Postgres bigint columns both at ingest and on
+ * every rollup recompute — a fractional or beyond-2^53 value would fail the
+ * `::bigint` cast and poison recomputes/backfills for that data forever. */
+const isTokenCount = (v: unknown): boolean =>
+  typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+
 const isOptional = (v: unknown, pred: (v: unknown) => boolean): boolean =>
   v === undefined || pred(v);
 
@@ -211,8 +217,7 @@ const isTokenUsage = (v: unknown): v is TokenUsage =>
   isObject(v) &&
   Object.entries(v).every(
     ([key, n]) =>
-      (TOKEN_USAGE_KEYS as readonly string[]).includes(key) &&
-      isNonNegativeNumber(n),
+      (TOKEN_USAGE_KEYS as readonly string[]).includes(key) && isTokenCount(n),
   );
 
 const isOneOf =
@@ -295,12 +300,26 @@ export const isNormalEvent = (value: unknown): value is NormalEvent => {
       if (value.event !== "line") return false;
       if (!isNonEmptyString(value.reason)) return false;
       if (!isNonEmptyString(value.line)) return false;
+      // The listener caps quarantine lines before sending, but validation is
+      // the server's only defense — an uncapped line lands verbatim in
+      // Postgres inside the ingest transaction.
+      if (Buffer.byteLength(value.line, "utf8") > QUARANTINE_MAX_LINE_BYTES)
+        return false;
       return true;
     }
     default:
       return false;
   }
 };
+
+/**
+ * Join an API base URL and an absolute path: trailing slashes are stripped
+ * from the base and exactly one separator is inserted, so either
+ * `joinUrl("http://x/", "/v1")` or `joinUrl("http://x", "/v1")` yields
+ * "http://x/v1".
+ */
+export const joinUrl = (base: string, path: string): string =>
+  `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 
 export type SendEventsOptions = {
   /** Base URL of the Slopwatch Server, e.g. "http://localhost:8787". */
@@ -309,7 +328,22 @@ export type SendEventsOptions = {
   token: string;
   /** Injectable for tests. */
   fetchImpl?: typeof fetch;
+  /** Abort the POST when the server accepts but never answers (a black-holed
+   * connection would otherwise hang the listener forever). Default 30s. */
+  timeoutMs?: number;
 };
+
+/** A send the server actively rejected. `status` lets the disk queue tell a
+ * permanent rejection (drop the batch, keep flowing) from a transient one
+ * (leave it queued for replay). */
+export class SendError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`sendEvents: server responded ${status}`);
+    this.name = "SendError";
+    this.status = status;
+  }
+}
 
 /**
  * Ship a batch of events to the Server. Failure behavior: throw and let the
@@ -321,15 +355,16 @@ export const sendEvents = async (
   opts: SendEventsOptions,
 ): Promise<void> => {
   const doFetch = opts.fetchImpl ?? fetch;
-  const res = await doFetch(`${opts.serverUrl.replace(/\/+$/, "")}/events`, {
+  const res = await doFetch(joinUrl(opts.serverUrl, "/events"), {
     method: "POST",
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${opts.token}`,
     },
     body: JSON.stringify({ schema_version: SCHEMA_VERSION, events }),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
   });
   if (!res.ok) {
-    throw new Error(`sendEvents: server responded ${res.status}`);
+    throw new SendError(res.status);
   }
 };

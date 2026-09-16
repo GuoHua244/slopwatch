@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash, createHmac } from "node:crypto";
-import { deriveSigningKey, signRequest, type S3Config } from "./s3";
+import { deriveSigningKey, encodeKey, signRequest, type S3Config } from "./s3";
 
 const CONFIG: S3Config = {
   endpoint: "http://minio:9000",
@@ -56,14 +56,20 @@ describe("signRequest", () => {
     ).not.toBe(sig(a));
   });
 
-  test("path-style canonical URI encodes each key segment", () => {
-    const now = new Date("2026-09-13T08:00:00.000Z");
-    // the key contains a session id with characters S3 requires encoded;
-    // the signature must just stay stable for identical inputs
-    const key = "raw/zcode/sess_ab%20c/7.json";
-    const a = signRequest(CONFIG, "GET", key, "", now);
-    const b = signRequest(CONFIG, "GET", key, "", now);
-    expect(a.authorization).toBe(b.authorization);
-    expect(a.authorization.startsWith("AWS4-HMAC-SHA256 ")).toBe(true);
+  test("encodeKey percent-encodes everything outside the RFC 3986 unreserved set", () => {
+    // sub-delims S3 SigV4 requires encoded — encodeURIComponent leaves them raw
+    expect(encodeKey("raw/zcode/sess_a'b!c(d)e/7.json")).toBe(
+      "raw/zcode/sess_a%27b%21c%28d%29e/7.json",
+    );
+    // the unreserved set stays readable
+    expect(encodeKey("raw/x/sess-keep._~42/1.json")).toBe(
+      "raw/x/sess-keep._~42/1.json",
+    );
+    // a literal % in a session id encodes once, here (not double-decoded)
+    expect(encodeKey("raw/x/sess_ab%20c/7.json")).toBe(
+      "raw/x/sess_ab%2520c/7.json",
+    );
+    // separators survive per-segment encoding
+    expect(encodeKey("raw/a b/sess/1.json")).toBe("raw/a%20b/sess/1.json");
   });
 });

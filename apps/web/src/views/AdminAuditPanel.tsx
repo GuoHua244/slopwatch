@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { AdminApi, AuditRow } from "../api";
+import { usePolled, type PollError } from "../hooks/usePolled";
 import { fmtDate, shortId } from "../lib/format";
-import { usePolled, type PollError } from "./AdminView";
+import { ErrorBanner } from "./admin-shared";
 
 type Props = {
   api: AdminApi;
@@ -182,7 +183,7 @@ export const AdminAuditPanel = ({ api, refreshKey }: Props) => {
         and what moved. Nothing here can be edited or deleted. Click a row for
         the raw record.
       </p>
-      {error && <p className="banner-error">{error.message}</p>}
+      <ErrorBanner message={error?.message ?? null} />
       <div className="panel-card">
         <form className="admin-form" onSubmit={apply}>
           <select

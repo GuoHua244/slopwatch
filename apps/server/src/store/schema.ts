@@ -1,0 +1,162 @@
+import type { PgCtx } from "./db";
+import type { Store } from "./types";
+
+const DDL = `
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id    TEXT PRIMARY KEY,
+  agent         TEXT NOT NULL,
+  user_id       TEXT,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seq      BIGINT NOT NULL DEFAULT 0,
+  title         TEXT,
+  task_preview  TEXT,
+  total_input_tokens       BIGINT NOT NULL DEFAULT 0,
+  total_output_tokens      BIGINT NOT NULL DEFAULT 0,
+  total_cache_read_tokens  BIGINT NOT NULL DEFAULT 0,
+  total_cache_write_tokens BIGINT NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS events (
+  session_id  TEXT NOT NULL REFERENCES sessions (session_id),
+  event_seq   BIGINT NOT NULL,
+  agent       TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  payload     JSONB NOT NULL,
+  raw         JSONB,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (session_id, event_seq)
+);
+CREATE INDEX IF NOT EXISTS events_received_at ON events (received_at);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS task_preview TEXT;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_input_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_output_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_cache_read_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_cache_write_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_event_at TIMESTAMPTZ;
+-- Backfill once: a session's last activity is its newest event, falling back
+-- to first_seen_at for rows that never carried events. Idempotent — the WHERE
+-- keeps it off every row the ingest path already keeps fresh.
+UPDATE sessions s
+SET last_event_at = COALESCE(
+  (SELECT max(e.received_at) FROM events e WHERE e.session_id = s.session_id),
+  s.first_seen_at
+)
+WHERE s.last_event_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS users (
+  name       TEXT PRIMARY KEY,
+  email      TEXT,
+  disabled   BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS tokens (
+  token_id   UUID PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  hint       TEXT NOT NULL,
+  user_name  TEXT NOT NULL REFERENCES users (name) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  revoked_at TIMESTAMPTZ
+);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_dri BOOLEAN NOT NULL DEFAULT FALSE;
+-- Role-based authorization: admins run the operator plane and read org-wide;
+-- everyone else reads only their own rows. Existing rows default to member.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'member';
+CREATE TABLE IF NOT EXISTS session_reviews (
+  session_id  TEXT PRIMARY KEY REFERENCES sessions (session_id) ON DELETE CASCADE,
+  reviewer_id TEXT NOT NULL,
+  reviewed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS review_comments (
+  comment_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,
+  turn_id    TEXT,
+  author_id  TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS review_comments_session ON review_comments (session_id);
+CREATE TABLE IF NOT EXISTS user_daily_rollup (
+  user_id    TEXT NOT NULL,
+  day        TEXT NOT NULL,
+  turns      BIGINT NOT NULL DEFAULT 0,
+  tool_calls BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day)
+);
+CREATE TABLE IF NOT EXISTS user_hourly_rollup (
+  user_id    TEXT NOT NULL,
+  hour       TEXT NOT NULL,
+  turns      BIGINT NOT NULL DEFAULT 0,
+  tool_calls BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, hour)
+);
+CREATE TABLE IF NOT EXISTS model_daily_rollup (
+  user_id            TEXT NOT NULL,
+  day                TEXT NOT NULL,
+  model              TEXT NOT NULL,
+  model_requests     BIGINT NOT NULL DEFAULT 0,
+  input_tokens       BIGINT NOT NULL DEFAULT 0,
+  output_tokens      BIGINT NOT NULL DEFAULT 0,
+  cache_read_tokens  BIGINT NOT NULL DEFAULT 0,
+  cache_write_tokens BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day, model)
+);
+CREATE TABLE IF NOT EXISTS model_hourly_rollup (
+  user_id            TEXT NOT NULL,
+  hour               TEXT NOT NULL,
+  model              TEXT NOT NULL,
+  model_requests     BIGINT NOT NULL DEFAULT 0,
+  input_tokens       BIGINT NOT NULL DEFAULT 0,
+  output_tokens      BIGINT NOT NULL DEFAULT 0,
+  cache_read_tokens  BIGINT NOT NULL DEFAULT 0,
+  cache_write_tokens BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, hour, model)
+);
+CREATE TABLE IF NOT EXISTS quarantine (
+  seq         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  agent       TEXT NOT NULL,
+  session_id  TEXT NOT NULL,
+  reason      TEXT NOT NULL,
+  line        TEXT NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS quarantine_created_at ON quarantine (created_at);
+CREATE TABLE IF NOT EXISTS teams (
+  id                 UUID PRIMARY KEY,
+  name               TEXT NOT NULL UNIQUE,
+  raw_retention_days INTEGER,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS team_id UUID REFERENCES teams (id) ON DELETE SET NULL;
+-- ADR 0004: the session's team is a snapshot from creation time — no FK, so
+-- a later team delete (or reorg) can never rewrite captured history.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS team_id UUID;
+-- v2 decision 24: archive bookkeeping for the raw-payload cold store
+ALTER TABLE events ADD COLUMN IF NOT EXISTS raw_archived BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS archive_key TEXT;
+-- v2 decision 25: operator-set configuration (the org webhook lives here)
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- ADR 0007: append-only audit trail of every data mutation. Actors are
+-- snapshotted as text (no FK) so deleting a user never erases their history.
+CREATE TABLE IF NOT EXISTS audit_log (
+  seq         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actor_kind  TEXT NOT NULL,
+  actor_user  TEXT,
+  action      TEXT NOT NULL,
+  target      TEXT NOT NULL,
+  detail      JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS audit_log_action ON audit_log (action);
+`;
+
+export const schemaMethods = ({ pool }: PgCtx): Pick<Store, "migrate"> => ({
+  /** Create tables if missing. Idempotent. */
+  async migrate() {
+    await pool.query(DDL);
+  },
+});

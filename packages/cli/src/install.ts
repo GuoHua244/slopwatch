@@ -179,6 +179,13 @@ const wireHosts = (opts: InstallOptions, lines: string[]): void => {
       const merged = mergeZcodeHooks(readJsonIfExists(configPath), entry);
       writeJson(configPath, merged);
       lines.push(`zcode: hooks wired → ${configPath} (${scope})`);
+      // mergeHookConfig only forces hooks.enabled on when the key is absent;
+      // an explicit false stays and must be surfaced to the user
+      if (merged.hooks.enabled === false) {
+        lines.push(
+          "zcode: WARNING — hooks.enabled is false in this config; slopwatch hooks will not fire until it is set to true",
+        );
+      }
       if (opts.dir) {
         lines.push(
           "zcode: approve the workspace-hook TRUST prompt in the client — sessions started before that fire nothing",

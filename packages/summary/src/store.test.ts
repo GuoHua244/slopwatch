@@ -77,4 +77,32 @@ describe("summaryStore digests", () => {
     expect(store.paths.cache).toBe(join("d", "sess.summary.json"));
     expect(store.paths.digests).toBe(join("d", "sess.digest.jsonl"));
   });
+
+  test("consumeDigests drops only the consumed prefix", () => {
+    const store = summaryStore(tempBase());
+    store.appendDigest("a");
+    store.appendDigest("b");
+    store.appendDigest("c");
+    store.consumeDigests(2);
+    expect(store.pendingDigests()).toEqual(["c"]);
+    // consuming the rest empties the log
+    store.consumeDigests(1);
+    expect(store.pendingDigests()).toEqual([]);
+  });
+
+  test("consumeDigests keeps entries appended after the snapshot was taken", () => {
+    const store = summaryStore(tempBase());
+    store.appendDigest("a");
+    store.consumeDigests(1);
+    store.appendDigest("b");
+    // consuming more than what exists is a no-op — nothing is lost
+    store.consumeDigests(5);
+    expect(store.pendingDigests()).toEqual(["b"]);
+  });
+
+  test("consumeDigests on an empty or missing log is a no-op", () => {
+    const store = summaryStore(tempBase());
+    store.consumeDigests(3);
+    expect(store.pendingDigests()).toEqual([]);
+  });
 });

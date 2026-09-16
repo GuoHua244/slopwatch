@@ -2,9 +2,11 @@
  * The rolling fold (open question 15): merge the turn digests added since
  * the last end into the previous summary via one small LLM call. Skips the
  * LLM entirely when nothing new arrived; on LLM failure the digests stay
- * pending so the next end retries them. Every meaningful end leaves the
- * summary current and the last one wins — no need to identify "the real
- * end".
+ * pending so the next end retries them. After a successful fold exactly the
+ * folded snapshot is consumed — digests appended while the LLM call was in
+ * flight stay pending for the next fold instead of being deleted unfolded.
+ * Every meaningful end leaves the summary current and the last one wins —
+ * no need to identify "the real end".
  */
 import { envelope, type SessionSummaryEvent } from "@slopwatch/events";
 import { chatCompletion } from "./llm";
@@ -16,6 +18,16 @@ export const SYSTEM_PROMPT =
   "reply with ONLY the updated summary: at most 120 words, plain text, in " +
   "the same language as the session's user messages. Cover what was " +
   "attempted, what changed, and whether the work finished.";
+
+/**
+ * Byte budget for the digest block of one fold prompt. A backlog that
+ * outgrows it folds the oldest digests first (start of the pending list, so
+ * chronology is preserved); the rest stay pending for the next fold.
+ */
+export const MAX_FOLD_DIGEST_BYTES = 32_000;
+
+const digestLineBytes = (digest: string): number =>
+  Buffer.byteLength(`- ${digest}\n`, "utf8");
 
 export const buildUserPrompt = (
   prior: string | null,
@@ -47,11 +59,30 @@ export const foldSummary = async (
   const digests = store.pendingDigests();
   if (digests.length === 0) return null;
 
+  // Cap the prompt: take the oldest digests first until the byte budget is
+  // full (always admitting at least one so a fold can never stall), and
+  // leave the overflow pending for the next fold.
+  const folded: string[] = [];
+  let bytes = 0;
+  for (const digest of digests) {
+    const cost = digestLineBytes(digest);
+    if (folded.length > 0 && bytes + cost > MAX_FOLD_DIGEST_BYTES) break;
+    folded.push(digest);
+    bytes += cost;
+  }
+  if (folded.length < digests.length) {
+    console.error(
+      `slopwatch summary: fold prompt capped at ${MAX_FOLD_DIGEST_BYTES} bytes ` +
+        `— folding ${folded.length} of ${digests.length} pending digests; ` +
+        `${digests.length - folded.length} left for the next fold`,
+    );
+  }
+
   const cache = store.loadCache();
   const text = await chatCompletion({
     ...opts.llm,
     system: SYSTEM_PROMPT,
-    user: buildUserPrompt(cache?.body ?? null, digests),
+    user: buildUserPrompt(cache?.body ?? null, folded),
     timeoutMs: opts.timeoutMs,
     fetchImpl: opts.fetchImpl,
   });
@@ -62,10 +93,12 @@ export const foldSummary = async (
   store.saveCache({
     body: text,
     model,
-    folded: (cache?.folded ?? 0) + digests.length,
+    folded: (cache?.folded ?? 0) + folded.length,
     updatedAt,
   });
-  store.clearDigests();
+  // Consume exactly what was folded: the digest log may have grown while the
+  // LLM call ran, and those newer entries must survive.
+  store.consumeDigests(folded.length);
   return {
     ...envelope(opts.agent, opts.sessionId, updatedAt),
     kind: "session",

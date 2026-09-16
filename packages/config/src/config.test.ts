@@ -61,6 +61,31 @@ describe("loadConfig/saveConfig", () => {
     expect(loadConfig(home)).toBeNull();
   });
 
+  test("warns when the config file is corrupt, stays silent when missing", () => {
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+    try {
+      // missing file: silent — stdout mode is a normal state
+      expect(loadConfig(tempHome())).toBeNull();
+      expect(errors).toEqual([]);
+
+      // existing but unparsable: warned, still null
+      const home = tempHome();
+      writeRawConfig(home, "{not json");
+      expect(loadConfig(home)).toBeNull();
+      expect(errors.length).toBe(1);
+      expect(errors[0]![0]).toBe(
+        "slopwatch config file is corrupt and was ignored:",
+      );
+      expect(errors[0]![1]).toBe(configFilePath(home));
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   test("returns null when serverUrl or token are missing or empty", () => {
     const home = tempHome();
     writeRawConfig(home, JSON.stringify({ serverUrl: "x" }));

@@ -17,6 +17,9 @@ if (!adminUrl) {
 
 const appPassword =
   process.env.SLOPWATCH_DB_PASSWORD ?? `sw_${crypto.randomUUID().slice(0, 18)}`;
+// The generated password is only meaningful when the role is about to be
+// created; on a re-run the existing role keeps its (unknown) password.
+const passwordKnown = process.env.SLOPWATCH_DB_PASSWORD !== undefined;
 
 const admin = new Client({ connectionString: adminUrl });
 await admin.connect();
@@ -25,8 +28,14 @@ const roleExists = async () =>
   (await admin.query("SELECT 1 FROM pg_roles WHERE rolname = 'slopwatch'"))
     .rowCount === 1;
 
+let createdRole = false;
 if (!(await roleExists())) {
-  await admin.query(`CREATE ROLE slopwatch LOGIN PASSWORD '${appPassword}'`);
+  // CREATE ROLE is a utility statement — it takes no bind parameters, so
+  // escape the literal (a generated or operator-supplied password can hold
+  // single quotes).
+  const literal = appPassword.replace(/'/g, "''");
+  await admin.query(`CREATE ROLE slopwatch LOGIN PASSWORD '${literal}'`);
+  createdRole = true;
   console.log("created role slopwatch");
 } else {
   console.log("role slopwatch already exists — leaving password unchanged");
@@ -46,9 +55,18 @@ for (const db of ["slopwatch", "slopwatch_test"]) {
 }
 
 await admin.end();
-console.log(
-  `\napp DSN: postgres://slopwatch:${appPassword}@localhost:5432/slopwatch`,
-);
-console.log(
-  `test DSN: postgres://slopwatch:${appPassword}@localhost:5432/slopwatch_test`,
-);
+if (createdRole || passwordKnown) {
+  console.log(
+    `\napp DSN: postgres://slopwatch:${appPassword}@localhost:5432/slopwatch`,
+  );
+  console.log(
+    `test DSN: postgres://slopwatch:${appPassword}@localhost:5432/slopwatch_test`,
+  );
+} else {
+  console.log(
+    "\nthe role already existed and SLOPWATCH_DB_PASSWORD was not set, so its\n" +
+      "password is unknown — the DSNs below will not authenticate. Set\n" +
+      "SLOPWATCH_DB_PASSWORD and reset the role, e.g. via the admin connection:\n" +
+      "  ALTER ROLE slopwatch PASSWORD '<new password>'",
+  );
+}

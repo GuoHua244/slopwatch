@@ -2,15 +2,24 @@ import { useEffect, useRef, useState } from "react";
 
 /**
  * Back-to-top rocket (NN/g guidelines): fixed bottom-right, appears only
- * after the page has scrolled about a screen and a half, scrolls the same
- * container back to the top, hides again at the top. The scroll container is
- * the nearest ancestor with a scrolling overflow, not the window.
+ * after the page has scrolled about a screen and a half, scrolls the page
+ * back to the top, hides again at the top.
+ *
+ * Most pages scroll the document itself (#root is min-height, nothing
+ * viewport-locks), so the default target is the scrolling element. An
+ * internal scroll container wins only when it can actually scroll — a
+ * content-height section with `overflow-y: auto` must not hijack the
+ * listener, which is exactly what broke the button on the detail page.
  */
 const findScrollParent = (node: HTMLElement | null): HTMLElement | null => {
   let current = node?.parentElement ?? null;
   while (current) {
     const overflowY = getComputedStyle(current).overflowY;
-    if (overflowY === "auto" || overflowY === "scroll") return current;
+    if (
+      (overflowY === "auto" || overflowY === "scroll") &&
+      current.scrollHeight > current.clientHeight
+    )
+      return current;
     current = current.parentElement;
   }
   return null;
@@ -21,11 +30,16 @@ export const BackToTop = () => {
   const [show, setShow] = useState(false);
   useEffect(() => {
     const container = findScrollParent(ref.current);
-    if (!container) return;
-    const onScroll = () => setShow(container.scrollTop > 700);
-    container.addEventListener("scroll", onScroll, { passive: true });
+    const onScroll = () =>
+      setShow(container ? container.scrollTop > 700 : window.scrollY > 700);
+    if (container) {
+      container.addEventListener("scroll", onScroll, { passive: true });
+      onScroll();
+      return () => container.removeEventListener("scroll", onScroll);
+    }
+    window.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
-    return () => container.removeEventListener("scroll", onScroll);
+    return () => window.removeEventListener("scroll", onScroll);
   }, []);
   return (
     <button
@@ -37,7 +51,9 @@ export const BackToTop = () => {
       tabIndex={show ? 0 : -1}
       onClick={() => {
         const container = findScrollParent(ref.current);
-        container?.scrollTo({ top: 0, behavior: "smooth" });
+        if (container) container.scrollTo({ top: 0, behavior: "smooth" });
+        else
+          document.scrollingElement?.scrollTo({ top: 0, behavior: "smooth" });
       }}
     >
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>

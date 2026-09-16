@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { AdminApi } from "../api";
-import { errorMessage } from "../lib/format";
-import { usePolled, type PollError } from "./AdminView";
+import { usePolled, type PollError } from "../hooks/usePolled";
+import { ErrorBanner, useAsyncAction } from "./admin-shared";
 
 type Props = {
   api: AdminApi;
@@ -29,16 +29,11 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const run = async (fn: () => Promise<void>) => {
-    setFormError(null);
-    setNotice(null);
-    try {
-      await fn();
-      refresh();
-    } catch (err) {
-      setFormError(errorMessage(err));
-    }
-  };
+  // The shared action shape; starting an attempt also clears the last notice.
+  const run = useAsyncAction((message) => {
+    setFormError(message);
+    if (message === null) setNotice(null);
+  }, refresh);
 
   const current = settings ?? {};
   const url = urlDraft ?? current.webhook_url ?? "";
@@ -96,7 +91,7 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
       <p className="page-sub">
         Two org-wide behaviors. Everything applies immediately on save.
       </p>
-      {error && <p className="banner-error">{error.message}</p>}
+      <ErrorBanner message={error?.message ?? null} />
 
       <div className="settings-col">
         <section className="settings-card">
@@ -200,7 +195,7 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
         </section>
       </div>
 
-      {formError && <p className="banner-error">{formError}</p>}
+      <ErrorBanner message={formError} />
       {notice && <p className="dim">{notice}</p>}
     </>
   );

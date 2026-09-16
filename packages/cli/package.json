@@ -13,6 +13,8 @@
   "dependencies": {
     "@slopwatch/config": "workspace:*",
     "@slopwatch/listener-claude-code": "workspace:*",
-    "@slopwatch/listener-zcode": "workspace:*"
+    "@slopwatch/listener-shared": "workspace:*",
+    "@slopwatch/listener-zcode": "workspace:*",
+    "@slopwatch/events": "workspace:*"
   }
 }

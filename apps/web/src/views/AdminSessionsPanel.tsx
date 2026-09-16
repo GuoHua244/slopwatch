@@ -1,13 +1,8 @@
 import { useMemo, useState } from "react";
 import { createApi, type AdminApi, type SessionSummary } from "../api";
-import {
-  clock,
-  errorMessage,
-  fmtTokens,
-  shortId,
-  sinceDuration,
-} from "../lib/format";
-import { usePolled, type PollError } from "./AdminView";
+import { usePolled, type PollError } from "../hooks/usePolled";
+import { clock, fmtTokens, shortId, sinceDuration } from "../lib/format";
+import { ConfirmButton, ErrorBanner, useAsyncAction } from "./admin-shared";
 
 const readApi = createApi();
 
@@ -71,19 +66,12 @@ export const AdminSessionsPanel = ({ api, refreshKey, refresh }: Props) => {
 
   const groups = useMemo(() => groupByUser(sessions ?? []), [sessions]);
 
-  const remove = (s: SessionSummary) => {
-    if (
-      !confirm(
-        `Delete session ${shortId(s.session_id)} ("${s.title ?? "untitled"}") and all its events? This cannot be undone.`,
-      )
-    )
-      return;
-    setActionError(null);
-    api
-      .deleteSession(s.session_id)
-      .then(refresh)
-      .catch((e) => setActionError(errorMessage(e)));
-  };
+  const run = useAsyncAction(setActionError, refresh);
+
+  const remove = (s: SessionSummary) =>
+    run(async () => {
+      await api.deleteSession(s.session_id);
+    });
 
   return (
     <>
@@ -92,8 +80,8 @@ export const AdminSessionsPanel = ({ api, refreshKey, refresh }: Props) => {
         Every org-visible session, grouped by member. Deleting is for incident
         remediation — it cannot be undone.
       </p>
-      {error && <p className="banner-error">{error.message}</p>}
-      {actionError && <p className="banner-error">{actionError}</p>}
+      <ErrorBanner message={error?.message ?? null} />
+      <ErrorBanner message={actionError} />
       {/* A handful of members reads better expanded; a big roster defaults to
           collapsed groups so the 5s poll does not re-diff hundreds of rows. */}
       {groups.map((group) => {
@@ -110,7 +98,11 @@ export const AdminSessionsPanel = ({ api, refreshKey, refresh }: Props) => {
               onClick={() =>
                 setCollapsed((prev) => ({
                   ...prev,
-                  [group.userId]: !isOpen,
+                  // store the PREVIOUS open state: both read paths derive
+                  // "open" from collapsed[u] (≤8 groups: !collapsed[u];
+                  // >8: collapsed[u] === false), so writing the negation
+                  // made every click a no-op
+                  [group.userId]: isOpen,
                 }))
               }
             >
@@ -193,12 +185,13 @@ export const AdminSessionsPanel = ({ api, refreshKey, refresh }: Props) => {
                             {s.last_event_at ? clock(s.last_event_at) : "—"}
                           </td>
                           <td className="actions">
-                            <button
+                            <ConfirmButton
                               className="danger"
+                              message={`Delete session ${shortId(s.session_id)} ("${s.title ?? "untitled"}") and all its events? This cannot be undone.`}
                               onClick={() => remove(s)}
                             >
                               Delete
-                            </button>
+                            </ConfirmButton>
                           </td>
                         </tr>
                       ))}

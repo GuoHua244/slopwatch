@@ -7,15 +7,19 @@
  *
  * Usage: bun install.ts --token <bearer> [--dir <project>] [--server-url U]
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { argvHelpers } from "@slopwatch/listener-shared";
+import {
+  argvHelpers,
+  atomicWriteJson,
+  readSettingsJson,
+} from "@slopwatch/listener-shared";
 
 export const HOOK_EVENTS = [
   "SessionStart",
   "UserPromptSubmit",
+  "PostToolUse",
   "SessionEnd",
 ] as const;
 
@@ -153,11 +157,17 @@ if (import.meta.main) {
     ? join(dir, ".claude", "settings.json")
     : join(homedir(), ".claude", "settings.json");
 
-  const existing = existsSync(settingsPath)
-    ? JSON.parse(readFileSync(settingsPath, "utf8"))
-    : undefined;
-  const merged = mergeHookConfig(existing, command, hookScriptPath);
-  writeFileSync(settingsPath, JSON.stringify(merged, null, 2) + "\n");
+  const read = readSettingsJson(settingsPath);
+  if (!read.ok) {
+    console.error(
+      `refusing to touch ${settingsPath}: it is not valid JSON. Fix or remove the file, then re-run the installer — your existing content is unchanged.`,
+    );
+    process.exit(1);
+  }
+  const merged = mergeHookConfig(read.value, command, hookScriptPath);
+  // Temp+rename (inside the helper) so a crash mid-write cannot truncate the
+  // user's settings; 0o600 because the standalone install embeds the token.
+  atomicWriteJson(settingsPath, merged, 0o600);
 
   console.log(`installed slopwatch hooks → ${settingsPath}`);
   console.log(JSON.stringify(merged, null, 2).replaceAll(token, "***"));

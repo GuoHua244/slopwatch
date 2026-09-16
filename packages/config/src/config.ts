@@ -7,7 +7,13 @@
  * tests; a missing or unreadable file loads as null so capture falls back to
  * stdout mode instead of crashing a hook.
  */
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -48,10 +54,17 @@ const isSummary = (value: unknown): value is SummaryConfig =>
   isFilled((value as Record<string, unknown>).apiKey);
 
 export const loadConfig = (homeDir?: string): SlopwatchConfig | null => {
+  const path = configFilePath(homeDir);
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(configFilePath(homeDir), "utf8"));
+    raw = JSON.parse(readFileSync(path, "utf8"));
   } catch {
+    // a missing file is fine (stdout mode); an existing one that cannot be
+    // parsed is not — silently degrading would look exactly like a broken
+    // install, so make it visible
+    if (existsSync(path)) {
+      console.error("slopwatch config file is corrupt and was ignored:", path);
+    }
     return null;
   }
   if (typeof raw !== "object" || raw === null) return null;
@@ -66,7 +79,10 @@ export const loadConfig = (homeDir?: string): SlopwatchConfig | null => {
 export const saveConfig = (config: SlopwatchConfig, homeDir?: string): void => {
   const path = configFilePath(homeDir);
   mkdirSync(join(path, ".."), { recursive: true });
-  writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+  // mode 0600 at creation: the file carries the bearer token, so it must
+  // never window in world-readable (chmod alone leaves a creation gap and is
+  // a no-op on Windows anyway).
+  writeFileSync(path, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
   try {
     chmodSync(path, 0o600);
   } catch {

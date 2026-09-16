@@ -1,22 +1,33 @@
+import { createApi } from "../api";
+import { usePolled } from "../hooks/usePolled";
 import { useRollups } from "../hooks/useRollups";
-import { useSessions } from "../hooks/useSessions";
 import { clock, fmtCost, fmtDelta, fmtTokens } from "../lib/format";
 import { aggregateLeaderboard, dailyCostSeries } from "../lib/leaderboard";
+
+const api = createApi();
 
 /**
  * The leaderboard drill-down (decision 18): one developer's 30-day spend
  * chart plus their sessions. Sessions deep-link into the existing session
  * detail; everything is derived from the same rollups snapshot the table
- * uses, so no extra endpoints were needed. The view fetches its own org-wide
- * session list — the sessions page's team filter must not shrink it.
+ * uses. The session list is scoped to this developer server-side
+ * (`GET /sessions?user_id=`), so the drill-down pulls one person's rows —
+ * not the whole org — and the sessions page's team filter never leaks in.
  */
 export const DeveloperDetail = ({ userId }: { userId: string }) => {
   // 31 local days of spend need hourly rows (v2 decision 27): daily display
   // re-buckets UTC hours into the viewer's calendar days.
-  const rollups = useRollups({ days: 31, hours: 31 * 24 });
-  const feed = useSessions(null);
+  const { snapshot: rollups, lastError } = useRollups({
+    days: 31,
+    hours: 31 * 24,
+  });
+  const { data: scopedSessions } = usePolled(
+    () => api.listSessions(undefined, userId),
+    [userId],
+  );
+  const sessions = scopedSessions ?? [];
   const row =
-    aggregateLeaderboard(feed.sessions, rollups).find(
+    aggregateLeaderboard(sessions, rollups).find(
       (candidate) => candidate.userId === userId,
     ) ?? null;
   const series = dailyCostSeries(
@@ -24,14 +35,15 @@ export const DeveloperDetail = ({ userId }: { userId: string }) => {
     31,
   );
   const maxDay = Math.max(...series.map((d) => d.cost), 0);
-  const lastSeen = (s: (typeof feed.sessions)[number]): string =>
+  const lastSeen = (s: (typeof sessions)[number]): string =>
     s.last_event_at ?? s.first_seen_at;
-  const userSessions = feed.sessions
+  const userSessions = sessions
     .filter((s) => (s.user_id ?? "(unknown)") === userId)
     .sort((a, b) => lastSeen(b).localeCompare(lastSeen(a)));
 
   return (
     <div className="developer">
+      {lastError && <p className="banner-error">{lastError}</p>}
       <p>
         <a href="#/leaderboard">← leaderboard</a>
       </p>

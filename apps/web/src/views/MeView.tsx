@@ -9,22 +9,8 @@ import {
   fmtTokens,
   sinceDuration,
 } from "../lib/format";
-import { estimateCost, priceFor } from "../lib/pricing";
-
-/**
- * Same costing rule as the leaderboard: an unpriced model with requests
- * poisons the whole sum, so the estimate reads "—" instead of understating.
- */
-const costEstimate = (rows: ModelRollupRow[]): number | null => {
-  let cost = 0;
-  for (const row of rows) {
-    const price = priceFor(row.model);
-    if (price === null && row.model_requests > 0) return null;
-    if (price === null) continue;
-    cost += estimateCost(row, price);
-  }
-  return cost;
-};
+import { pricedCost } from "../lib/leaderboard";
+import { priceFor } from "../lib/pricing";
 
 const sumTokens = (rows: ModelRollupRow[]): number =>
   rows.reduce(
@@ -56,7 +42,9 @@ export const MeView = ({ onSignOut }: { onSignOut: () => void }) => {
   if (error) return <p className="banner-error">{error}</p>;
   if (me === null) return <p className="empty">Loading…</p>;
 
-  const cost = costEstimate(me.usage.model_totals);
+  // Same costing rule as the leaderboard: an unpriced model with requests
+  // poisons the whole sum, so the estimate reads "—" instead of understating.
+  const cost = pricedCost(me.usage.model_totals);
   const unpriced = me.usage.model_totals.some(
     (r) => priceFor(r.model) === null && r.model_requests > 0,
   );

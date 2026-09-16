@@ -4,6 +4,8 @@
  * Every failure mode (unreachable, non-ok, odd shape, timeout) collapses to
  * null: a summary is a reading aid and must never break the capture path.
  */
+import { joinUrl } from "@slopwatch/events";
+
 export type ChatOptions = {
   /** OpenAI-compatible base URL, e.g. "https://llm.internal/v1". */
   endpoint: string;
@@ -23,32 +25,31 @@ const attempt = async (
   maxTokens: number,
 ): Promise<AttemptResult> => {
   const doFetch = o.fetchImpl ?? fetch;
-  const res = await doFetch(
-    `${o.endpoint.replace(/\/+$/, "")}/chat/completions`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${o.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: o.model,
-        // reasoning models spend completion budget thinking before they
-        // answer — 400 truncated the summary outright, and 1024 still let a
-        // 13-digest fold burn 1019 reasoning tokens and answer with zero
-        // visible content
-        max_tokens: maxTokens,
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: o.system },
-          { role: "user", content: o.user },
-        ],
-      }),
-      // a fold runs at session idle, so latency is cheap — 20s cut off
-      // legitimate reasoning generations mid-flight
-      signal: AbortSignal.timeout(o.timeoutMs ?? 60_000),
+  const res = await doFetch(joinUrl(o.endpoint, "/chat/completions"), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${o.apiKey}`,
     },
-  );
+    body: JSON.stringify({
+      model: o.model,
+      // reasoning models spend completion budget thinking before they
+      // answer — 400 truncated the summary outright, and 1024 still let a
+      // 13-digest fold burn 1019 reasoning tokens and answer with zero
+      // visible content. `max_tokens` (not `max_completion_tokens`) is
+      // intentional: OpenAI-compatible gateways/vLLM speak the classic
+      // parameter name and reject the newer one.
+      max_tokens: maxTokens,
+      temperature: 0.2,
+      messages: [
+        { role: "system", content: o.system },
+        { role: "user", content: o.user },
+      ],
+    }),
+    // a fold runs at session idle, so latency is cheap — 20s cut off
+    // legitimate reasoning generations mid-flight
+    signal: AbortSignal.timeout(o.timeoutMs ?? 60_000),
+  });
   if (!res.ok) return { text: null, budgetBlown: false };
   const body = (await res.json().catch(() => null)) as {
     choices?: {

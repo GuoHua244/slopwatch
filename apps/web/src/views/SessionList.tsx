@@ -20,7 +20,15 @@ export const SessionList = ({ sessions, selectedId, onSelect }: Props) => (
         <li
           key={s.session_id}
           className={s.session_id === selectedId ? "selected" : ""}
+          role="button"
+          tabIndex={0}
           onClick={() => onSelect(s.session_id)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onSelect(s.session_id);
+            }
+          }}
         >
           <span className="sess-top">
             <span className={`dot${active ? " live" : ""}`} />

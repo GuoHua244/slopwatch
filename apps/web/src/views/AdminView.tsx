@@ -1,63 +1,18 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   createAdminApi,
   type AdminApi,
   type AdminHealth,
   type QuarantineRow,
-  ApiError,
 } from "../api";
 import { storedToken } from "../auth";
+import { usePolled, type PollError } from "../hooks/usePolled";
 import { clock } from "../lib/format";
-import { createPoller } from "../lib/poller";
 import { AdminAuditPanel } from "./AdminAuditPanel";
 import { AdminSessionsPanel } from "./AdminSessionsPanel";
 import { AdminSettingsPanel } from "./AdminSettingsPanel";
 import { AdminTeamsPanel } from "./AdminTeamsPanel";
 import { AdminUsersPanel } from "./AdminUsersPanel";
-
-export type PollError = { message: string; status: number | null };
-
-const toPollError = (e: unknown): PollError => ({
-  message: e instanceof Error ? e.message : String(e),
-  status: e instanceof ApiError ? e.status : null,
-});
-
-/**
- * Poll an admin resource on the decision-4 contract (tick ~5s while
- * visible, never overlap, survive errors). The effect re-arms whenever a
- * dependency changes — panels pass [refreshKey] so mutations surface
- * immediately; the audit panel adds its filter/page state.
- */
-export const usePolled = <T,>(
-  fetcher: () => Promise<T>,
-  deps: React.DependencyList,
-): { data: T | null; error: PollError | null } => {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<PollError | null>(null);
-  useEffect(() => {
-    let mounted = true;
-    const poller = createPoller({
-      intervalMs: 5000,
-      tick: async () => {
-        const next = await fetcher();
-        if (!mounted) return;
-        setData(next);
-        setError(null);
-      },
-      onError: (e) => {
-        if (mounted) setError(toPollError(e));
-      },
-    });
-    poller.start();
-    return () => {
-      mounted = false;
-      poller.stop();
-    };
-    // fetcher closes over the current api/token; deps mark changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  return { data, error };
-};
 
 const HealthPanel = ({
   health,
@@ -244,8 +199,10 @@ const AdminHome = ({ api }: { api: AdminApi }) => {
 /**
  * Admin plane entry (decision 13, role-based): no separate operator token —
  * the signed-in user's own token authorizes, and the server checks the admin
- * role on every call.
+ * role on every call. The client is memoized: rebuilding it per render would
+ * hand every panel's usePolled a fresh fetcher identity.
  */
-export const AdminView = () => (
-  <AdminHome api={createAdminApi(() => storedToken() ?? "")} />
-);
+export const AdminView = () => {
+  const api = useMemo(() => createAdminApi(() => storedToken() ?? ""), []);
+  return <AdminHome api={api} />;
+};

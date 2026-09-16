@@ -26,7 +26,11 @@ import {
   zcodeWorkspaceConfigPath,
 } from "./detect";
 
-const readJsonIfExists = (path: string): unknown => {
+// Lenient on purpose: status only reports what it can read, so a corrupt
+// file here just reads as "not wired". Contrast install.ts's readJsonIfExists,
+// which deliberately THROWS on corrupt JSON so an install never clobbers a
+// file it cannot parse — same shape, different contract.
+const readJsonLenient = (path: string): unknown => {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
   } catch {
@@ -34,11 +38,19 @@ const readJsonIfExists = (path: string): unknown => {
   }
 };
 
-const CLAUDE_EVENTS = ["SessionStart", "UserPromptSubmit", "SessionEnd"];
-const ZCODE_EVENTS = ["SessionStart", "UserPromptSubmit"];
+// Any-of detection: one surviving entry with our script means capture fires.
+// Both lists must cover every event the installers wire (zcode and
+// claude-code both wire PostToolUse for mid-turn respawn).
+const CLAUDE_EVENTS = [
+  "SessionStart",
+  "UserPromptSubmit",
+  "PostToolUse",
+  "SessionEnd",
+];
+const ZCODE_EVENTS = ["SessionStart", "UserPromptSubmit", "PostToolUse"];
 
 const wiredClaude = (path: string): boolean => {
-  const json = readJsonIfExists(path) as Record<string, unknown> | undefined;
+  const json = readJsonLenient(path) as Record<string, unknown> | undefined;
   const hooks = json?.hooks as Record<string, unknown> | undefined;
   if (!hooks) return false;
   return CLAUDE_EVENTS.some((event) => {
@@ -51,7 +63,7 @@ const wiredClaude = (path: string): boolean => {
 };
 
 const wiredZcode = (path: string): boolean => {
-  const json = readJsonIfExists(path) as Record<string, unknown> | undefined;
+  const json = readJsonLenient(path) as Record<string, unknown> | undefined;
   const events = (json?.hooks as Record<string, unknown> | undefined)
     ?.events as Record<string, unknown> | undefined;
   if (!events) return false;

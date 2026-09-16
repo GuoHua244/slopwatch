@@ -6,9 +6,10 @@ import {
   type ReviewApi,
   type ReviewRow,
 } from "../api";
-import { createPoller } from "../lib/poller";
 import { storedToken } from "../auth";
+import { errorMessage } from "../lib/format";
 import type { FeedStatus } from "./useSessions";
+import { usePolledResource } from "./usePolled";
 
 export type ReviewState = {
   api: ReviewApi;
@@ -20,6 +21,9 @@ export type ReviewState = {
   /** Force an immediate re-poll after a mutation. */
   refresh: () => void;
 };
+
+/** What one polling tick fetches: the marker and the notes together. */
+type ReviewPage = { review: ReviewRow | null; comments: CommentRow[] };
 
 /**
  * Decision 10 data for one session: the review marker and the review notes,
@@ -37,7 +41,6 @@ export const useReview = (
   const [status, setStatus] = useState<FeedStatus>("connecting");
   const [lastError, setLastError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
-  const mounted = useRef(true);
 
   // Identify once per token change; /me is cheap enough to retry with the poll.
   useEffect(() => {
@@ -60,37 +63,34 @@ export const useReview = (
     };
   }, [api, version]);
 
-  useEffect(() => {
-    mounted.current = true;
-    setReview(null);
-    setComments([]);
-    setStatus("connecting");
-    if (!sessionId) return () => {};
-    const poller = createPoller({
-      intervalMs,
-      tick: async () => {
-        const [r, cs] = await Promise.all([
-          api.review(sessionId),
-          api.comments(sessionId),
-        ]);
-        if (!mounted.current) return;
-        setReview(r);
-        setComments(cs);
-        setStatus("live");
-        setLastError(null);
-      },
-      onError: (error) => {
-        if (!mounted.current) return;
-        setStatus("down");
-        setLastError(error instanceof Error ? error.message : String(error));
-      },
-    });
-    poller.start();
-    return () => {
-      mounted.current = false;
-      poller.stop();
-    };
-  }, [sessionId, intervalMs, api, version]);
+  usePolledResource<ReviewPage>({
+    deps: [sessionId, intervalMs, api, version],
+    intervalMs,
+    enabled: sessionId !== null,
+    // New generation: no marker or notes from the previous session may linger.
+    reset: () => {
+      setReview(null);
+      setComments([]);
+      setStatus("connecting");
+    },
+    createFetch: () => async () => {
+      const [review, comments] = await Promise.all([
+        api.review(sessionId!),
+        api.comments(sessionId!),
+      ]);
+      return { review, comments };
+    },
+    onSuccess: (page) => {
+      setReview(page.review);
+      setComments(page.comments);
+      setStatus("live");
+      setLastError(null);
+    },
+    onError: (error) => {
+      setStatus("down");
+      setLastError(errorMessage(error));
+    },
+  });
 
   return {
     api,

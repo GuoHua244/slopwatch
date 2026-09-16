@@ -7,10 +7,13 @@
  *
  * Usage: bun install.ts --token <bearer> [--dir <project>] [--server-url U]
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { argvHelpers } from "@slopwatch/listener-shared";
+import {
+  argvHelpers,
+  atomicWriteJson,
+  readSettingsJson,
+} from "@slopwatch/listener-shared";
 
 export type HookProcess = {
   type: "process";
@@ -85,22 +88,29 @@ export const removeHookConfig = (
     string,
     unknown
   >;
+  const hadEvents = typeof hooks.events === "object" && hooks.events !== null;
   const events = (
-    typeof hooks.events === "object" && hooks.events !== null
-      ? { ...(hooks.events as Record<string, unknown>) }
-      : {}
+    hadEvents ? { ...(hooks.events as Record<string, unknown>) } : {}
   ) as Record<string, unknown>;
+  let removed = false;
 
   for (const eventName of HOOK_EVENTS) {
     if (!Array.isArray(events[eventName])) continue;
-    const kept = (events[eventName] as unknown[]).filter(
-      (e) => !isOurMatcherEntry(e, spawnerPath),
-    );
-    if (kept.length === 0) delete events[eventName];
-    else events[eventName] = kept;
+    const before = events[eventName] as unknown[];
+    const kept = before.filter((e) => !isOurMatcherEntry(e, spawnerPath));
+    if (kept.length === 0) {
+      delete events[eventName];
+      removed = true;
+    } else {
+      events[eventName] = kept;
+      if (kept.length !== before.length) removed = true;
+    }
   }
 
-  hooks.events = events;
+  // Only write the events key back when it already existed or something of
+  // ours was removed — assigning an empty `events: {}` into files that never
+  // had one would defeat the uninstall no-op equality check.
+  if (hadEvents || removed) hooks.events = events;
   base.hooks = hooks;
   return base;
 };
@@ -122,7 +132,9 @@ export const HOOK_EVENTS = [
 /**
  * Merge our hooks into an existing workspace config (or create one).
  * Preserves unrelated keys and hooks; replaces any previous slopwatch entry
- * in each of our events. Config-file hooks must set `hooks.enabled: true`.
+ * in each of our events. Config-file hooks only fire with `hooks.enabled:
+ * true` — it is forced on when the key is absent; an explicit false is left
+ * alone (the installer warns that our hooks will not fire until enabled).
  */
 export const mergeHookConfig = (
   existing: unknown,
@@ -157,7 +169,7 @@ export const mergeHookConfig = (
   }
 
   hooks.events = events;
-  hooks.enabled = true;
+  if (hooks.enabled === undefined) hooks.enabled = true;
   base.hooks = hooks;
   return base as Record<string, unknown> & {
     hooks: { enabled: boolean; events: Record<string, MatcherEntry[]> };
@@ -185,12 +197,21 @@ if (import.meta.main) {
   });
   const configPath = join(dir, ".zcode", "config.json");
 
-  const existing = existsSync(configPath)
-    ? JSON.parse(readFileSync(configPath, "utf8"))
-    : undefined;
-  const merged = mergeHookConfig(existing, entry);
-  mkdirSync(join(dir, ".zcode"), { recursive: true });
-  writeFileSync(configPath, JSON.stringify(merged, null, 2) + "\n");
+  const read = readSettingsJson(configPath);
+  if (!read.ok) {
+    console.error(
+      `refusing to touch ${configPath}: it is not valid JSON. Fix or remove the file, then re-run the installer — your existing content is unchanged.`,
+    );
+    process.exit(1);
+  }
+  const merged = mergeHookConfig(read.value, entry);
+  if (merged.hooks.enabled === false) {
+    console.error(
+      `warning: hooks.enabled is false in ${configPath} — slopwatch hooks will not fire until it is set to true.`,
+    );
+  }
+  // 0o600: the standalone install embeds the bearer token in the hook args.
+  atomicWriteJson(configPath, merged, 0o600);
 
   console.log(`installed slopwatch hook → ${configPath}`);
   console.log(JSON.stringify(merged, null, 2).replaceAll(token, "***"));

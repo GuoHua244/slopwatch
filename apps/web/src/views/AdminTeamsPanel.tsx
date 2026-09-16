@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { AdminApi, AdminTeamRow } from "../api";
-import { clock, errorMessage } from "../lib/format";
-import { usePolled, type PollError } from "./AdminView";
+import { usePolled, type PollError } from "../hooks/usePolled";
+import { clock } from "../lib/format";
+import { ErrorBanner, ConfirmButton, useAsyncAction } from "./admin-shared";
 
 type Props = {
   api: AdminApi;
@@ -26,15 +27,7 @@ export const AdminTeamsPanel = ({ api, refreshKey, refresh }: Props) => {
   const [retention, setRetention] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
-  const run = async (fn: () => Promise<void>) => {
-    setFormError(null);
-    try {
-      await fn();
-      refresh();
-    } catch (err) {
-      setFormError(errorMessage(err));
-    }
-  };
+  const run = useAsyncAction(setFormError, refresh);
 
   const addTeam = (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,7 +51,7 @@ export const AdminTeamsPanel = ({ api, refreshKey, refresh }: Props) => {
         Group members into teams for the leaderboard and per-team retention.
         Membership is assigned per user on the Users tab.
       </p>
-      {error && <p className="banner-error">{error.message}</p>}
+      <ErrorBanner message={error?.message ?? null} />
       <div className="panel-card">
         <form className="admin-form" onSubmit={addTeam}>
           <input
@@ -75,7 +68,7 @@ export const AdminTeamsPanel = ({ api, refreshKey, refresh }: Props) => {
             Add team
           </button>
         </form>
-        {formError && <p className="banner-error">{formError}</p>}
+        <ErrorBanner message={formError} />
         <div className="table-scroll">
           <table className="admin-table">
             <thead>
@@ -109,28 +102,35 @@ export const AdminTeamsPanel = ({ api, refreshKey, refresh }: Props) => {
                             t.raw_retention_days?.toString() ?? "",
                           );
                           if (next === null) return;
+                          // Same validation as addTeam: an unvalidated value
+                          // would JSON-serialize NaN to null and silently
+                          // clear the override instead of erroring.
+                          const days =
+                            next.trim() === "" ? null : Number(next.trim());
+                          if (
+                            days !== null &&
+                            (!Number.isInteger(days) || days < 1)
+                          ) {
+                            setFormError(
+                              "retention must be a positive whole number of days",
+                            );
+                            return;
+                          }
                           await api.updateTeam(t.id, {
-                            raw_retention_days:
-                              next.trim() === "" ? null : Number(next.trim()),
+                            raw_retention_days: days,
                           });
                         })
                       }
                     >
                       Set retention
                     </button>
-                    <button
+                    <ConfirmButton
                       className="danger"
-                      onClick={() => {
-                        if (
-                          confirm(
-                            `Delete team "${t.name}"? Members become unassigned; their captured sessions keep the historical team tag.`,
-                          )
-                        )
-                          run(() => api.deleteTeam(t.id));
-                      }}
+                      message={`Delete team "${t.name}"? Members become unassigned; their captured sessions keep the historical team tag.`}
+                      onClick={() => run(() => api.deleteTeam(t.id))}
                     >
                       Delete
-                    </button>
+                    </ConfirmButton>
                   </td>
                 </tr>
               ))}

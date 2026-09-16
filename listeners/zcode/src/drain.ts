@@ -10,7 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { sendEvents } from "@slopwatch/events";
 import { resolveShipConfig } from "@slopwatch/config";
-import { argvHelpers, runQueueSweep } from "@slopwatch/listener-shared";
+import { argvHelpers, runAgentDrain } from "@slopwatch/listener-shared";
 import { isListenerAlive } from "./liveness";
 
 const { arg } = argvHelpers(process.argv.slice(2));
@@ -24,7 +24,7 @@ if (!ship) {
 }
 
 const stateDir = join(homedir(), ".slopwatch", "listeners");
-const result = await runQueueSweep({
+await runAgentDrain({
   agent: "zcode",
   stateDir,
   send: (events) => sendEvents(events, ship),
@@ -36,8 +36,3 @@ const result = await runQueueSweep({
       heartbeatFile: join(stateDir, `zcode-${sessionId}.heartbeat`),
     }),
 });
-if (result.sentEvents > 0 || result.skipped > 0) {
-  console.error(
-    `drain: replayed ${result.sentEvents} queued events from ${result.files} file(s), skipped ${result.skipped} live`,
-  );
-}

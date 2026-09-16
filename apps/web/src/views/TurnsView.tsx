@@ -1,6 +1,7 @@
 import { useState } from "react";
+import type { ModelRequestEvent } from "@slopwatch/events";
 import type { CommentRow } from "../api";
-import type { SessionTimeline } from "../lib/timeline";
+import type { SessionTimeline, ToolActivity } from "../lib/timeline";
 import {
   clock,
   fmtDuration,
@@ -11,6 +12,15 @@ import {
 
 const usage = (inTokens?: number, outTokens?: number): string =>
   `${fmtTokens(inTokens ?? 0)}in/${fmtTokens(outTokens ?? 0)}out`;
+
+/** Stable React keys: the listener's request id when present, else the
+ * request's own time+duration (stable for the append-only stream). */
+const requestKey = (request: ModelRequestEvent): string =>
+  request.request_id ?? `${request.occurred_at}-${request.duration_ms}`;
+
+/** A tool row is identified by the call/result pairing id. */
+const toolKey = (tool: ToolActivity, index: number): string =>
+  tool.call?.tool_call_id ?? tool.result?.tool_call_id ?? String(index);
 
 type NoteInputProps = {
   placeholder: string;
@@ -153,8 +163,8 @@ export const TurnsView = ({
             currentUser={currentUser}
             onDelete={onDeleteComment}
           />
-          {turn.modelRequests.map((request, i) => (
-            <div key={i} className="row">
+          {turn.modelRequests.map((request) => (
+            <div key={requestKey(request)} className="row">
               <span className="kind">request</span>
               <span
                 className="detail"
@@ -169,7 +179,7 @@ export const TurnsView = ({
             </div>
           ))}
           {turn.tools.map((tool, i) => (
-            <div key={i} className="row">
+            <div key={toolKey(tool, i)} className="row">
               <span className="kind">tool</span>
               <span className="detail">
                 {tool.call
@@ -200,8 +210,8 @@ export const TurnsView = ({
               events without a turn context (before the first request)
             </span>
           </header>
-          {orphans.requests.map((request, i) => (
-            <div key={i} className="row">
+          {orphans.requests.map((request) => (
+            <div key={requestKey(request)} className="row">
               <span className="kind">request</span>
               <span
                 className="detail"
@@ -213,7 +223,7 @@ export const TurnsView = ({
             </div>
           ))}
           {orphans.tools.map((tool, i) => (
-            <div key={i} className="row">
+            <div key={toolKey(tool, i)} className="row">
               <span className="kind">tool</span>
               <span className="detail">
                 {tool.call

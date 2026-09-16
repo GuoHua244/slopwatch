@@ -26,10 +26,18 @@ if (!file || !serverUrl || !token) {
   process.exit(1);
 }
 
-const records = readFileSync(file, "utf8")
-  .split("\n")
-  .filter((l) => l.trim())
-  .map((l) => JSON.parse(l));
+// one malformed line must not crash the whole tool — skip and count it
+// (mirrors replay.ts)
+const records: unknown[] = [];
+let malformed = 0;
+for (const line of readFileSync(file, "utf8").split("\n")) {
+  if (!line.trim()) continue;
+  try {
+    records.push(JSON.parse(line) as unknown);
+  } catch {
+    malformed += 1;
+  }
+}
 
 let sessionId: string | null = null;
 for (const record of records) {
@@ -62,3 +70,6 @@ console.log(
     )
     .join(", "),
 );
+if (malformed > 0) {
+  console.log(`skipped ${malformed} malformed lines`);
+}

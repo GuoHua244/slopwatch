@@ -1,9 +1,13 @@
 import type { NormalEvent } from "@slopwatch/events";
 import type { SummaryStore } from "@slopwatch/summary";
 
-/** "12k in / 3k out" style token tally for a digest line. */
-const fmtTokens = (n: number): string =>
-  n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`;
+/** "12k in / 3k out" style token tally for a digest line. Sub-10k keeps one
+ * decimal so 2499 doesn't round-display as "2k" (a quarter of the truth). */
+const fmtTokens = (n: number): string => {
+  if (n < 1000) return `${n}`;
+  if (n < 10_000) return `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  return `${Math.round(n / 1000)}k`;
+};
 
 export type TurnDigest = {
   /** Append the digest line for the turn in progress, if any. */

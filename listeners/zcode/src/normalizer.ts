@@ -57,11 +57,26 @@ const contentToText = (content: unknown): string => {
 };
 
 /**
+ * Strip a leading run of injected XML-ish blocks ("<tag …>…</tag>"), each
+ * matched lazily to its own closing tag — real speech after the blocks may
+ * itself contain '>' (e.g. "=>"), so a global last-closing-tag cut would eat
+ * the human's words.
+ */
+const stripLeadingBlocks = (text: string): string => {
+  let rest = text;
+  for (;;) {
+    const m = rest.match(/^<[A-Za-z][^<>]*>[\s\S]*?<\/[A-Za-z][^<>]*>\s*/);
+    if (!m) return rest.trim();
+    rest = rest.slice(m[0].length);
+  }
+};
+
+/**
  * User-message text with injected context blocks removed: the client stuffs
  * ambient-state / system blocks (`<in-app-browser-context>…`, tool results)
  * into user messages ahead of (or instead of) the human's words. For block
- * arrays keep only non-injection text blocks; for strings, keep everything
- * after the last closing tag of a leading block run.
+ * arrays keep only non-injection text blocks; for strings, strip the leading
+ * block run and keep whatever the human actually wrote.
  */
 const userSpeech = (content: unknown): string => {
   if (Array.isArray(content)) {
@@ -74,9 +89,7 @@ const userSpeech = (content: unknown): string => {
   }
   const text = contentToText(content).trim();
   if (text.startsWith("<")) {
-    const afterBlocks = text
-      .slice(text.lastIndexOf(">") + 1)
-      .trim()
+    const afterBlocks = stripLeadingBlocks(text)
       // the client prefixes real speech with a markdown heading line
       .replace(/^(#{1,6}\s*[^\n]*\n)+/, "")
       .trim();

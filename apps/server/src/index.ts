@@ -107,5 +107,18 @@ const app = createApp({
   oidc,
 });
 
-Bun.serve({ port: config.port, fetch: (req) => app.fetch(req) });
+Bun.serve({
+  port: config.port,
+  fetch: (req) => app.fetch(req),
+  // Any store throw that escapes a route lands here: answer a bare 500 and
+  // log — never leak the exception text (it can carry SQL fragments) and
+  // never let Bun's dev-mode default render it.
+  error(e) {
+    console.error("unhandled server error:", e);
+    return new Response(JSON.stringify({ error: "internal error" }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  },
+});
 console.log(`slopwatch server listening on http://localhost:${config.port}`);

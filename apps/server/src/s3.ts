@@ -42,9 +42,23 @@ export const deriveSigningKey = (
   return hmac(kService, "aws4_request");
 };
 
-/** Object key URI-encoded per path segment (path-style /bucket/key URLs). */
-const encodeKey = (key: string): string =>
-  key.split("/").map(encodeURIComponent).join("/");
+/**
+ * Object key URI-encoded per path segment (path-style /bucket/key URLs).
+ * Everything outside the RFC 3986 unreserved set must be percent-encoded for
+ * a strict S3 SigV4 canonical URI — encodeURIComponent leaves the sub-delims
+ * ' ! ( ) * raw, and a session id carrying any of them would sign one URI
+ * while fetching another (the row then never prunes).
+ */
+export const encodeKey = (key: string): string =>
+  key
+    .split("/")
+    .map((segment) =>
+      encodeURIComponent(segment).replace(
+        /[!'()*]/g,
+        (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+      ),
+    )
+    .join("/");
 
 const amzDates = (now: Date): { amzDate: string; dateStamp: string } => {
   const iso = now

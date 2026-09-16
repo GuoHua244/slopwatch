@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SessionEndEvent } from "@slopwatch/events";
+import { SendError } from "@slopwatch/events";
 import { createDiskQueue } from "./disk-queue";
 
 const tmpFile = (): string =>
@@ -26,8 +27,14 @@ const reasonOf = (e: SessionEndEvent): string => e.reason ?? "";
 describe("disk queue", () => {
   test("enqueue → stats → replay in order", async () => {
     const queue = createDiskQueue({ file: tmpFile() });
-    expect(queue.enqueue([event()])).toEqual({ droppedEvents: 0 });
-    expect(queue.enqueue([event(), event()])).toEqual({ droppedEvents: 0 });
+    expect(queue.enqueue([event()])).toEqual({
+      droppedEvents: 0,
+      droppedReasons: {},
+    });
+    expect(queue.enqueue([event(), event()])).toEqual({
+      droppedEvents: 0,
+      droppedReasons: {},
+    });
     expect(queue.stats().entries).toBe(2);
     expect(queue.stats().events).toBe(3);
 
@@ -35,7 +42,11 @@ describe("disk queue", () => {
     const result = await queue.replay(async (events) => {
       batches.push(events.map((e) => reasonOf(e as SessionEndEvent)));
     });
-    expect(result).toEqual({ sentEvents: 3, droppedEvents: 0 });
+    expect(result).toEqual({
+      sentEvents: 3,
+      droppedEvents: 0,
+      droppedReasons: {},
+    });
     expect(batches.length).toBe(2);
     expect(batches[0]!.length).toBe(1);
     expect(batches[1]!.length).toBe(2);
@@ -73,8 +84,9 @@ describe("disk queue", () => {
 
     const after = createDiskQueue({ file });
     expect(after.stats().entries).toBe(0); // torn line is not an entry
-    const { droppedEvents } = after.enqueue([event()]);
+    const { droppedEvents, droppedReasons } = after.enqueue([event()]);
     expect(droppedEvents).toBe(1); // the corrupt line counted as dropped
+    expect(droppedReasons).toEqual({ "corrupt-line": 1 });
     expect(after.stats().entries).toBe(1); // the new batch survived
   });
 
@@ -87,8 +99,9 @@ describe("disk queue", () => {
     });
     queue.enqueue([event(), event()]);
     now += 2000; // the first batch ages out
-    const { droppedEvents } = queue.enqueue([event()]);
+    const { droppedEvents, droppedReasons } = queue.enqueue([event()]);
     expect(droppedEvents).toBe(2);
+    expect(droppedReasons).toEqual({ "age-expired": 2 });
     expect(queue.stats().entries).toBe(1);
     expect(queue.stats().events).toBe(1);
   });
@@ -105,6 +118,7 @@ describe("disk queue", () => {
     queue.enqueue([event("b2")]);
     const third = queue.enqueue([event("b3")]); // over cap → b1 dropped
     expect(third.droppedEvents).toBe(1);
+    expect(third.droppedReasons).toEqual({ "byte-cap": 1 });
 
     const reasons: string[] = [];
     await queue.replay(async (events) => {
@@ -122,5 +136,61 @@ describe("disk queue", () => {
     await queue.replay(async () => {});
     expect(existsSync(file)).toBe(true);
     expect(readFileSync(file, "utf8")).toBe("");
+  });
+
+  test("a permanently rejected batch is dropped and later batches still flow", async () => {
+    const queue = createDiskQueue({ file: tmpFile() });
+    queue.enqueue([event("poison")]);
+    queue.enqueue([event("good")]);
+
+    const reasons: string[] = [];
+    const result = await queue.replay(async (events) => {
+      for (const e of events) {
+        if (reasonOf(e as SessionEndEvent) === "poison")
+          throw new SendError(400);
+        reasons.push(reasonOf(e as SessionEndEvent));
+      }
+    });
+    expect(result).toEqual({
+      sentEvents: 1,
+      droppedEvents: 1,
+      droppedReasons: { "poison-batch": 1 },
+    });
+    expect(reasons).toEqual(["good"]);
+    expect(queue.stats().entries).toBe(0);
+  });
+
+  test("429 and 5xx stay transient — the head is kept for replay", async () => {
+    for (const status of [429, 500]) {
+      const queue = createDiskQueue({ file: tmpFile() });
+      queue.enqueue([event("held")]);
+      const result = await queue.replay(async () => {
+        throw new SendError(status);
+      });
+      expect(result).toEqual({
+        sentEvents: 0,
+        droppedEvents: 0,
+        droppedReasons: {},
+      });
+      expect(queue.stats().entries).toBe(1);
+    }
+  });
+
+  test("a single batch larger than the cap is dropped, not admitted", () => {
+    const file = tmpFile();
+    const filler = JSON.stringify({
+      enqueued_at: "2026-09-13T00:00:00.000Z",
+      events: [event("sized")],
+    });
+    const lineSize = Buffer.byteLength(`${filler}\n`, "utf8");
+    const queue = createDiskQueue({ file, maxBytes: lineSize });
+    queue.enqueue([event("keep")]);
+    const big = event();
+    (big as SessionEndEvent).reason = "x".repeat(lineSize);
+    const result = queue.enqueue([big]);
+    expect(result.droppedEvents).toBe(1);
+    expect(result.droppedReasons).toEqual({ "oversized-batch": 1 });
+    expect(queue.stats().entries).toBe(1); // the oversized batch never landed
+    expect(readFileSync(file, "utf8")).toContain("keep");
   });
 });

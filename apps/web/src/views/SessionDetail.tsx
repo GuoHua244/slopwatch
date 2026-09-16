@@ -4,9 +4,9 @@ import type { SessionSummary } from "../api";
 import { useEventStream } from "../hooks/useEventStream";
 import { useReview } from "../hooks/useReview";
 import { sessionTotals } from "../lib/aggregate";
-import { clock, errorMessage, fmtTokens } from "../lib/format";
+import { clock, fmtTokens } from "../lib/format";
 import { buildTimeline, isEnded } from "../lib/timeline";
-import { BackToTop } from "./BackToTop";
+import { ConfirmButton, useAsyncAction } from "./admin-shared";
 import { RawEventsView } from "./RawEventsView";
 import { TurnsView } from "./TurnsView";
 import { UsageView } from "./UsageView";
@@ -34,9 +34,13 @@ const CommentLine = ({
       {mine && (
         <>
           {" · "}
-          <button className="link" onClick={onDelete}>
+          <ConfirmButton
+            className="link"
+            message="delete this note?"
+            onClick={onDelete}
+          >
             delete
-          </button>
+          </ConfirmButton>
         </>
       )}
     </span>
@@ -60,10 +64,7 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
   const totals = stream.events.length > 0 ? sessionTotals(stream.events) : null;
 
   const sessionComments = review.comments.filter((c) => c.turn_id === null);
-  const run = (fn: () => Promise<void>) => {
-    setActionError(null);
-    fn().catch((e: unknown) => setActionError(errorMessage(e)));
-  };
+  const run = useAsyncAction(setActionError);
   const addSessionNote = () => {
     if (!note.trim()) return;
     run(async () => {
@@ -73,7 +74,6 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
     });
   };
   const deleteNote = (commentId: number) => {
-    if (!confirm("delete this note?")) return;
     run(async () => {
       await review.api.deleteComment(summary.session_id, commentId);
       review.refresh();
@@ -99,7 +99,8 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
         </span>
         {review.me === null ? (
           <span className="dim">
-            Sign in from the Me page to review and leave notes.
+            You can review and leave notes once your token verifies — reload the
+            page to retry.
           </span>
         ) : review.me.is_dri ? (
           review.review ? (
@@ -265,10 +266,12 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
             </button>
           </form>
         ) : (
-          <p className="dim">Sign in from the Me page to leave notes.</p>
+          <p className="dim">
+            You can leave notes once your token verifies — reload the page to
+            retry.
+          </p>
         )}
       </section>
-      <BackToTop />
     </div>
   );
 };

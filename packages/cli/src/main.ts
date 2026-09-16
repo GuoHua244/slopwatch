@@ -9,6 +9,7 @@
  *   slopwatch status    show detection, wiring, and config state
  *   slopwatch uninstall remove slopwatch hooks
  */
+import { argvHelpers } from "@slopwatch/listener-shared";
 import { runInstall } from "./install";
 import { login } from "./login";
 import { setCapturePaused } from "./pause";
@@ -19,7 +20,8 @@ const HELP = `slopwatch — capture coding-agent sessions for your team's review
 
 usage:
   slopwatch install [options]    detect installed agents and wire capture hooks
-  slopwatch login <token>        verify and store the backend token
+  slopwatch login [token]        verify and store the backend token (prompted,
+                                 input hidden, when the token is omitted)
   slopwatch status [--dir D]     show detection, wiring, and config state
   slopwatch pause                stop capturing (hooks stay wired, nothing spawns)
   slopwatch resume               turn capture back on after a pause
@@ -35,38 +37,119 @@ install options:
   --summary-model <id>      model used for session summaries
   --summary-key <key>       provider key for session summaries
 
-credentials live in ~/.slopwatch/config.json (0600) — hook commands carry
-no secrets and pick the config up at fire time.`;
+flags accept "--flag value" or "--flag=value". credentials live in
+~/.slopwatch/config.json (0600) — hook commands carry no secrets and pick
+the config up at fire time.`;
 
 const args = process.argv.slice(2);
-const argValue = (name: string): string | undefined => {
-  const i = args.indexOf(`--${name}`);
-  return i >= 0 ? args[i + 1] : undefined;
-};
+const { arg } = argvHelpers(args);
 const list = (name: string): string[] | undefined =>
-  argValue(name)
+  arg(name)
     ?.split(",")
     .map((s) => s.trim())
     .filter(Boolean);
 
+const PROMPT = "paste the token minted by your Slopwatch admin: ";
+
+/**
+ * Read a token from the terminal WITHOUT echoing it: raw mode, char by char
+ * (Enter submits, backspace deletes, Ctrl-C aborts with exit code 1). The
+ * terminal is always restored before the promise settles.
+ */
+const promptTokenHidden = (): Promise<string> =>
+  new Promise<string>((resolve, reject) => {
+    const stdin = process.stdin;
+    if (typeof stdin.setRawMode !== "function") {
+      reject(new Error("stdin has no raw mode"));
+      return;
+    }
+    process.stderr.write(PROMPT);
+    let token = "";
+    let settled = false;
+    const restore = (): void => {
+      stdin.removeListener("data", onData);
+      stdin.removeListener("error", onError);
+      try {
+        stdin.setRawMode(false);
+      } catch {
+        // best effort — the fallback prompt still works either way
+      }
+      try {
+        stdin.pause();
+      } catch {
+        // best effort
+      }
+    };
+    const settle = (value: string): void => {
+      if (settled) return;
+      settled = true;
+      restore();
+      resolve(value);
+    };
+    const fail = (e: unknown): void => {
+      if (settled) return;
+      settled = true;
+      restore();
+      reject(e instanceof Error ? e : new Error(String(e)));
+    };
+    const onData = (chunk: Buffer): void => {
+      for (const ch of chunk.toString("utf8")) {
+        if (ch === "\r" || ch === "\n") {
+          process.stderr.write("\n");
+          settle(token.trim());
+          return;
+        }
+        if (ch === "\u0003") {
+          // Ctrl-C: restore the terminal before dying so the shell is
+          // not left in raw mode
+          restore();
+          process.stderr.write("\n");
+          process.exit(1);
+        }
+        if (ch === "\u007f" || ch === "\b") {
+          token = token.slice(0, -1);
+          continue;
+        }
+        token += ch;
+      }
+    };
+    const onError = (e: unknown): void => fail(e);
+    try {
+      stdin.setRawMode(true);
+    } catch (e) {
+      fail(e);
+      return;
+    }
+    stdin.on("data", onData);
+    stdin.on("error", onError);
+  });
+
 const promptToken = async (): Promise<string | undefined> => {
   if (!process.stdin.isTTY) return undefined;
-  const { createInterface } = await import("node:readline/promises");
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  const answer = await rl.question(
-    "paste the token minted by your Slopwatch admin: ",
-  );
-  rl.close();
-  return answer.trim() || undefined;
+  try {
+    const token = await promptTokenHidden();
+    return token || undefined;
+  } catch {
+    // raw mode unavailable or failed — fall back to the echoing readline
+    // prompt; a visible token beats a broken login
+    const { createInterface } = await import("node:readline/promises");
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stderr,
+    });
+    const answer = await rl.question(PROMPT);
+    rl.close();
+    return answer.trim() || undefined;
+  }
 };
 
 const summaryFromArgs = ():
   | { endpoint: string; model: string; apiKey: string }
   | undefined
   | "partial" => {
-  const endpoint = argValue("summary-endpoint");
-  const model = argValue("summary-model");
-  const apiKey = argValue("summary-key");
+  const endpoint = arg("summary-endpoint");
+  const model = arg("summary-model");
+  const apiKey = arg("summary-key");
   if (!endpoint && !model && !apiKey) return undefined;
   if (!endpoint || !model || !apiKey) return "partial";
   return { endpoint, model, apiKey };
@@ -97,30 +180,34 @@ const main = async (): Promise<number> => {
         );
         return 1;
       }
-      const token = argValue("token") ?? (await promptToken());
+      const token = arg("token") ?? (await promptToken());
       const result = await runInstall({
         token,
-        serverUrl: argValue("server-url"),
+        serverUrl: arg("server-url"),
         summary: summary || undefined,
         agents: list("agent"),
-        dir: argValue("dir"),
+        dir: arg("dir"),
       });
       printLines(result.lines);
       return result.ok ? 0 : 1;
     }
     case "login": {
       const positional = args[args.indexOf("login") + 1];
-      const token =
-        positional && !positional.startsWith("--")
-          ? positional
-          : (argValue("token") ?? (await promptToken()));
+      const argvToken =
+        positional && !positional.startsWith("--") ? positional : arg("token");
+      if (argvToken) {
+        console.error(
+          "note: the token was passed on the command line — it can land in your shell history; prefer the prompted form (`slopwatch login`).",
+        );
+      }
+      const token = argvToken ?? (await promptToken());
       if (!token) {
         console.error("usage: slopwatch login <token> [--server-url U]");
         return 1;
       }
       const result = await login({
         token,
-        serverUrl: argValue("server-url"),
+        serverUrl: arg("server-url"),
       });
       if (!result.ok) {
         console.error(`login failed: ${result.error}`);
@@ -132,7 +219,7 @@ const main = async (): Promise<number> => {
       return 0;
     }
     case "status": {
-      printLines(statusReport({ dir: argValue("dir") }));
+      printLines(statusReport({ dir: arg("dir") }));
       return 0;
     }
     case "pause":
@@ -144,7 +231,7 @@ const main = async (): Promise<number> => {
     case "uninstall": {
       const result = runUninstall({
         agents: list("agent"),
-        dir: argValue("dir"),
+        dir: arg("dir"),
       });
       printLines(result.lines);
       return result.ok ? 0 : 1;

@@ -7,18 +7,18 @@
  *                          [--idle-ms N] [--max-lifetime-ms N] [--log-dir D]
  *        bun spawner.ts --stop --session-id <id>
  */
-import {
-  mkdirSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "@slopwatch/config";
-import { argvHelpers, spawnDrainSweep } from "@slopwatch/listener-shared";
+import {
+  argvHelpers,
+  readPidFile,
+  removePidFiles,
+  spawnDetachedListener,
+  spawnDrainSweep,
+} from "@slopwatch/listener-shared";
 import { isListenerAlive } from "./liveness";
 
 const args = process.argv.slice(2);
@@ -40,10 +40,8 @@ const pidFile = join(logDir, `zcode-${sessionId}.pid`);
 const heartbeatFile = join(logDir, `zcode-${sessionId}.heartbeat`);
 
 if (args.includes("--stop")) {
-  let pid: number | undefined;
-  try {
-    pid = Number(readFileSync(pidFile, "utf8").trim());
-  } catch {
+  const pid = readPidFile(pidFile);
+  if (pid === null) {
     console.error("spawner: no pid file — not running");
     process.exit(0);
   }
@@ -55,8 +53,7 @@ if (args.includes("--stop")) {
       `spawner: pid ${pid} not running (${e instanceof Error ? e.message : e})`,
     );
   }
-  rmSync(pidFile, { force: true });
-  rmSync(heartbeatFile, { force: true });
+  removePidFiles(pidFile, heartbeatFile);
   process.exit(0);
 }
 
@@ -80,37 +77,40 @@ const liveTs = fileURLToPath(new URL("./live.ts", import.meta.url));
 // this session is already alive: the PID exists AND its heartbeat is fresh.
 // Signal-0 alone misreads Windows PID reuse as a live listener and would
 // stall this session's capture forever.
-try {
-  const pid = Number(readFileSync(pidFile, "utf8").trim());
-  if (
-    Number.isFinite(pid) &&
-    pid > 0 &&
-    isListenerAlive({ pid, heartbeatFile })
-  ) {
-    console.error(`slopwatch listener already running: pid=${pid}`);
-    process.exit(0);
-  }
-} catch {
-  // no pid file or stale pid — spawn a fresh listener
+const existingPid = readPidFile(pidFile);
+if (
+  existingPid !== null &&
+  isListenerAlive({ pid: existingPid, heartbeatFile })
+) {
+  console.error(`slopwatch listener already running: pid=${existingPid}`);
+  process.exit(0);
 }
 
-mkdirSync(logDir, { recursive: true });
-const logFd = openSync(logFile, "a");
-
-const childArgs = [liveTs, "--file", rolloutFile, "--session-id", sessionId];
+// Pin the hook process's cwd explicitly: the listener's session:start and its
+// git-remote probe would otherwise silently depend on live.ts inheriting this
+// process's working directory.
+const childArgs = [
+  "--file",
+  rolloutFile,
+  "--session-id",
+  sessionId,
+  "--cwd",
+  process.cwd(),
+];
 if (arg("server-url")) childArgs.push("--server-url", arg("server-url")!);
 if (arg("token")) childArgs.push("--token", arg("token")!);
 if (arg("idle-ms")) childArgs.push("--idle-ms", arg("idle-ms")!);
 if (arg("max-lifetime-ms"))
   childArgs.push("--max-lifetime-ms", arg("max-lifetime-ms")!);
 
-const child = Bun.spawn([process.execPath, ...childArgs], {
-  detached: true,
-  stdio: ["ignore", logFd, logFd],
+const pid = spawnDetachedListener({
+  scriptPath: liveTs,
+  args: childArgs,
+  logFile,
+  logDir,
 });
-child.unref?.();
 
-writeFileSync(pidFile, String(child.pid));
+writeFileSync(pidFile, String(pid));
 // make the newborn visible to the next spawner invocation before the
 // listener's own first heartbeat lands (bun start can lag seconds under AV scans)
 writeFileSync(heartbeatFile, String(Date.now()));
@@ -118,6 +118,6 @@ writeFileSync(heartbeatFile, String(Date.now()));
 // including sessions that ended with the server down and have no listener
 spawnDrainSweep(fileURLToPath(new URL("./drain.ts", import.meta.url)));
 console.error(
-  `slopwatch listener spawned: pid=${child.pid} log=${logFile} rollout=${rolloutFile}`,
+  `slopwatch listener spawned: pid=${pid} log=${logFile} rollout=${rolloutFile}`,
 );
 process.exit(0);

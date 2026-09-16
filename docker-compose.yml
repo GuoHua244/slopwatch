@@ -23,6 +23,11 @@ services:
       SLOPWATCH_S3_BUCKET: slopwatch-archive
       SLOPWATCH_S3_ACCESS_KEY_ID: slopwatch
       SLOPWATCH_S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      # OIDC (ADR 0005): both set = the server also accepts IdP-issued RS256
+      # JWTs; both empty = minted tokens only. A partial pair fails the boot
+      # by design (see config.ts).
+      SLOPWATCH_OIDC_ISSUER: ${SLOPWATCH_OIDC_ISSUER:-}
+      SLOPWATCH_OIDC_AUDIENCE: ${SLOPWATCH_OIDC_AUDIENCE:-}
     depends_on:
       db:
         condition: service_healthy
@@ -54,7 +59,12 @@ services:
       retries: 20
 
   minio:
-    image: minio/minio:latest
+    # Release-pinned. MinIO went source-only in Oct 2025 and stopped
+    # publishing official images (RELEASE.2025-10-15 was never pushed to
+    # Docker Hub); quay.io keeps the release tags. This is exactly the image
+    # the stack already runs (same digest as the previous minio/minio:latest
+    # pull), so the next `docker compose up` reuses it byte-for-byte.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -67,10 +77,22 @@ services:
     image: minio/mc:latest
     depends_on:
       - minio
+    # Bounded retries, visible failure: 15 attempts x 2s, then exit 1 so the
+    # server's service_completed_successfully gate reports the problem
+    # instead of hanging on a silent forever-loop. (-p is --ignore-existing
+    # on current mc, so an already-created bucket still exits 0 on re-up.)
     entrypoint: >
       /bin/sh -c "
-      until mc alias set local http://minio:9000 slopwatch \"$$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1; do sleep 1; done;
-      mc mb -p local/slopwatch-archive 2>/dev/null || true"
+      i=0;
+      until mc alias set local http://minio:9000 slopwatch \"$$MINIO_ROOT_PASSWORD\" 2>/dev/null; do
+        i=$$((i+1));
+        if [ \"$$i\" -ge 15 ]; then
+          echo 'minio-init: MinIO unreachable after 15 attempts (30s), giving up' >&2;
+          exit 1;
+        fi;
+        sleep 2;
+      done;
+      mc mb -p local/slopwatch-archive || { echo 'minio-init: mc mb failed' >&2; exit 1; }"
     environment:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
 

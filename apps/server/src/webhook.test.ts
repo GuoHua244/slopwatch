@@ -102,6 +102,9 @@ describe("pushSessionEnds over HTTP", () => {
     try {
       // minimal scripted store: settings + a no-op append; nothing else touched
       const store = {
+        // env-token auth reads the users row for the disabled flag
+        getUser: async () => null,
+        sessionOwner: async () => null,
         appendEvents: async () => ({ accepted: 1 }),
         getSetting: async (key: string) =>
           key === "webhook_url"

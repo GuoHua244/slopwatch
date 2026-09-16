@@ -43,6 +43,13 @@ export type OidcOptions = {
 /** Clock leeway for exp/nbf, seconds — small IdP skews are normal. */
 const LEEWAY_S = 60;
 
+/** IdP metadata fetches must not hang verification: a black-holed IdP would
+ * otherwise stall every OIDC-bearing request until the TCP stack gives up. */
+const FETCH_TIMEOUT_MS = 5_000;
+/** Floor between unknown-kid forced refreshes — garbage kids (attackers or
+ * misconfigured clients) must not turn verify() into an IdP amplifier. */
+const FORCED_REFRESH_MIN_MS = 30_000;
+
 type Header = { alg: string; kid?: string };
 
 const decodeSegment = <T>(segment: string): T | null => {
@@ -62,7 +69,9 @@ const strClaim = (
 };
 
 const defaultFetchJson = async (url: string): Promise<unknown> => {
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
   return res.json();
 };
@@ -82,6 +91,7 @@ export const createOidcVerifier = ({
   let jwksUri: string | null = null;
   let keys: Jwk[] = [];
   let keysFetchedAt = 0;
+  let lastForcedRefresh = 0;
 
   const loadDiscovery = async (): Promise<string> => {
     if (jwksUri !== null) return jwksUri;
@@ -152,8 +162,13 @@ export const createOidcVerifier = ({
 
         let jwks = await loadKeys(false);
         let key = signingKey(jwks, header.kid);
-        if (key === null) {
-          // An unknown kid usually means the IdP rotated keys — refresh once.
+        if (
+          key === null &&
+          Date.now() - lastForcedRefresh > FORCED_REFRESH_MIN_MS
+        ) {
+          // An unknown kid usually means the IdP rotated keys — refresh once,
+          // rate-limited so a flood of junk kids cannot hammer the IdP.
+          lastForcedRefresh = Date.now();
           jwks = await loadKeys(true);
           key = signingKey(jwks, header.kid);
         }

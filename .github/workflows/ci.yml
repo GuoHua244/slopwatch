@@ -11,11 +11,30 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      - name: Cache the bun install cache
+        uses: actions/cache@v4
+        with:
+          # bun's download cache lives in different homes per runner OS.
+          path: ${{ runner.os == 'Windows' && '~\AppData\Local\bun\install\cache' || '~/.bun/install/cache' }}
+          key: bun-${{ runner.os }}-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run ci
+
+  # Image build hygiene: a broken Dockerfile fails CI here instead of at
+  # deploy time. Runs in parallel with the test jobs; no push, no secrets,
+  # nothing leaves the runner.
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t slopwatch:ci .
 
   # Acceptance: the same suites against a real Postgres (the DB-backed tests
   # skip elsewhere), then a RUNNING server smoked end-to-end over HTTP —
@@ -23,6 +42,7 @@ jobs:
   # the rollups snapshot and its team scope, and the review-note lifecycle.
   acceptance:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:18-alpine
@@ -46,6 +66,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      - name: Cache the bun install cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - name: Create the test database
         run: |

@@ -26,11 +26,30 @@ if (!file) {
 const sessionId =
   basename(file).match(/^model-io-sess_(.+)\.jsonl$/)?.[1] ?? "unknown-session";
 
-const record = JSON.parse(
-  readFileSync(file, "utf8")
-    .split("\n")
-    .find((l) => l.trim())!,
-);
+const lines = readFileSync(file, "utf8")
+  .split("\n")
+  .filter((line) => line.trim());
+if (lines.length === 0) {
+  console.error(`no records in rollout file: ${file}`);
+  process.exit(1);
+}
+
+type RolloutRecord = {
+  completedAt?: unknown;
+  requestId?: unknown;
+  durationMs?: unknown;
+  attempt?: unknown;
+  model?: { providerId?: unknown; modelId?: unknown };
+};
+const record = JSON.parse(lines[0]!) as RolloutRecord;
+if (
+  typeof record.completedAt !== "string" ||
+  typeof record.model?.providerId !== "string" ||
+  typeof record.model?.modelId !== "string"
+) {
+  console.error("record missing completedAt/model");
+  process.exit(1);
+}
 
 let gitRemote: string | undefined;
 try {
@@ -41,12 +60,16 @@ try {
   // no origin remote — the field is optional
 }
 
+// the guard above proves completedAt/providerId/modelId are strings; the
+// numeric fields ride through as-is — the isNormalEvent check below reports
+// any remaining drift (that report is the point of this demo)
+const occurredAt = record.completedAt as string;
 const events: NormalEvent[] = [
   {
     schema_version: SCHEMA_VERSION,
     agent: "zcode",
     session_id: sessionId,
-    occurred_at: record.completedAt,
+    occurred_at: occurredAt,
     kind: "session",
     event: "start",
     cwd: process.cwd(),
@@ -58,13 +81,13 @@ const events: NormalEvent[] = [
     schema_version: SCHEMA_VERSION,
     agent: "zcode",
     session_id: sessionId,
-    occurred_at: record.completedAt,
+    occurred_at: occurredAt,
     kind: "model_request",
-    request_id: record.requestId,
-    provider: record.model.providerId,
-    model: record.model.modelId,
-    duration_ms: record.durationMs,
-    attempt: record.attempt,
+    request_id: record.requestId as string | undefined,
+    provider: record.model!.providerId as string,
+    model: record.model!.modelId as string,
+    duration_ms: record.durationMs as number,
+    attempt: record.attempt as number | undefined,
     raw: record,
   },
 ];

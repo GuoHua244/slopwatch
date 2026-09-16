@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import type { SessionSummary } from "../api";
 import { useRollups } from "../hooks/useRollups";
-import { useSessions } from "../hooks/useSessions";
 import { useTeams } from "../hooks/useTeams";
 import {
   clock,
@@ -74,6 +74,37 @@ const COLUMNS: Column[] = [
 ];
 
 type RowWithTeam = LeaderboardRow & { teamName: string | null };
+
+type SortableThProps = {
+  col: Column;
+  /** Whether this column is the currently sorted one. */
+  active: boolean;
+  descending: boolean;
+  onSort: () => void;
+};
+
+/**
+ * The click-to-sort header, also keyboard-operable, announcing its state
+ * through aria-sort.
+ */
+const SortableTh = ({ col, active, descending, onSort }: SortableThProps) => (
+  <th
+    className={`sortable${col.num ? " num" : ""}`}
+    title={col.title}
+    aria-sort={active ? (descending ? "descending" : "ascending") : "none"}
+    tabIndex={0}
+    onClick={onSort}
+    onKeyDown={(e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onSort();
+      }
+    }}
+  >
+    {col.label}
+    {active ? (descending ? " ↓" : " ↑") : ""}
+  </th>
+);
 
 /** Sort value for a sortable column; the cost keys are nullable and sort as 0. */
 const sortValue = (row: RowWithTeam, key: SortKey): string | number =>
@@ -164,29 +195,32 @@ const CELL_RENDERERS: Record<
 };
 
 /**
- * The developer leaderboard, served from the decision-18 rollups. The view
- * owns its reads: the team dropdown scopes the rollups AND the session facts
- * server-side, so every column in a row shares one denominator and the
- * sessions page's filter never leaks in (v2 decision 27). Today spend is the
- * default rank (decision 3); numeric headers sort; the toggle chips narrow to
- * developers active today / this week. Clicking a row drills into that
- * developer.
+ * The developer leaderboard, served from the decision-18 rollups. The
+ * session facts come in as a prop — the dashboard already polls the feed, so
+ * the leaderboard never runs a second /sessions poll. The team dropdown
+ * scopes the rollups server-side, so every column in a row shares one
+ * denominator (v2 decision 27). Today spend is the default rank (decision 3);
+ * numeric headers sort; the toggle chips narrow to developers active today /
+ * this week. Clicking a row drills into that developer.
  */
-export const LeaderboardView = () => {
+export const LeaderboardView = ({
+  sessions,
+}: {
+  sessions: SessionSummary[];
+}) => {
   const [teamFilter, setTeamFilter] = useState<string>("all");
   const [activeToday, setActiveToday] = useState(false);
   const [activeWeek, setActiveWeek] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("todayCostUsd");
   const [sortDesc, setSortDesc] = useState(true);
-  const rollups = useRollups({
+  const { snapshot: rollups, lastError } = useRollups({
     days: 8,
     hours: 8 * 24,
     ...(teamFilter === "all" ? {} : { teamId: teamFilter }),
   });
-  const feed = useSessions(teamFilter === "all" ? null : teamFilter);
   const teams = useTeams();
 
-  const rows = aggregateLeaderboard(feed.sessions, rollups);
+  const rows = aggregateLeaderboard(sessions, rollups);
   const teamByUser = useMemo(() => {
     const map = new Map<string, string>();
     for (const team of teams) {
@@ -230,11 +264,6 @@ export const LeaderboardView = () => {
     }
   };
 
-  const sortMarker = (col: Column): string => {
-    const key = col.sortKey ?? col.key;
-    return sortKey === key ? (sortDesc ? " ↓" : " ↑") : "";
-  };
-
   const teamSelect = (
     <label className="filter-pill">
       <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
@@ -264,6 +293,7 @@ export const LeaderboardView = () => {
   if (rows.length === 0)
     return (
       <>
+        {lastError && <p className="banner-error">{lastError}</p>}
         <div className="toolbar">{teamSelect}</div>
         <p className="empty">No activity yet.</p>
       </>
@@ -271,6 +301,7 @@ export const LeaderboardView = () => {
 
   return (
     <>
+      {lastError && <p className="banner-error">{lastError}</p>}
       <div className="toolbar">
         {teamSelect}
         <label className="toggle-chip">
@@ -295,22 +326,27 @@ export const LeaderboardView = () => {
           <thead>
             <tr>
               <th>#</th>
-              {COLUMNS.map((col) => (
-                <th
-                  key={col.key}
-                  className={col.num ? "num" : undefined}
-                  title={col.title}
-                  onClick={
-                    col.sortable
-                      ? () => toggleSort(col.sortKey ?? (col.key as SortKey))
-                      : undefined
-                  }
-                  style={col.sortable ? { cursor: "pointer" } : undefined}
-                >
-                  {col.label}
-                  {col.sortable ? sortMarker(col) : ""}
-                </th>
-              ))}
+              {COLUMNS.map((col) =>
+                col.sortable ? (
+                  <SortableTh
+                    key={col.key}
+                    col={col}
+                    active={sortKey === (col.sortKey ?? col.key)}
+                    descending={sortDesc}
+                    onSort={() =>
+                      toggleSort(col.sortKey ?? (col.key as SortKey))
+                    }
+                  />
+                ) : (
+                  <th
+                    key={col.key}
+                    className={col.num ? "num" : undefined}
+                    title={col.title}
+                  >
+                    {col.label}
+                  </th>
+                ),
+              )}
             </tr>
           </thead>
           <tbody>

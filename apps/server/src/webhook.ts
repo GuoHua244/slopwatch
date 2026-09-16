@@ -55,6 +55,13 @@ export const sessionEndText = (
 ): string =>
   `slopwatch: ${user} finished a ${event.agent} session (${event.session_id})`;
 
+/**
+ * POST one payload to the webhook URL. The URL is an admin-configured
+ * outbound target (v2 decision 25), not a user-controlled one: trusted
+ * admins point the server at their org's bot, the server POSTs to it and
+ * follows redirects (fetch's default), so treat it as a trusted-admin
+ * configuration surface.
+ */
 export const postWebhook = async (
   url: string,
   body: unknown,

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   isNormalEvent,
+  joinUrl,
   SCHEMA_VERSION,
   sendEvents,
   type ModelRequestEvent,
@@ -214,6 +215,24 @@ describe("NormalEvent v0 schema", () => {
       isNormalEvent({ ...modelRequest, response_text: "Fixed — tests pass." }),
     ).toBe(true);
     expect(isNormalEvent({ ...modelRequest, response_text: "" })).toBe(false);
+  });
+});
+
+describe("joinUrl", () => {
+  test("strips trailing slashes and inserts exactly one separator", () => {
+    expect(joinUrl("http://x/", "/v1")).toBe("http://x/v1");
+    expect(joinUrl("http://x", "/v1")).toBe("http://x/v1");
+    expect(joinUrl("http://x///", "/v1")).toBe("http://x/v1");
+    expect(joinUrl("http://x/", "v1")).toBe("http://x/v1");
+  });
+
+  test("keeps any path prefix on the base", () => {
+    expect(joinUrl("http://localhost:8787/base/", "/events")).toBe(
+      "http://localhost:8787/base/events",
+    );
+    expect(joinUrl("https://llm.internal/v1", "/chat/completions")).toBe(
+      "https://llm.internal/v1/chat/completions",
+    );
   });
 });
 

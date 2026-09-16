@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { createApi, type RollupsSnapshot } from "../api";
-import { createPoller } from "../lib/poller";
+import { errorMessage } from "../lib/format";
+import { usePolledResource } from "./usePolled";
 
 const api = createApi();
 
@@ -18,7 +19,8 @@ const EMPTY: RollupsSnapshot = {
  * daily window (the leaderboard works off all-time totals + 8 days: today and
  * its trailing week); the hourly window covers the sparkline; `teamId`
  * scopes the whole snapshot server-side to one team. Callers pass literals,
- * so the primitive deps only change when the window really does.
+ * so the primitive deps only change when the window really does. A failed
+ * tick keeps the last snapshot and surfaces the reason in `lastError`.
  */
 export const useRollups = (
   {
@@ -27,30 +29,20 @@ export const useRollups = (
     teamId,
   }: { days?: number; hours?: number; teamId?: string } = {},
   intervalMs = 5000,
-): RollupsSnapshot => {
+): { snapshot: RollupsSnapshot; lastError: string | null } => {
   const [snapshot, setSnapshot] = useState<RollupsSnapshot>(EMPTY);
-  const mounted = useRef(true);
+  const [lastError, setLastError] = useState<string | null>(null);
 
-  useEffect(() => {
-    mounted.current = true;
-    const params = { days, hours, teamId };
-    const poller = createPoller({
-      intervalMs,
-      tick: async () => {
-        try {
-          const next = await api.rollups(params);
-          if (mounted.current) setSnapshot(next);
-        } catch {
-          // keep the last snapshot; retry on the next tick
-        }
-      },
-    });
-    poller.start();
-    return () => {
-      mounted.current = false;
-      poller.stop();
-    };
-  }, [intervalMs, days, hours, teamId]);
+  usePolledResource<RollupsSnapshot>({
+    deps: [intervalMs, days, hours, teamId],
+    intervalMs,
+    createFetch: () => () => api.rollups({ days, hours, teamId }),
+    onSuccess: (next) => {
+      setSnapshot(next);
+      setLastError(null);
+    },
+    onError: (error) => setLastError(errorMessage(error)),
+  });
 
-  return snapshot;
+  return { snapshot, lastError };
 };

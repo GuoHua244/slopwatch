@@ -6,9 +6,6 @@ import { isNormalEvent, type NormalEvent } from "@slopwatch/events";
 import { createDiskQueue } from "./disk-queue";
 import { createFlusher } from "./flusher";
 
-const dir = mkdtempSync(join(tmpdir(), "slopwatch-flusher-"));
-const queueFile = join(dir, "test.queue.jsonl");
-
 let seq = 0;
 const event = (tag: string): NormalEvent => {
   seq += 1;
@@ -23,10 +20,16 @@ const event = (tag: string): NormalEvent => {
   };
 };
 
+// every test gets its own queue file — no shared state across tests
 const newFlusher = (overrides?: {
   send?: (events: NormalEvent[]) => Promise<void>;
   maxBytes?: number;
+  onInvalid?: (event: NormalEvent) => void;
 }) => {
+  const queueFile = join(
+    mkdtempSync(join(tmpdir(), "slopwatch-flusher-")),
+    "test.queue.jsonl",
+  );
   const sent: NormalEvent[][] = [];
   const send = overrides?.send ?? (async (events) => void sent.push(events));
   const flusher = createFlusher({
@@ -37,7 +40,7 @@ const newFlusher = (overrides?: {
       file: queueFile,
       ...(overrides?.maxBytes ? { maxBytes: overrides.maxBytes } : {}),
     }),
-    onInvalid: () => {},
+    onInvalid: overrides?.onInvalid ?? (() => {}),
   });
   return { flusher, sent };
 };
@@ -73,6 +76,31 @@ describe("flusher", () => {
     expect(seen).toEqual(["offline-1", "offline-2", "online"]);
   });
 
+  test("an empty batch still drains the queue backlog (no starvation)", async () => {
+    let down = true;
+    const seen: string[] = [];
+    const { flusher } = newFlusher({
+      send: async (events) => {
+        if (down) throw new Error("ECONNREFUSED");
+        for (const e of events) {
+          if (e.kind === "quarantine") continue;
+          seen.push((e as { reason?: string }).reason ?? e.kind);
+        }
+      },
+    });
+
+    expect(await flusher.flush([event("backlog-1")])).toBe("queued");
+    // idle poll with the server still down: nothing goes out, backlog parked
+    expect(await flusher.flush([])).toBe("queued");
+    expect(seen).toEqual([]);
+
+    down = false;
+    // the no-op poll now works the queue down instead of starving it
+    expect(await flusher.flush([])).toBe("sent");
+    expect(seen).toEqual(["backlog-1"]);
+    expect(flusher.pendingDrops()).toBe(0);
+  });
+
   test("queue overflow drops are reported as a quarantine event on recovery", async () => {
     const lineSize = Buffer.byteLength(
       `${JSON.stringify({
@@ -93,33 +121,36 @@ describe("flusher", () => {
     });
 
     await flusher.flush([event("q1")]);
-    await flusher.flush([event("q2")]);
-    await flusher.flush([event("q3")]); // over cap → oldest dropped
+    await flusher.flush([event("q2")]); // over cap → q1 dropped
     expect(flusher.pendingDrops()).toBeGreaterThan(0);
+    expect(flusher.pendingDropReasons()["byte-cap"]).toBeGreaterThan(0);
 
     down = false;
     await flusher.flush([event("after")]);
     const overflow = quarantines.find(
-      (e) => e.kind === "quarantine" && e.reason === "buffer-overflow",
+      (e): e is Extract<NormalEvent, { kind: "quarantine" }> =>
+        e.kind === "quarantine" && e.reason === "buffer-overflow",
     );
     expect(overflow).toBeDefined();
     expect(isNormalEvent(overflow!)).toBe(true);
+    // the line JSON carries the per-cause breakdown
+    const payload = JSON.parse(overflow!.line) as {
+      dropped_events: number;
+      reasons: Record<string, number>;
+    };
+    expect(payload.dropped_events).toBeGreaterThan(0);
+    expect(payload.reasons["byte-cap"]).toBeGreaterThan(0);
     expect(flusher.pendingDrops()).toBe(0);
+    expect(flusher.pendingDropReasons()).toEqual({});
   });
 
   test("invalid events are filtered and reported, never sent", async () => {
     const invalid = { kind: "bogus" } as unknown as NormalEvent;
     const invalids: NormalEvent[] = [];
-    const { flusher, sent } = newFlusher();
-    // rebuild with a spy for invalids
-    const spy = createFlusher({
-      agent: "zcode",
-      sessionId: "sess_flush-test",
-      send: async (events) => void sent.push(events),
-      queue: createDiskQueue({ file: queueFile }),
+    const { flusher, sent } = newFlusher({
       onInvalid: (e) => invalids.push(e),
     });
-    await spy.flush([event("valid"), invalid]);
+    await flusher.flush([event("valid"), invalid]);
     expect(invalids).toEqual([invalid]);
     const flat = sent.flat();
     expect(flat.some((e) => !isNormalEvent(e))).toBe(false);

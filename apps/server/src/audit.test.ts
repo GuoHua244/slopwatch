@@ -350,12 +350,12 @@ describe("audit trail (in memory)", () => {
       roleOf: async () => "admin",
       getUser: async () => userRow(),
       mintToken: async () => ({
-        token_id: "t-1",
+        token_id: "a1b2c3d4-0000-4000-8000-0000000000b2",
         hint: "sw_abcd1234",
         token: "sw_secret",
       }),
       getToken: async () => ({
-        token_id: "t-1",
+        token_id: "a1b2c3d4-0000-4000-8000-0000000000b2",
         hint: "sw_abcd1234",
         user_name: "bob",
         created_at: "2026-09-01T00:00:00.000Z",
@@ -373,7 +373,7 @@ describe("audit trail (in memory)", () => {
     expect(minted.status).toBe(201);
     const revoked = await req(
       app,
-      "/admin/tokens/t-1",
+      "/admin/tokens/a1b2c3d4-0000-4000-8000-0000000000b2",
       { method: "DELETE" },
       "tok-admin",
     );
@@ -383,13 +383,20 @@ describe("audit trail (in memory)", () => {
         actor: { kind: "user", user: "guohua" },
         action: "token.mint",
         target: "bob",
-        detail: { token_id: "t-1", hint: "sw_abcd1234" },
+        detail: {
+          token_id: "a1b2c3d4-0000-4000-8000-0000000000b2",
+          hint: "sw_abcd1234",
+        },
       },
       {
         actor: { kind: "user", user: "guohua" },
         action: "token.revoke",
         target: "bob",
-        detail: { token_id: "t-1", hint: "sw_abcd1234", user: "bob" },
+        detail: {
+          token_id: "a1b2c3d4-0000-4000-8000-0000000000b2",
+          hint: "sw_abcd1234",
+          user: "bob",
+        },
       },
     ]);
   });
@@ -439,7 +446,7 @@ describe("audit trail (in memory)", () => {
 
   test("team create, update, and delete all leave entries", async () => {
     let team: TeamRow = {
-      id: "team-1",
+      id: "a1b2c3d4-0000-4000-8000-0000000000a1",
       name: "platform",
       raw_retention_days: null,
       created_at: "2026-09-01T00:00:00.000Z",
@@ -470,29 +477,38 @@ describe("audit trail (in memory)", () => {
       (
         await req(
           app,
-          "/admin/teams/team-1",
+          "/admin/teams/a1b2c3d4-0000-4000-8000-0000000000a1",
           { method: "PATCH", body: JSON.stringify({ raw_retention_days: 30 }) },
           "tok-admin",
         )
       ).status,
     ).toBe(200);
     expect(
-      (await req(app, "/admin/teams/team-1", { method: "DELETE" }, "tok-admin"))
-        .status,
+      (
+        await req(
+          app,
+          "/admin/teams/a1b2c3d4-0000-4000-8000-0000000000a1",
+          { method: "DELETE" },
+          "tok-admin",
+        )
+      ).status,
     ).toBe(200);
     expect(store.audits).toEqual([
       {
         actor: { kind: "user", user: "guohua" },
         action: "team.create",
         target: "platform",
-        detail: { id: "team-1", raw_retention_days: null },
+        detail: {
+          id: "a1b2c3d4-0000-4000-8000-0000000000a1",
+          raw_retention_days: null,
+        },
       },
       {
         actor: { kind: "user", user: "guohua" },
         action: "team.update",
         target: "platform",
         detail: {
-          id: "team-1",
+          id: "a1b2c3d4-0000-4000-8000-0000000000a1",
           changes: {
             raw_retention_days: { before: null, after: 30 },
           },
@@ -502,7 +518,7 @@ describe("audit trail (in memory)", () => {
         actor: { kind: "user", user: "guohua" },
         action: "team.delete",
         target: "platform",
-        detail: { id: "team-1", member_count: 3 },
+        detail: { id: "a1b2c3d4-0000-4000-8000-0000000000a1", member_count: 3 },
       },
     ]);
   });

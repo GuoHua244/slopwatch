@@ -8,9 +8,10 @@ import { createApp, type App } from "./http";
 import type { Store } from "./store";
 
 // Auth tests run everywhere with a throwing stub store — authentication must
-// be checked before any storage access (resolveTokenUser participates in auth,
-// so it answers null instead of throwing). The DB-backed tests below are
-// skipped unless DATABASE_URL is set (CI has no Postgres yet).
+// not touch storage beyond the row reads that participate in auth itself
+// (resolveTokenUser, the disabled-flag lookup via getUser, roleOf; all answer
+// instead of throwing). The DB-backed tests below are skipped unless
+// DATABASE_URL is set (CI has no Postgres yet).
 const refusingStore = (): Store => ({
   migrate: () => {
     throw new Error("store must not be touched");
@@ -60,9 +61,9 @@ const refusingStore = (): Store => ({
   createUser: () => {
     throw new Error("store must not be touched");
   },
-  getUser: () => {
-    throw new Error("store must not be touched");
-  },
+  // env-token auth consults the users row for the disabled flag;
+  // null = never provisioned → allowed (v0 semantics)
+  getUser: async () => null,
   listUsers: () => {
     throw new Error("store must not be touched");
   },

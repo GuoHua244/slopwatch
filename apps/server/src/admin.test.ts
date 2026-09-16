@@ -1068,6 +1068,24 @@ describe("admin team plane (decision 23)", () => {
     );
   });
 
+  test("malformed (non-UUID) team ids and team_id body answer 404/400", async () => {
+    // A non-UUID id must 404 at the route edge, never reach the store's
+    // uuid cast (Postgres would 500); a malformed escape decodes to 404 too.
+    expect(
+      (await admin(app, "PATCH", "/admin/teams/not-a-uuid", { name: "x" }))
+        .status,
+    ).toBe(404);
+    expect((await admin(app, "DELETE", "/admin/teams/not-a-uuid")).status).toBe(
+      404,
+    );
+    expect((await admin(app, "DELETE", "/admin/teams/%ZZ")).status).toBe(404);
+    await admin(app, "POST", "/admin/users", { name: "uuidy" });
+    expect(
+      (await admin(app, "PATCH", "/admin/users/uuidy", { team_id: "nope" }))
+        .status,
+    ).toBe(400);
+  });
+
   test("assign a user via PATCH team_id; unknown team 404", async () => {
     await admin(app, "POST", "/admin/users", { name: "teamy" });
     const { team } = (await (

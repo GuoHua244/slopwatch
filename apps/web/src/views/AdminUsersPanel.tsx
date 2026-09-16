@@ -6,8 +6,9 @@ import type {
   AdminUserRow,
   MintedToken,
 } from "../api";
+import { usePolled, type PollError } from "../hooks/usePolled";
 import { clock, errorMessage } from "../lib/format";
-import { usePolled, type PollError } from "./AdminView";
+import { ConfirmButton, ErrorBanner, useAsyncAction } from "./admin-shared";
 
 type Props = {
   api: AdminApi;
@@ -35,15 +36,7 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
     {},
   );
 
-  const run = async (fn: () => Promise<void>) => {
-    setFormError(null);
-    try {
-      await fn();
-      refresh();
-    } catch (err) {
-      setFormError(errorMessage(err));
-    }
-  };
+  const run = useAsyncAction(setFormError, refresh);
 
   const addUser = (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,7 +78,7 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
       <p className="page-sub">
         Members, their roles, and their API tokens. Teams are assigned here.
       </p>
-      {error && <p className="banner-error">{error.message}</p>}
+      <ErrorBanner message={error?.message ?? null} />
       <div className="panel-card">
         <form className="admin-form" onSubmit={addUser}>
           <input
@@ -102,11 +95,12 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
             Add user
           </button>
         </form>
-        {formError && <p className="banner-error">{formError}</p>}
+        {formError && <ErrorBanner message={formError} />}
         {minted && (
           <div className="token-reveal">
             Token minted — copy it now, it is shown once:
             <div className="secret">{minted.token}</div>
+            <button onClick={() => setMinted(null)}>Hide</button>
           </div>
         )}
         <div className="table-scroll">
@@ -197,19 +191,13 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
                     </button>
                     <button onClick={() => mintAndShow(u)}>Mint token</button>
                     <button onClick={() => void toggleTokens(u)}>Tokens</button>
-                    <button
+                    <ConfirmButton
                       className="danger"
-                      onClick={() => {
-                        if (
-                          confirm(
-                            `Delete user "${u.name}" and all their tokens?`,
-                          )
-                        )
-                          run(() => api.deleteUser(u.name));
-                      }}
+                      message={`Delete user "${u.name}" and all their tokens?`}
+                      onClick={() => run(() => api.deleteUser(u.name))}
                     >
                       Delete
-                    </button>
+                    </ConfirmButton>
                   </td>
                 </tr>,
                 ...(openTokens[u.name]

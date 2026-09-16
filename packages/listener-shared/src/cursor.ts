@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 
 /**
  * Byte offset of the last ingested capture read, persisted per session so a
@@ -15,5 +15,10 @@ export const readCursor = (path: string): number => {
 
 export const writeCursor = (path: string, offset: number): void => {
   const n = Number.isFinite(offset) && offset >= 0 ? Math.trunc(offset) : 0;
-  writeFileSync(path, String(n));
+  // Temp+rename, never an in-place write: a crash mid-write must not leave a
+  // truncated cursor that reads back as 0 and re-tails the whole capture
+  // file (the server has no dedup, so that double-counts everything).
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, String(n));
+  renameSync(tmp, path);
 };

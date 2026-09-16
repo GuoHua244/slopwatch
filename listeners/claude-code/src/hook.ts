@@ -1,29 +1,31 @@
 /**
  * Claude Code hook entry. Claude Code passes the hook payload as JSON on
  * stdin (no argv template expansion), so this script reads stdin, plans the
- * action, and returns immediately — SessionStart/UserPromptSubmit spawn the
- * transcript tailer detached, SessionEnd ships the session:end event and
- * tears the listener down. Prints nothing on stdout: SessionStart stdout
- * would be injected into the conversation as context.
+ * action, and returns immediately — SessionStart/UserPromptSubmit/PostToolUse
+ * spawn the transcript tailer detached (PostToolUse re-spawns mid-turn after
+ * an idle exit, mirroring the ZCode decision-19 fix), SessionEnd ships the
+ * session:end event and tears the listener down. Prints nothing on stdout:
+ * SessionStart stdout would be injected into the conversation as context.
  *
  * Usage (wired by install.ts): bun hook.ts --server-url U --token T
  *        bun hook.ts --stop --session-id <id>   (manual cleanup)
  */
 import { execFileSync } from "node:child_process";
-import {
-  mkdirSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { envelope, sendEvents, type SessionEndEvent } from "@slopwatch/events";
 import { resolveShipConfig } from "@slopwatch/config";
 import { createDiskQueue } from "@slopwatch/buffer";
-import { argvHelpers, spawnDrainSweep } from "@slopwatch/listener-shared";
+import {
+  argvHelpers,
+  readPidFile,
+  removePidFiles,
+  spawnDetachedListener,
+  spawnDrainSweep,
+} from "@slopwatch/listener-shared";
+import { isListenerAlive } from "./liveness";
 
 /** The per-session disk queue (v2 decision 21), beside the pid/log files. */
 const queueFile = (sessionId: string): string =>
@@ -45,8 +47,11 @@ export type HookPlan =
 
 /**
  * Pure dispatch planner: hook stdin payload → what to do. Claude Code
- * fires many hook events (PreToolUse, PostToolUse, Stop, …); only
- * SessionStart and UserPromptSubmit spawn, only SessionEnd ends.
+ * fires many hook events (PreToolUse, Stop, …); SessionStart,
+ * UserPromptSubmit, and PostToolUse spawn, only SessionEnd ends. PostToolUse
+ * matters because a listener that idle-exited mid-tool-call (>2 minutes of
+ * transcript silence) would otherwise stay dead until the next prompt —
+ * with capture off for everything the tool did in between.
  */
 export const planHook = (hookInput: unknown): HookPlan => {
   if (typeof hookInput !== "object" || hookInput === null) {
@@ -59,7 +64,8 @@ export const planHook = (hookInput: unknown): HookPlan => {
   }
   switch (input.hook_event_name) {
     case "SessionStart":
-    case "UserPromptSubmit": {
+    case "UserPromptSubmit":
+    case "PostToolUse": {
       if (typeof input.transcript_path !== "string" || !input.transcript_path) {
         return { kind: "none", reason: "no transcript_path in payload" };
       }
@@ -102,15 +108,21 @@ const readStdinJson = async (): Promise<unknown> => {
 const logDir = join(homedir(), ".slopwatch", "listeners");
 const pidFile = (sessionId: string): string =>
   join(logDir, `claude-code-${sessionId}.pid`);
+const heartbeatFile = (sessionId: string): string =>
+  join(logDir, `claude-code-${sessionId}.heartbeat`);
 
 const killStaleListener = (sessionId: string): void => {
-  try {
-    const pid = Number(readFileSync(pidFile(sessionId), "utf8").trim());
-    if (Number.isFinite(pid) && pid > 0) process.kill(pid);
-  } catch {
-    // no pid file or already dead
+  const pid = readPidFile(pidFile(sessionId));
+  // The heartbeat is the liveness proof — Windows reuses PIDs, so a bare
+  // signal-0 kill can terminate an unrelated process that inherited the
+  // PID after our listener died.
+  if (
+    pid !== null &&
+    isListenerAlive({ pid, heartbeatFile: heartbeatFile(sessionId) })
+  ) {
+    process.kill(pid);
   }
-  rmSync(pidFile(sessionId), { force: true });
+  removePidFiles(pidFile(sessionId));
 };
 
 const main = async (): Promise<void> => {
@@ -148,7 +160,10 @@ const main = async (): Promise<void> => {
     };
     if (serverUrl && token) {
       try {
-        await sendEvents([end], { serverUrl, token });
+        // 3s: the hook budget is 10s — a hung send must fail into the
+        // queue-and-sweep path, not burn the budget and get killed with
+        // neither send nor queue having happened.
+        await sendEvents([end], { serverUrl, token, timeoutMs: 3000 });
       } catch (e) {
         // v2 decision 21: the end event queues to disk instead of dying —
         // the hook is the ONLY sender of this event and the listener is being
@@ -180,21 +195,24 @@ const main = async (): Promise<void> => {
     process.exit(0);
   }
 
-  // spawn — but skip when a listener for this session is already alive
+  // spawn — but skip when a listener for this session is already alive.
+  // The heartbeat is the liveness proof: signal-0 alone mistakes a
+  // PID-reuse stranger for our listener and capture would stall for the
+  // rest of the session.
   mkdirSync(logDir, { recursive: true });
-  try {
-    const pid = Number(readFileSync(pidFile(plan.sessionId), "utf8").trim());
-    if (Number.isFinite(pid) && pid > 0) {
-      process.kill(pid, 0);
-      process.exit(0); // already running
-    }
-  } catch {
-    // no pid file or stale pid — spawn a fresh listener
+  const existingPid = readPidFile(pidFile(plan.sessionId));
+  if (
+    existingPid !== null &&
+    isListenerAlive({
+      pid: existingPid,
+      heartbeatFile: heartbeatFile(plan.sessionId),
+    })
+  ) {
+    process.exit(0); // already running
   }
 
   const liveTs = fileURLToPath(new URL("./live.ts", import.meta.url));
   const childArgs = [
-    liveTs,
     "--file",
     plan.transcriptPath,
     "--session-id",
@@ -222,17 +240,17 @@ const main = async (): Promise<void> => {
   if (gitRemote) childArgs.push("--git-remote", gitRemote);
 
   const logFile = join(logDir, `claude-code-${plan.sessionId}.log`);
-  const logFd = openSync(logFile, "a");
-  const child = Bun.spawn([process.execPath, ...childArgs], {
-    detached: true,
-    stdio: ["ignore", logFd, logFd],
+  const pid = spawnDetachedListener({
+    scriptPath: liveTs,
+    args: childArgs,
+    logFile,
+    logDir,
   });
-  child.unref?.();
-  writeFileSync(pidFile(plan.sessionId), String(child.pid));
+  writeFileSync(pidFile(plan.sessionId), String(pid));
   // sweep any queue files stuck since earlier outages (v2 decision 21)
   sweep();
   console.error(
-    `slopwatch listener spawned: pid=${child.pid} log=${logFile} transcript=${plan.transcriptPath}`,
+    `slopwatch listener spawned: pid=${pid} log=${logFile} transcript=${plan.transcriptPath}`,
   );
   process.exit(0);
 };
