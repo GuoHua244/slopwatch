@@ -185,11 +185,21 @@ export const sessionMethods = (
     async listSessions(teamId, userId) {
       const filters: string[] = [];
       const args: unknown[] = [];
+      // Team scope mirrors the leaderboard (v2 decision 27): membership
+      // resolves through users.team_id — the owner's current team — so the
+      // rail filter and the leaderboard group people identically. The
+      // sessions.team_id ingest snapshot (ADR 0004) stays reserved for
+      // retention attribution.
       if (teamId !== undefined) {
-        if (teamId === "unassigned") filters.push("team_id IS NULL");
+        if (teamId === "unassigned")
+          filters.push(
+            "user_id NOT IN (SELECT name FROM users WHERE team_id IS NOT NULL)",
+          );
         else {
           args.push(teamId);
-          filters.push(`team_id = $${args.length}`);
+          filters.push(
+            `user_id IN (SELECT name FROM users WHERE team_id = $${args.length})`,
+          );
         }
       }
       if (userId !== undefined) {

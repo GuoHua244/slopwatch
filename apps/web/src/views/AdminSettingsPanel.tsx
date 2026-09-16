@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { AdminApi } from "../api";
 import { usePolled, type PollError } from "../hooks/usePolled";
 import { ErrorBanner, useAsyncAction } from "./admin-shared";
+import { Select } from "./Select";
 
 type Props = {
   api: AdminApi;
@@ -120,17 +121,19 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
                 placeholder="https://hooks.example.com/…"
               />
             </label>
-            <label className="field">
+            <div className="field">
               <span>Message format</span>
-              <select
+              <Select
+                label="Message format"
                 value={format}
-                onChange={(e) => setFormatDraft(e.target.value)}
-              >
-                <option value="slack">Slack-style {"{text}"}</option>
-                <option value="feishu">Feishu</option>
-                <option value="dingtalk">DingTalk</option>
-              </select>
-            </label>
+                onChange={setFormatDraft}
+                options={[
+                  { value: "slack", label: "Slack-style {text}" },
+                  { value: "feishu", label: "Feishu" },
+                  { value: "dingtalk", label: "DingTalk" },
+                ]}
+              />
+            </div>
             <label className="field checkbox">
               <span>Delivery</span>
               <span className="checkbox-row">

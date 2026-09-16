@@ -12,6 +12,7 @@ import {
 } from "../lib/format";
 import { aggregateLeaderboard, type LeaderboardRow } from "../lib/leaderboard";
 import { sparklinePoints } from "../lib/sparkline";
+import { Select } from "./Select";
 
 const rank = (index: number): string => String(index + 1).padStart(2, "0");
 
@@ -265,7 +266,7 @@ export const LeaderboardView = ({
   };
 
   const teamSelect = (
-    <label className="filter-pill">
+    <div className="filter-pill">
       <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
         <path
           d="M1.5 2.5h9L7.3 6.4v3.2L4.7 8.2V6.4L1.5 2.5Z"
@@ -274,20 +275,17 @@ export const LeaderboardView = ({
           strokeLinejoin="round"
         />
       </svg>
-      <select
+      <Select
+        label="Filter leaderboard by team"
         value={teamFilter}
-        onChange={(e) => setTeamFilter(e.target.value)}
-        aria-label="Filter leaderboard by team"
-      >
-        <option value="all">All teams</option>
-        {teams.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name}
-          </option>
-        ))}
-        <option value="unassigned">Unassigned</option>
-      </select>
-    </label>
+        onChange={setTeamFilter}
+        options={[
+          { value: "all", label: "All teams" },
+          ...teams.map((t) => ({ value: t.id, label: t.name })),
+          { value: "unassigned", label: "Unassigned" },
+        ]}
+      />
+    </div>
   );
 
   if (rows.length === 0)
@@ -321,7 +319,7 @@ export const LeaderboardView = ({
           Active this week
         </label>
       </div>
-      <div className="table-scroll">
+      <div className="table-scroll bare">
         <table className="usage leaderboard">
           <thead>
             <tr>

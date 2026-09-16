@@ -461,7 +461,7 @@ describe("admin user CRUD over the in-memory store", () => {
     );
   });
 
-  test("role changes: promote, demote, garbage, and the self-guard", async () => {
+  test("role changes: promote, demote, garbage", async () => {
     await admin(app, "POST", "/admin/users", { name: "pri" });
     const up = await admin(app, "PATCH", "/admin/users/pri", {
       role: "admin",
@@ -481,8 +481,8 @@ describe("admin user CRUD over the in-memory store", () => {
       (await admin(app, "PATCH", "/admin/users/pri", { role: "root" })).status,
     ).toBe(400);
 
-    // The caller here is the operator bypass (no user identity), so the
-    // self-guard must not fire on a same-named user.
+    // The caller here is the operator bypass (no user identity); a
+    // same-named user's role changes like anyone else's.
     await admin(app, "POST", "/admin/users", { name: "admin-tok" });
     expect(
       (await admin(app, "PATCH", "/admin/users/admin-tok", { role: "member" }))
@@ -490,25 +490,16 @@ describe("admin user CRUD over the in-memory store", () => {
     ).toBe(200);
   });
 
-  test("an admin-role caller cannot demote themselves", async () => {
+  test("an admin-role caller can change their own role", async () => {
     const { store } = memStore();
     await store.createUser("boss", null);
     await store.setUserRole("boss", "admin");
-    const minted = await store.mintToken("boss");
-    const app = appWith({ adminToken: "admin-tok", store });
-    const res = await admin(
-      app,
-      "PATCH",
-      "/admin/users/boss",
-      {
-        role: "member",
-      },
-      minted.token,
-    );
-    expect(res.status).toBe(400);
-    // someone else's role is still theirs to change
     await store.createUser("peer", null);
     await store.setUserRole("peer", "admin");
+    const minted = await store.mintToken("boss");
+    const app = appWith({ adminToken: "admin-tok", store });
+    // someone else's role first — the self-demote below ends this caller's
+    // own admin standing
     const ok = await admin(
       app,
       "PATCH",
@@ -519,6 +510,19 @@ describe("admin user CRUD over the in-memory store", () => {
       minted.token,
     );
     expect(ok.status).toBe(200);
+    const res = await admin(
+      app,
+      "PATCH",
+      "/admin/users/boss",
+      {
+        role: "member",
+      },
+      minted.token,
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { user: AdminUserRow }).user.role).toBe(
+      "member",
+    );
   });
 
   test("delete removes the user and cascades token resolution", async () => {

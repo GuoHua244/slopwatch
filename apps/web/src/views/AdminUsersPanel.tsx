@@ -9,6 +9,7 @@ import type {
 import { usePolled, type PollError } from "../hooks/usePolled";
 import { clock, errorMessage } from "../lib/format";
 import { ConfirmButton, ErrorBanner, useAsyncAction } from "./admin-shared";
+import { Select } from "./Select";
 
 type Props = {
   api: AdminApi;
@@ -121,27 +122,36 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
             <tbody>
               {(users ?? []).flatMap((u) => [
                 <tr key={u.name}>
-                  <td>{u.name}</td>
-                  <td>{u.email ?? "—"}</td>
                   <td>
-                    <select
+                    <span className="cell-clip" title={u.name}>
+                      {u.name}
+                    </span>
+                  </td>
+                  <td>
+                    <span
+                      className="cell-clip wide"
+                      title={u.email ?? undefined}
+                    >
+                      {u.email ?? "—"}
+                    </span>
+                  </td>
+                  <td>
+                    <Select
+                      label={`Team for ${u.name}`}
                       value={u.team_id ?? ""}
-                      onChange={(e) =>
+                      onChange={(next) =>
                         run(() =>
-                          api.setUserTeam(
-                            u.name,
-                            e.target.value === "" ? null : e.target.value,
-                          ),
+                          api.setUserTeam(u.name, next === "" ? null : next),
                         )
                       }
-                    >
-                      <option value="">unassigned</option>
-                      {(teams ?? []).map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
+                      options={[
+                        { value: "", label: "unassigned" },
+                        ...(teams ?? []).map((t) => ({
+                          value: t.id,
+                          label: t.name,
+                        })),
+                      ]}
+                    />
                   </td>
                   <td>
                     <span

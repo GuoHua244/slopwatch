@@ -14,6 +14,7 @@ import { MeView } from "./views/MeView";
 import { NotAuthorized } from "./views/NotAuthorized";
 import { SessionDetail } from "./views/SessionDetail";
 import { SessionList } from "./views/SessionList";
+import { Select } from "./views/Select";
 import { SignInGate, type Role } from "./views/SignIn";
 
 /** Saved-token lifecycle: anon → checking (verifying against /me) → signed-in. */
@@ -228,7 +229,7 @@ const Dashboard = ({
                   {feed.sessions.length}{" "}
                   {feed.sessions.length === 1 ? "session" : "sessions"}
                 </span>
-                <label className="filter-pill">
+                <div className="filter-pill">
                   <svg
                     width="11"
                     height="11"
@@ -243,23 +244,23 @@ const Dashboard = ({
                       strokeLinejoin="round"
                     />
                   </svg>
-                  <select
+                  <Select
+                    label="Filter sessions by team"
                     value={teamFilter}
-                    onChange={(e) => {
-                      setTeamFilter(e.target.value);
+                    onChange={(next) => {
+                      setTeamFilter(next);
                       setSelectedId(null);
                     }}
-                    aria-label="Filter sessions by team"
-                  >
-                    <option value="all">All teams</option>
-                    {teams.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                    <option value="unassigned">Unassigned</option>
-                  </select>
-                </label>
+                    options={[
+                      { value: "all", label: "All teams" },
+                      ...teams.map((t) => ({
+                        value: t.id,
+                        label: t.name,
+                      })),
+                      { value: "unassigned", label: "Unassigned" },
+                    ]}
+                  />
+                </div>
               </div>
             )}
             <SessionList

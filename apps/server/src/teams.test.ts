@@ -127,7 +127,7 @@ describe.skipIf(!dbTests())("team store semantics", () => {
     expect(mine.team_id).toBeNull();
   });
 
-  test("listSessions filters on the team snapshot; unassigned picks the NULL bucket", async () => {
+  test("listSessions team filter follows the owner's current team; unassigned picks teamless owners", async () => {
     const s = await ensure();
     const user = `u-${randomUUID().slice(0, 8)}`;
     await s.createUser(user, null);
@@ -156,5 +156,19 @@ describe.skipIf(!dbTests())("team store semantics", () => {
     const everything = (await s.listSessions()).map((row) => row.session_id);
     expect(everything).toContain(inTeam);
     expect(everything).toContain(unassigned);
+
+    // Decision 27: moving the owner re-files their sessions for the read
+    // filter immediately (the ADR 0004 snapshot still holds for retention).
+    const other = await s.createTeam(`f-${randomUUID().slice(0, 6)}`, null);
+    await s.setUserTeam(user, other.id);
+    expect((await s.listSessions(other.id)).map((r) => r.session_id)).toContain(
+      inTeam,
+    );
+    expect(
+      (await s.listSessions(team.id)).map((r) => r.session_id),
+    ).not.toContain(inTeam);
+    expect(
+      (await s.listSessions("unassigned")).map((r) => r.session_id),
+    ).not.toContain(inTeam);
   });
 });

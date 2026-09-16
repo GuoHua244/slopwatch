@@ -3,6 +3,7 @@ import type { AdminApi, AuditRow } from "../api";
 import { usePolled, type PollError } from "../hooks/usePolled";
 import { fmtDate, shortId } from "../lib/format";
 import { ErrorBanner } from "./admin-shared";
+import { Select } from "./Select";
 
 type Props = {
   api: AdminApi;
@@ -186,19 +187,18 @@ export const AdminAuditPanel = ({ api, refreshKey }: Props) => {
       <ErrorBanner message={error?.message ?? null} />
       <div className="panel-card">
         <form className="admin-form" onSubmit={apply}>
-          <select
+          <Select
+            label="Filter audit by category"
             value={kind}
-            onChange={(e) => {
-              setKind(e.target.value);
+            onChange={(next) => {
+              setKind(next);
               setPage(0);
             }}
-          >
-            {CATEGORIES.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
+            options={CATEGORIES.map((c) => ({
+              value: c.value,
+              label: c.label,
+            }))}
+          />
           <input
             value={actorInput}
             onChange={(e) => setActorInput(e.target.value)}

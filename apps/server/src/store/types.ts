@@ -201,10 +201,11 @@ export type Store = {
     userId: string | null,
   ): Promise<{ accepted: number }>;
   /**
-   * All sessions, newest first. `teamId` narrows to one team's snapshot
-   * (the team-scoped DRI filter); the sentinel "unassigned" selects the
-   * NULL-team bucket. `userId` narrows to one owner's sessions — the
-   * read-plane hands it in for members so a user only ever sees their own.
+   * All sessions, newest first. `teamId` narrows to sessions whose owner is
+   * currently on that team (decision 27 roster semantics, matching the
+   * leaderboard); the sentinel "unassigned" selects owners with no team.
+   * `userId` narrows to one owner's sessions — the read-plane hands it in
+   * for members so a user only ever sees their own.
    */
   listSessions(teamId?: string, userId?: string): Promise<SessionRow[]>;
   eventsSince(sessionId: string, sinceSeq: number): Promise<StoredEvent[]>;

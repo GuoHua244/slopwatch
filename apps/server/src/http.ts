@@ -164,8 +164,10 @@ const route = async (
 
   if (url.pathname === "/sessions" && req.method === "GET") {
     const reader = await auth.requireReader(req);
-    // Team-scoped DRI filter: "unassigned" is the NULL-team bucket. Members
-    // are always scoped to their own sessions regardless of the filter.
+    // Team-scoped DRI filter: membership resolves through the owner's
+    // current team (decision 27, same as the leaderboard), so "unassigned"
+    // means the owner has no team. Members are always scoped to their own
+    // sessions regardless of the filter.
     const teamId = url.searchParams.get("team_id")?.trim() || undefined;
     // ?user_id= narrows to one developer — admins only; members stay pinned
     // to themselves so the parameter can never widen their read.
