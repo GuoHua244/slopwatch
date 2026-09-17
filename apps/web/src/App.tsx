@@ -205,7 +205,7 @@ const Dashboard = ({
           <main className="full">
             <section>
               <div className="stage">
-                <AdminView />
+                <AdminView user={user} />
               </div>
             </section>
           </main>

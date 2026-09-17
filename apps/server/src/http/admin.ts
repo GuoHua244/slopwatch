@@ -281,6 +281,11 @@ export const handleAdmin = async (
         return json(400, { error: "team_id must be a UUID or null" });
       if (role !== undefined && role !== "admin" && role !== "member")
         return json(400, { error: 'role must be "admin" or "member"' });
+      // An admin who demotes themselves may strand the plane with no
+      // admin left; changing your own role goes through another admin
+      // (or the operator bypass).
+      if (role !== undefined && role !== "admin" && caller === name)
+        return json(400, { error: "cannot change your own role" });
       if (
         disabled === undefined &&
         is_dri === undefined &&

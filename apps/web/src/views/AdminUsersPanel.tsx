@@ -13,11 +13,13 @@ import { Select } from "./Select";
 
 type Props = {
   api: AdminApi;
+  /** The signed-in admin — their own row blocks self role changes. */
+  user: string;
   refreshKey: number;
   refresh: () => void;
 };
 
-export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
+export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
   const {
     data: users,
     error,
@@ -181,6 +183,12 @@ export const AdminUsersPanel = ({ api, refreshKey, refresh }: Props) => {
                       {u.disabled ? "Enable" : "Disable"}
                     </button>
                     <button
+                      disabled={u.name === user}
+                      title={
+                        u.name === user
+                          ? "You cannot change your own role — ask another admin or use the operator token."
+                          : undefined
+                      }
                       onClick={() =>
                         run(() =>
                           api.setUserRole(

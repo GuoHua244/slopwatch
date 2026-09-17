@@ -113,7 +113,7 @@ type AdminTab =
   | "audit"
   | "health";
 
-const AdminHome = ({ api }: { api: AdminApi }) => {
+const AdminHome = ({ api, user }: { api: AdminApi; user: string }) => {
   const [tab, setTab] = useState<AdminTab>("users");
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = () => setRefreshKey((k) => k + 1);
@@ -172,7 +172,12 @@ const AdminHome = ({ api }: { api: AdminApi }) => {
       {gate ? (
         <p className="banner-error">{gate}</p>
       ) : tab === "users" ? (
-        <AdminUsersPanel api={api} refreshKey={refreshKey} refresh={refresh} />
+        <AdminUsersPanel
+          api={api}
+          user={user}
+          refreshKey={refreshKey}
+          refresh={refresh}
+        />
       ) : tab === "teams" ? (
         <AdminTeamsPanel api={api} refreshKey={refreshKey} refresh={refresh} />
       ) : tab === "sessions" ? (
@@ -202,7 +207,7 @@ const AdminHome = ({ api }: { api: AdminApi }) => {
  * role on every call. The client is memoized: rebuilding it per render would
  * hand every panel's usePolled a fresh fetcher identity.
  */
-export const AdminView = () => {
+export const AdminView = ({ user }: { user: string }) => {
   const api = useMemo(() => createAdminApi(() => storedToken() ?? ""), []);
-  return <AdminHome api={api} />;
+  return <AdminHome api={api} user={user} />;
 };
