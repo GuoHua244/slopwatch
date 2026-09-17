@@ -79,7 +79,7 @@ export const foldSummary = async (
   }
 
   const cache = store.loadCache();
-  const text = await chatCompletion({
+  const { text, usage } = await chatCompletion({
     ...opts.llm,
     system: SYSTEM_PROMPT,
     user: buildUserPrompt(cache?.body ?? null, folded),
@@ -105,5 +105,6 @@ export const foldSummary = async (
     event: "summary",
     body: text,
     model,
+    ...(usage ? { usage } : {}),
   };
 };

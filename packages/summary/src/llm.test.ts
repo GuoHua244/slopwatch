@@ -11,7 +11,7 @@ describe("chatCompletion", () => {
         }),
     });
     try {
-      const text = await chatCompletion({
+      const { text } = await chatCompletion({
         endpoint: `http://127.0.0.1:${server.port}/v1`,
         model: "glm-4",
         apiKey: "sk-test",
@@ -48,7 +48,7 @@ describe("chatCompletion", () => {
       },
     });
     try {
-      const text = await chatCompletion({
+      const { text } = await chatCompletion({
         endpoint: `http://127.0.0.1:${server.port}/v1/`,
         model: "glm-4",
         apiKey: "sk-test",
@@ -75,7 +75,7 @@ describe("chatCompletion", () => {
       fetch: () => Response.json({}, { status: 401 }),
     });
     try {
-      const text = await chatCompletion({
+      const { text } = await chatCompletion({
         endpoint: `http://127.0.0.1:${server.port}`,
         model: "m",
         apiKey: "bad",
@@ -89,7 +89,7 @@ describe("chatCompletion", () => {
   });
 
   test("an unreachable endpoint yields null instead of throwing", async () => {
-    const text = await chatCompletion({
+    const { text } = await chatCompletion({
       endpoint: "http://127.0.0.1:1",
       model: "m",
       apiKey: "k",
@@ -105,7 +105,7 @@ describe("chatCompletion", () => {
       fetch: () => Response.json({ surprise: true }),
     });
     try {
-      const text = await chatCompletion({
+      const { text } = await chatCompletion({
         endpoint: `http://127.0.0.1:${server.port}`,
         model: "m",
         apiKey: "k",
@@ -137,7 +137,7 @@ describe("chatCompletion", () => {
       },
     });
     try {
-      const text = await chatCompletion({
+      const { text } = await chatCompletion({
         endpoint: `http://127.0.0.1:${server.port}`,
         model: "m",
         apiKey: "k",
@@ -163,7 +163,7 @@ describe("chatCompletion", () => {
       },
     });
     try {
-      const text = await chatCompletion({
+      const { text } = await chatCompletion({
         endpoint: `http://127.0.0.1:${server.port}`,
         model: "m",
         apiKey: "k",
@@ -189,7 +189,7 @@ describe("chatCompletion", () => {
       },
     });
     try {
-      const text = await chatCompletion({
+      const { text } = await chatCompletion({
         endpoint: `http://127.0.0.1:${server.port}`,
         model: "m",
         apiKey: "k",
@@ -198,6 +198,128 @@ describe("chatCompletion", () => {
       });
       expect(text).toBeNull();
       expect(calls).toBe(1);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("maps the OpenAI usage block onto canonical token fields", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        Response.json({
+          choices: [{ message: { content: "Done." } }],
+          usage: {
+            prompt_tokens: 1200,
+            completion_tokens: 380,
+            total_tokens: 1580,
+            prompt_tokens_details: { cached_tokens: 900 },
+            completion_tokens_details: { reasoning_tokens: 210 },
+          },
+        }),
+    });
+    try {
+      const { text, usage } = await chatCompletion({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+      });
+      expect(text).toBe("Done.");
+      expect(usage).toEqual({
+        input_tokens: 1200,
+        output_tokens: 380,
+        cache_read_tokens: 900,
+        reasoning_tokens: 210,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a bare usage block survives; a missing one yields undefined", async () => {
+    const bare = Bun.serve({
+      port: 0,
+      fetch: () =>
+        Response.json({
+          choices: [{ message: { content: "a" } }],
+          usage: { prompt_tokens: 10, completion_tokens: 2 },
+        }),
+    });
+    try {
+      const result = await chatCompletion({
+        endpoint: `http://127.0.0.1:${bare.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+      });
+      expect(result.usage).toEqual({ input_tokens: 10, output_tokens: 2 });
+    } finally {
+      bare.stop(true);
+    }
+    const none = Bun.serve({
+      port: 0,
+      fetch: () => Response.json({ choices: [{ message: { content: "a" } }] }),
+    });
+    try {
+      const result = await chatCompletion({
+        endpoint: `http://127.0.0.1:${none.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+      });
+      expect(result.usage).toBeUndefined();
+    } finally {
+      none.stop(true);
+    }
+  });
+
+  test("a retried budget blowout sums the tokens both attempts burned", async () => {
+    const calls: number[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        void (await req.json());
+        calls.push(calls.length + 1);
+        if (calls.length === 1) {
+          // the whole budget went to reasoning — but the spend is real
+          return Response.json({
+            choices: [{ finish_reason: "length", message: { content: "" } }],
+            usage: {
+              prompt_tokens: 100,
+              completion_tokens: 50,
+              prompt_tokens_details: { cached_tokens: 40 },
+            },
+          });
+        }
+        return Response.json({
+          choices: [{ message: { content: "Recovered." } }],
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            prompt_tokens_details: { cached_tokens: 40 },
+          },
+        });
+      },
+    });
+    try {
+      const { text, usage } = await chatCompletion({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+      });
+      expect(text).toBe("Recovered.");
+      expect(calls.length).toBe(2);
+      expect(usage).toEqual({
+        input_tokens: 200,
+        output_tokens: 100,
+        cache_read_tokens: 80,
+      });
     } finally {
       server.stop(true);
     }

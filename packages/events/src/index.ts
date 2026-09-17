@@ -136,6 +136,12 @@ export type SessionSummaryEvent = Envelope & {
   body: string;
   /** The model that produced it, e.g. "glm-4". */
   model: string;
+  /**
+   * Tokens the fold's LLM call spent producing `body`, in the caller's own
+   * usage terms. Spend outside the agent's key: never summed into session
+   * totals, displayed only as a summary cost note.
+   */
+  usage?: TokenUsage;
 };
 
 export type ToolResultEvent = Envelope & {
@@ -332,7 +338,9 @@ export const isNormalEvent = (value: unknown): value is NormalEvent => {
         return value.title !== undefined || value.task_preview !== undefined;
       }
       if (value.event === "summary") {
-        return isNonEmptyString(value.body) && isNonEmptyString(value.model);
+        if (!isNonEmptyString(value.body) || !isNonEmptyString(value.model))
+          return false;
+        return isOptional(value.usage, isTokenUsage);
       }
       if (!isLifecycleEvent(value.event)) return false;
       if (value.event === "start") {

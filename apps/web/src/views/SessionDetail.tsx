@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { TokenUsage } from "@slopwatch/events";
 import type { CommentRow } from "../api";
 import type { SessionSummary } from "../api";
 import { useEventStream } from "../hooks/useEventStream";
@@ -10,6 +11,24 @@ import { ConfirmButton, useAsyncAction } from "./admin-shared";
 import { RawEventsView } from "./RawEventsView";
 import { TurnsView } from "./TurnsView";
 import { UsageView } from "./UsageView";
+
+/**
+ * "· 4.2k in · 380 out · 1.1k reasoning" — the tokens the displayed summary's
+ * LLM fold spent. Spend outside the agent's key: absent on summaries folded
+ * before the field existed.
+ */
+const summaryUsageNote = (usage: TokenUsage): string => {
+  const parts: string[] = [];
+  if (usage.input_tokens !== undefined)
+    parts.push(`${fmtTokens(usage.input_tokens)} in`);
+  if (usage.output_tokens !== undefined)
+    parts.push(`${fmtTokens(usage.output_tokens)} out`);
+  if (usage.cache_read_tokens)
+    parts.push(`${fmtTokens(usage.cache_read_tokens)} cache-read`);
+  if (usage.reasoning_tokens)
+    parts.push(`${fmtTokens(usage.reasoning_tokens)} reasoning`);
+  return parts.length > 0 ? ` · ${parts.join(" · ")}` : "";
+};
 
 type Tab = "turns" | "raw";
 
@@ -176,6 +195,11 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
           <h3>
             Machine summary
             <span className="mono dim">· {latestSummary.model}</span>
+            {latestSummary.usage && (
+              <span className="mono dim">
+                {summaryUsageNote(latestSummary.usage)}
+              </span>
+            )}
           </h3>
           <p>{latestSummary.body}</p>
           <p className="dim" style={{ fontSize: "11.5px" }}>

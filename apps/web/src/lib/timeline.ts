@@ -201,7 +201,15 @@ export const describeEvent = (event: StoredEvent["event"]): string => {
       if (event.event === "meta")
         return event.title ?? event.task_preview ?? "";
       if (event.event === "summary")
-        return `summary · ${event.model} · ${event.body}`;
+        return [
+          event.model,
+          event.usage
+            ? `${event.usage.input_tokens ?? 0}in/${event.usage.output_tokens ?? 0}out`
+            : "",
+          event.body,
+        ]
+          .filter(Boolean)
+          .join(" · ");
       return event.reason ?? "";
     case "turn":
       if (event.event === "start")

@@ -102,6 +102,38 @@ describe("foldSummary", () => {
     expect(store.pendingDigests()).toEqual([]);
   });
 
+  test("the emitted event carries the fold's token usage", async () => {
+    const base = tempBase();
+    const store = summaryStore(base);
+    store.appendDigest("turn 1");
+    const event = await foldSummary({
+      stateBase: base,
+      agent: "zcode",
+      sessionId: "s1",
+      llm,
+      fetchImpl: asFetch(
+        async () =>
+          new Response(
+            JSON.stringify({
+              choices: [{ message: { content: "Folded." } }],
+              usage: {
+                prompt_tokens: 500,
+                completion_tokens: 120,
+                prompt_tokens_details: { cached_tokens: 300 },
+                completion_tokens_details: { reasoning_tokens: 90 },
+              },
+            }),
+          ),
+      ),
+    });
+    expect(event?.usage).toEqual({
+      input_tokens: 500,
+      output_tokens: 120,
+      cache_read_tokens: 300,
+      reasoning_tokens: 90,
+    });
+  });
+
   test("the next fold rolls on top of the previous summary", async () => {
     const base = tempBase();
     const store = summaryStore(base);

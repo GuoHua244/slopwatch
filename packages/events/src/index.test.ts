@@ -223,6 +223,23 @@ describe("NormalEvent v0 schema", () => {
     ).toBe(false);
   });
 
+  test("summary usage is optional but strictly shaped when present", () => {
+    expect(
+      isNormalEvent({
+        ...sessionSummary,
+        usage: { input_tokens: 10, output_tokens: 2, reasoning_tokens: 1 },
+      }),
+    ).toBe(true);
+    expect(isNormalEvent({ ...sessionSummary, usage: {} })).toBe(true);
+    expect(
+      isNormalEvent({ ...sessionSummary, usage: { input_tokens: -1 } }),
+    ).toBe(false);
+    expect(
+      isNormalEvent({ ...sessionSummary, usage: { total_tokens: 10 } }),
+    ).toBe(false);
+    expect(isNormalEvent({ ...sessionSummary, usage: 12 })).toBe(false);
+  });
+
   test("rejects envelope violations", () => {
     const bad = (
       patch: (e: SessionStartEvent) => Partial<SessionStartEvent>,

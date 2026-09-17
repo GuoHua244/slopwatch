@@ -5,6 +5,7 @@
  * null: a summary is a reading aid and must never break the capture path.
  */
 import { joinUrl } from "@slopwatch/events";
+import type { TokenUsage } from "@slopwatch/events";
 
 export type ChatOptions = {
   /** OpenAI-compatible base URL, e.g. "https://llm.internal/v1". */
@@ -18,7 +19,61 @@ export type ChatOptions = {
   fetchImpl?: typeof fetch;
 };
 
-type AttemptResult = { text: string | null; budgetBlown: boolean };
+/**
+ * The response's `usage` block mapped into the canonical TokenUsage fields.
+ * OpenAI semantics: cached and reasoning tokens are subsets of the prompt and
+ * completion counts, not additive. Gateways vary in what they report — every
+ * field is optional and only clean non-negative integers survive.
+ */
+type RawUsage = {
+  prompt_tokens?: unknown;
+  completion_tokens?: unknown;
+  prompt_tokens_details?: { cached_tokens?: unknown };
+  completion_tokens_details?: { reasoning_tokens?: unknown };
+};
+
+const cleanCount = (v: unknown): number | undefined =>
+  typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : undefined;
+
+const toTokenUsage = (
+  raw: RawUsage | undefined | null,
+): TokenUsage | undefined => {
+  if (!raw) return undefined;
+  const usage: TokenUsage = {};
+  const input = cleanCount(raw.prompt_tokens);
+  const output = cleanCount(raw.completion_tokens);
+  const cacheRead = cleanCount(raw.prompt_tokens_details?.cached_tokens);
+  const reasoning = cleanCount(raw.completion_tokens_details?.reasoning_tokens);
+  if (input !== undefined) usage.input_tokens = input;
+  if (output !== undefined) usage.output_tokens = output;
+  if (cacheRead !== undefined) usage.cache_read_tokens = cacheRead;
+  if (reasoning !== undefined) usage.reasoning_tokens = reasoning;
+  return Object.keys(usage).length > 0 ? usage : undefined;
+};
+
+const sumUsage = (a: TokenUsage | undefined, b: TokenUsage | undefined) => {
+  if (!a) return b;
+  if (!b) return a;
+  const keys = [
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "reasoning_tokens",
+  ] as const;
+  const out: TokenUsage = {};
+  for (const key of keys) {
+    const total = (a[key] ?? 0) + (b[key] ?? 0);
+    if (total > 0) out[key] = total;
+  }
+  return out;
+};
+
+type AttemptResult = {
+  text: string | null;
+  budgetBlown: boolean;
+  usage?: TokenUsage;
+};
 
 const attempt = async (
   o: ChatOptions,
@@ -56,6 +111,7 @@ const attempt = async (
       message?: { content?: unknown };
       finish_reason?: unknown;
     }[];
+    usage?: RawUsage;
   } | null;
   const choice = body?.choices?.[0];
   const text = choice?.message?.content;
@@ -66,19 +122,30 @@ const attempt = async (
     // an empty answer with finish_reason "length" means the entire budget
     // went to reasoning — a cap problem, not a failed fold
     budgetBlown: clean === null && choice?.finish_reason === "length",
+    // a budget-blown attempt still burned tokens — counted by the caller
+    usage: toTokenUsage(body?.usage),
   };
 };
 
-export const chatCompletion = async (
-  o: ChatOptions,
-): Promise<string | null> => {
+export type ChatResult = {
+  text: string | null;
+  /** Tokens spent across every attempt of this call (retries included). */
+  usage?: TokenUsage;
+};
+
+export const chatCompletion = async (o: ChatOptions): Promise<ChatResult> => {
   try {
     const first = await attempt(o, o.maxTokens ?? 4096);
-    if (first.text !== null || !first.budgetBlown) return first.text;
+    if (first.text !== null || !first.budgetBlown)
+      return { text: first.text, usage: first.usage };
     // null leaves the digests pending, so every later fold retries them and
     // gets heavier — without a higher-cap retry a blowout repeats forever
-    return (await attempt(o, (o.maxTokens ?? 4096) * 4)).text;
+    const second = await attempt(o, (o.maxTokens ?? 4096) * 4);
+    return {
+      text: second.text,
+      usage: sumUsage(first.usage, second.usage),
+    };
   } catch {
-    return null;
+    return { text: null };
   }
 };
