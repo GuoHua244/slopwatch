@@ -715,6 +715,15 @@ describe.skipIf(!dbTests())("audit store against Postgres", () => {
       target: "events",
       detail: { pruned: 3, archived: 1 },
     });
+    // a second events.* row keeps the paging assertion below self-contained —
+    // the audit log is shared state, and on a fresh CI database nothing else
+    // has written events.* rows yet, so offset:1 would come up empty
+    await store.appendAudit({
+      actor: { kind: "system" },
+      action: "events.archive",
+      target: "events",
+      detail: { archived: 2 },
+    });
 
     const all = await store.listAudit({ limit: 10, offset: 0 });
     expect(all.total).toBeGreaterThanOrEqual(3);

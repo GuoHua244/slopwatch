@@ -13,9 +13,10 @@ import { TurnsView } from "./TurnsView";
 import { UsageView } from "./UsageView";
 
 /**
- * "· 4.2k in · 380 out · 1.1k reasoning" — the tokens the displayed summary's
- * LLM fold spent. Spend outside the agent's key: absent on summaries folded
- * before the field existed.
+ * "· summary cost: 237 in · 380 out · 1.1k reasoning" — the tokens the
+ * displayed summary's LLM fold spent. Labeled so the numbers are never
+ * mistaken for session usage (this spend happens outside the agent's key).
+ * Absent on summaries folded before the field existed.
  */
 const summaryUsageNote = (usage: TokenUsage): string => {
   const parts: string[] = [];
@@ -27,7 +28,7 @@ const summaryUsageNote = (usage: TokenUsage): string => {
     parts.push(`${fmtTokens(usage.cache_read_tokens)} cache-read`);
   if (usage.reasoning_tokens)
     parts.push(`${fmtTokens(usage.reasoning_tokens)} reasoning`);
-  return parts.length > 0 ? ` · ${parts.join(" · ")}` : "";
+  return parts.length > 0 ? ` · summary cost: ${parts.join(" · ")}` : "";
 };
 
 type Tab = "turns" | "raw";

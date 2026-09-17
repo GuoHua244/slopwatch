@@ -6,8 +6,12 @@ import { HEARTBEAT_TTL_MS, isListenerAlive } from "./liveness";
 
 // A PID that is guaranteed dead: spawn a process synchronously — spawnSync
 // only returns after it has exited. (Any hardcoded PID could be reused by a
-// stranger — the exact hazard under test.)
-const deadPid = (): number => Bun.spawnSync(["cmd", "/c", "exit"]).pid;
+// stranger — the exact hazard under test.) The instant-exit command is
+// per-platform: cmd only exists on Windows, sh everywhere else.
+const deadPid = (): number =>
+  process.platform === "win32"
+    ? Bun.spawnSync(["cmd", "/c", "exit"]).pid
+    : Bun.spawnSync(["sh", "-c", "exit"]).pid;
 
 const touch = (path: string, ageMs = 0): void => {
   closeSync(openSync(path, "w"));
