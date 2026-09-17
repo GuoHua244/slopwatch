@@ -25,6 +25,9 @@ const refusingStore = (): Store => ({
   eventsSince: () => {
     throw new Error("store must not be touched");
   },
+  getAttachment: () => {
+    throw new Error("store must not be touched");
+  },
   deleteSession: () => {
     throw new Error("store must not be touched");
   },

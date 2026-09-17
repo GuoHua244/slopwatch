@@ -7,6 +7,7 @@ import type {
   ToolCallEvent,
   ToolResultEvent,
   TokenUsage,
+  TurnImageRef,
 } from "@slopwatch/events";
 import type { StoredEvent } from "../api";
 import { summarizeArgs } from "./format";
@@ -23,8 +24,12 @@ export type TurnActivity = {
   userMessage?: string;
   /** The turn's answer: the last non-empty assistant prose seen in it. */
   assistantMessage?: string;
+  /** The turn's input images, in `[image #n]` marker order. */
+  images?: TurnImageRef[];
   startedAt?: string;
   endedAt?: string;
+  /** Turn-end usage when the agent emits one; otherwise derived by summing
+   * the turn's model requests (ZCode has no turn-end record). */
   usage?: TokenUsage;
   modelRequests: ModelRequestEvent[];
   tools: ToolActivity[];
@@ -95,6 +100,7 @@ export const buildTimeline = (events: StoredEvent[]): SessionTimeline => {
           const turn = turnFor(event.turn_id);
           if (turn) {
             turn.userMessage = event.user_message;
+            turn.images = event.images;
             turn.startedAt = event.occurred_at;
           }
         } else {
@@ -134,6 +140,26 @@ export const buildTimeline = (events: StoredEvent[]): SessionTimeline => {
         break;
       }
     }
+  }
+  // Turns whose agent never emits turn:end (ZCode) get their consumption
+  // derived from the requests they contain — the same numbers the Usage
+  // panel sums per session.
+  for (const turn of timeline.turns) {
+    if (turn.usage !== undefined || turn.modelRequests.length === 0) continue;
+    const summed: TokenUsage = {};
+    for (const request of turn.modelRequests) {
+      summed.input_tokens =
+        (summed.input_tokens ?? 0) + (request.usage?.input_tokens ?? 0);
+      summed.output_tokens =
+        (summed.output_tokens ?? 0) + (request.usage?.output_tokens ?? 0);
+      summed.cache_read_tokens =
+        (summed.cache_read_tokens ?? 0) +
+        (request.usage?.cache_read_tokens ?? 0);
+      summed.cache_write_tokens =
+        (summed.cache_write_tokens ?? 0) +
+        (request.usage?.cache_write_tokens ?? 0);
+    }
+    turn.usage = summed;
   }
   return timeline;
 };
@@ -178,12 +204,22 @@ export const describeEvent = (event: StoredEvent["event"]): string => {
         return `summary · ${event.model} · ${event.body}`;
       return event.reason ?? "";
     case "turn":
-      if (event.event === "start") return event.user_message ?? event.turn_id;
+      if (event.event === "start")
+        return [
+          event.user_message ?? event.turn_id,
+          event.images ? `${event.images.length} image(s)` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
       return event.usage
         ? `${event.usage.input_tokens ?? 0}in/${event.usage.output_tokens ?? 0}out`
         : "";
     case "quarantine":
       return `quarantined · ${event.reason}`;
+    // attachments live in their own table, never in the event log — but the
+    // union still has to be handled here
+    case "attachment":
+      return `attachment · ${event.origin} · ${event.mime}`;
     case "model_request":
       return [
         `${event.provider}/${event.model}`,

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isNormalEvent } from "@slopwatch/events";
+import { createHash } from "node:crypto";
+import { isNormalEvent, type AttachmentEvent } from "@slopwatch/events";
 import {
   eventsFromRecord,
   metaFromRecord,
@@ -362,5 +363,163 @@ describe("turnStartFromRecord (per-turn user message)", () => {
     ).toBeUndefined();
     expect(turnStartFromRecord(titleRecord, "s", seen)).toBeNull();
     expect(turnStartFromRecord(null, "s", seen)).toBeNull();
+  });
+});
+
+describe("turnStartFromRecord with image capture", () => {
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from([7, 7, 7]),
+  ]);
+  const sha = createHash("sha256").update(png).digest("hex");
+  const imgPath = "C:\cache\image-x.png";
+  const recordWithImage = {
+    ...mainTurnRecord,
+    request: {
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `bug report [Image: source: ${imgPath}] please`,
+            },
+            {
+              type: "image",
+              mediaType: "image/jpeg",
+              dataUrl: "[dataUrl omitted from model-io: image/png, 20 chars]",
+              source: { kind: "inline", path: imgPath },
+            },
+          ],
+        },
+        { role: "assistant", content: "on it" },
+      ],
+    },
+  };
+
+  test("rewrites the placeholder, attaches refs, ships the bytes", () => {
+    const capture = {
+      sessionId: "sess_demo-0001",
+      occurredAt: mainTurnRecord.completedAt,
+      origin: "user_message" as const,
+      seen: new Set<string>(),
+      attachments: [] as AttachmentEvent[],
+      readImage: (path: string) => (path === imgPath ? png : null),
+    };
+    const event = turnStartFromRecord(recordWithImage, "s", new Set(), capture);
+    expect(event?.user_message).toBe("bug report [image #1] please");
+    expect(event?.images).toEqual([{ n: 1, sha256: sha, size: png.length }]);
+    expect(capture.attachments).toHaveLength(1);
+    const attachment = capture.attachments[0]!;
+    expect(isNormalEvent(attachment)).toBe(true);
+    expect(attachment.session_id).toBe("s");
+    expect(attachment.sha256).toBe(sha);
+    expect(attachment.mime).toBe("image/png");
+  });
+
+  test("without capture the placeholder rides verbatim (back-compat)", () => {
+    const event = turnStartFromRecord(recordWithImage, "s", new Set());
+    expect(event?.user_message).toContain(
+      "[Image: source: C:\cache\image-x.png]",
+    );
+    expect(event?.images).toBeUndefined();
+  });
+
+  test("an unreadable image keeps its placeholder and emits no ref", () => {
+    const capture = {
+      sessionId: "sess_demo-0001",
+      occurredAt: mainTurnRecord.completedAt,
+      origin: "user_message" as const,
+      seen: new Set<string>(),
+      attachments: [] as AttachmentEvent[],
+      readImage: () => null,
+    };
+    const event = turnStartFromRecord(recordWithImage, "s", new Set(), capture);
+    expect(event?.user_message).toContain("[Image: source:");
+    expect(event?.images).toBeUndefined();
+    expect(capture.attachments).toHaveLength(0);
+  });
+});
+
+describe("toolResultsFromRecord with image capture", () => {
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from([9, 9, 9]),
+  ]);
+  const sha = createHash("sha256").update(png).digest("hex");
+  const imgPath = "C:\cache\shot.png";
+  const recordWithToolImage = {
+    ...mainTurnRecord,
+    request: {
+      messages: [
+        {
+          role: "tool",
+          toolCallId: "tc_demo-1",
+          toolName: "browser_screenshot",
+          isError: false,
+          content: [
+            { type: "text", text: "screenshot" },
+            {
+              type: "image",
+              source: { kind: "inline", path: imgPath },
+            },
+          ],
+        },
+      ],
+    },
+  };
+
+  test("tool result carries the image sha; bytes ride as attachment", () => {
+    const capture = {
+      sessionId: "sess_demo-0001",
+      occurredAt: mainTurnRecord.completedAt,
+      origin: "tool_result" as const,
+      seen: new Set<string>(),
+      attachments: [] as AttachmentEvent[],
+      readImage: (path: string) => (path === imgPath ? png : null),
+    };
+    const results = toolResultsFromRecord(
+      recordWithToolImage,
+      "s",
+      new Set(),
+      capture,
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0]!.images).toEqual([sha]);
+    expect(capture.attachments).toHaveLength(1);
+    expect(capture.attachments[0]!.origin).toBe("tool_result");
+  });
+
+  test("text-only tool results stay imageless", () => {
+    const capture = {
+      sessionId: "sess_demo-0001",
+      occurredAt: mainTurnRecord.completedAt,
+      origin: "tool_result" as const,
+      seen: new Set<string>(),
+      attachments: [] as AttachmentEvent[],
+      readImage: () => null,
+    };
+    const textOnlyTool = {
+      ...recordWithToolImage,
+      request: {
+        messages: [
+          {
+            role: "tool",
+            toolCallId: "tc_demo-1",
+            toolName: "Bash",
+            isError: false,
+            content: [{ type: "text", text: "ok" }],
+          },
+        ],
+      },
+    };
+    const results = toolResultsFromRecord(
+      textOnlyTool,
+      "s",
+      new Set(),
+      capture,
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0]!.images).toBeUndefined();
   });
 });

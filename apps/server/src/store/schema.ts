@@ -25,6 +25,18 @@ CREATE TABLE IF NOT EXISTS events (
   received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (session_id, event_seq)
 );
+-- Captured image bytes, content-addressed per session (sha256). Attachment
+-- events never enter the events log — the turn/tool payload refs point here.
+CREATE TABLE IF NOT EXISTS attachments (
+  session_id TEXT NOT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,
+  sha256     TEXT NOT NULL,
+  origin     TEXT NOT NULL,
+  mime       TEXT NOT NULL,
+  size       BIGINT NOT NULL,
+  data       BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (session_id, sha256)
+);
 CREATE INDEX IF NOT EXISTS events_received_at ON events (received_at);
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title TEXT;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS task_preview TEXT;

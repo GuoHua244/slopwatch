@@ -162,6 +162,38 @@ const route = async (
     return json(200, { session_id: sessionId, events });
   }
 
+  // One captured image's bytes — same read-plane gate and member scoping as
+  // the events route. sha256-addressed, so the response is safe to cache
+  // forever; `private` keeps it out of shared proxy caches.
+  const attachmentMatch = url.pathname.match(
+    /^\/sessions\/([^/]+)\/attachments\/([0-9a-f]{64})$/,
+  );
+  if (attachmentMatch && req.method === "GET") {
+    const reader = await auth.requireReader(req);
+    const sessionId = decodeParam(attachmentMatch[1]!);
+    if (sessionId === null) return json(400, { error: "malformed session id" });
+    if (reader.role !== "admin") {
+      const owner = await store.sessionOwner(sessionId);
+      if (owner !== reader.user) return json(404, { error: "no such session" });
+    }
+    const attachment = await store.getAttachment(
+      sessionId,
+      attachmentMatch[2]!,
+    );
+    if (attachment === null) return json(404, { error: "no such attachment" });
+    return new Response(
+      // copy into a plain ArrayBuffer-backed view: pg's Buffer keeps
+      // ArrayBufferLike, which BlobPart rejects
+      new Blob([new Uint8Array(attachment.data)], { type: attachment.mime }),
+      {
+        headers: {
+          "content-type": attachment.mime,
+          "cache-control": "private, max-age=31536000, immutable",
+        },
+      },
+    );
+  }
+
   if (url.pathname === "/sessions" && req.method === "GET") {
     const reader = await auth.requireReader(req);
     // Team-scoped DRI filter: membership resolves through the owner's

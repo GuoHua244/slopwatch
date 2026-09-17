@@ -1,4 +1,5 @@
 import type { NormalEvent, QuarantineEvent } from "@slopwatch/events";
+import { verifyAttachment, type AttachmentEvent } from "@slopwatch/events";
 import { rollupDeltas, type FlatDelta, type ModelDelta } from "../rollups";
 import { withTransaction, type PgCtx } from "./db";
 import { recomputeRollups } from "./rollups";
@@ -15,6 +16,7 @@ export const sessionMethods = (
   | "appendEvents"
   | "listSessions"
   | "eventsSince"
+  | "getAttachment"
   | "sessionOwner"
   | "deleteSession"
   | "pruneRaw"
@@ -28,6 +30,9 @@ export const sessionMethods = (
       if (events.length === 0) return { accepted: 0 };
       // v2 decision 21: quarantine events bypass the event log entirely —
       // they record lines that could not be normalized, not session history.
+      // Attachment events likewise stay out of the log: their bytes land in
+      // the attachments table and the referencing turn/tool payloads hold
+      // only the sha refs.
       const normal = events.filter(
         (e): e is Exclude<NormalEvent, QuarantineEvent> =>
           e.kind !== "quarantine",
@@ -35,6 +40,10 @@ export const sessionMethods = (
       const quarantined = events.filter(
         (e): e is QuarantineEvent => e.kind === "quarantine",
       );
+      const attachments = normal.filter(
+        (e): e is AttachmentEvent => e.kind === "attachment",
+      );
+      const logged = normal.filter((e) => e.kind !== "attachment");
       return withTransaction(pool, async (client) => {
         for (const event of quarantined) {
           await client.query(
@@ -49,10 +58,21 @@ export const sessionMethods = (
           );
         }
         const bySession = new Map<string, NormalEvent[]>();
-        for (const event of normal) {
+        for (const event of logged) {
           const group = bySession.get(event.session_id) ?? [];
           group.push(event);
           bySession.set(event.session_id, group);
+        }
+        const attachmentsBySession = new Map<string, AttachmentEvent[]>();
+        for (const event of attachments) {
+          const group = attachmentsBySession.get(event.session_id) ?? [];
+          group.push(event);
+          attachmentsBySession.set(event.session_id, group);
+        }
+        // attachment-only batches still create their session row — the FK
+        // demands it and a lone image is still a session's evidence
+        for (const [sessionId, group] of attachmentsBySession) {
+          if (!bySession.has(sessionId)) bySession.set(sessionId, []);
         }
         // ADR 0004: the creating user's team AT INGEST TIME is snapshotted
         // onto a new session; reassignments never move captured history.
@@ -65,9 +85,11 @@ export const sessionMethods = (
           ingestTeamId = (owned.rows[0]?.team_id as string | null) ?? null;
         }
         for (const [sessionId, group] of bySession) {
+          const agent =
+            group[0]?.agent ?? attachmentsBySession.get(sessionId)![0]!.agent;
           await client.query(
             "INSERT INTO sessions (session_id, agent, user_id, team_id) VALUES ($1, $2, $3, $4) ON CONFLICT (session_id) DO NOTHING",
-            [sessionId, group[0]!.agent, userId, ingestTeamId],
+            [sessionId, agent, userId, ingestTeamId],
           );
           // row lock on the session serializes concurrent writers
           const { rows } = await client.query(
@@ -112,12 +134,32 @@ export const sessionMethods = (
               [sessionId, dIn, dOut, dCacheRead, dCacheWrite],
             );
           }
+          // Captured images, content-addressed per session. Content
+          // addressing is earned, not claimed: a payload that does not decode
+          // to its declared size and hash is corruption — skip it and the
+          // dashboard's "not archived" fallback shows in its place.
+          for (const attachment of attachmentsBySession.get(sessionId) ?? []) {
+            if (!verifyAttachment(attachment)) continue;
+            await client.query(
+              `INSERT INTO attachments (session_id, sha256, origin, mime, size, data)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT (session_id, sha256) DO NOTHING`,
+              [
+                sessionId,
+                attachment.sha256,
+                attachment.origin,
+                attachment.mime,
+                attachment.size,
+                Buffer.from(attachment.data, "base64"),
+              ],
+            );
+          }
         }
         // Decision 18: fold the batch into the usage rollups in the same
         // transaction, so the aggregates can never drift from the events.
-        if (userId !== null && normal.length > 0) {
+        if (userId !== null && logged.length > 0) {
           const rollupUser: string = userId;
-          const deltas = rollupDeltas(normal);
+          const deltas = rollupDeltas(logged);
           const bumpFlatRollup = async (
             table: "user_daily_rollup" | "user_hourly_rollup",
             column: "day" | "hour",
@@ -225,6 +267,15 @@ export const sessionMethods = (
         event_seq: Number(r.event_seq),
         event: r.payload as NormalEvent,
       }));
+    },
+
+    async getAttachment(sessionId, sha256) {
+      const { rows } = await pool.query(
+        "SELECT mime, data FROM attachments WHERE session_id = $1 AND sha256 = $2",
+        [sessionId, sha256],
+      );
+      if (rows.length === 0) return null;
+      return { mime: rows[0]!.mime as string, data: rows[0]!.data as Buffer };
     },
 
     async pruneRaw({ defaultDays, archive }) {

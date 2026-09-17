@@ -3,6 +3,7 @@ import {
   envelope,
   isNonEmptyString,
   isObject,
+  type AttachmentEvent,
   type ModelRequestEvent,
   type NormalEvent,
   type SessionMetaEvent,
@@ -11,6 +12,25 @@ import {
   type ToolResultEvent,
   type TurnStartEvent,
 } from "@slopwatch/events";
+import {
+  blockImagePaths,
+  captureToolResultImages,
+  captureUserMessageImages,
+  hasImageBlock,
+} from "./images";
+
+/**
+ * The caller-owned capture state threaded through the normalizer: the sha
+ * dedup set, an injectable reader, and the OUT list of attachment events.
+ * The origin is supplied per extraction point (turn input vs tool result).
+ */
+export type ImageCaptureState = {
+  sessionId: string;
+  occurredAt: string;
+  seen: Set<string>;
+  readImage?: (path: string) => Buffer | null;
+  attachments: AttachmentEvent[];
+};
 
 /** Rollout files are named `model-io-<sessionId>.jsonl` (sessionId includes the `sess_` prefix). */
 export const sessionIdFromFilename = (filename: string): string | null =>
@@ -168,11 +188,18 @@ export const taskPreviewFromRecord = (
  * blocks are stripped (see userSpeech). ZCode has no turn-end record, so no
  * turn:end is emitted — the dashboard pairs this with the turn_id already
  * riding on model_request events.
+ *
+ * With a capture context, the input message's `[Image: source: <path>]`
+ * placeholders are rewritten to `[image #n]` markers, the files' bytes ship
+ * as attachment events (see images.ts), and the event carries the render
+ * refs. Unreadable images keep their placeholder — the dashboard shows those
+ * as not archived.
  */
 export const turnStartFromRecord = (
   record: unknown,
   sessionId: string,
   seenTurns: Set<string>,
+  capture?: ImageCaptureState,
 ): TurnStartEvent | null => {
   if (!isObject(record) || record.type !== "model_io") return null;
   if (!isNonEmptyString(record.turnId) || seenTurns.has(record.turnId))
@@ -183,10 +210,18 @@ export const turnStartFromRecord = (
       ? record.request.messages
       : [];
   let userMessage: string | null = null;
+  let chosenContent: unknown = null;
+  let imageOnlyContent: unknown = null;
   for (const message of messages) {
     if (!isObject(message) || message.role !== "user") continue;
     const text = userSpeech(message.content);
-    if (text) userMessage = text.slice(0, 2000);
+    if (text) {
+      userMessage = text.slice(0, 2000);
+      chosenContent = message.content;
+    } else if (imageOnlyContent === null && hasImageBlock(message.content)) {
+      // image-only inputs speak through their attachments instead
+      imageOnlyContent = message.content;
+    }
   }
   const event: TurnStartEvent = {
     ...envelope(
@@ -200,7 +235,25 @@ export const turnStartFromRecord = (
     event: "start",
     turn_id: record.turnId,
   };
-  if (userMessage) event.user_message = userMessage;
+  if (capture) {
+    const content = chosenContent ?? imageOnlyContent;
+    if (content !== null) {
+      const captured = captureUserMessageImages(
+        userMessage ?? "",
+        blockImagePaths(content),
+        // the record's session id is authoritative for everything it emits
+        { ...capture, sessionId, origin: "user_message" },
+      );
+      const capturedText = captured.text.trim();
+      if (capturedText) event.user_message = capturedText.slice(0, 2000);
+      else if (userMessage) event.user_message = userMessage;
+      if (captured.refs.length > 0) event.images = captured.refs;
+    } else if (userMessage) {
+      event.user_message = userMessage;
+    }
+  } else if (userMessage) {
+    event.user_message = userMessage;
+  }
   return event;
 };
 
@@ -327,11 +380,15 @@ export const eventsFromRecord = (
  * seenToolResults: later records repeat earlier results verbatim. The final
  * calls of a session have no follow-up request, so they legitimately stay
  * without a result.
+ *
+ * With a capture context, image blocks in a tool result (screenshots) ship
+ * as attachment events and the result carries their sha references.
  */
 export const toolResultsFromRecord = (
   record: unknown,
   sessionId: string,
   seenToolResults: Set<string>,
+  capture?: ImageCaptureState,
 ): ToolResultEvent[] => {
   if (!isObject(record) || record.type !== "model_io") return [];
   const messages =
@@ -359,6 +416,14 @@ export const toolResultsFromRecord = (
     if (message.isError === true) {
       const detail = contentToText(message.content).replace(/\s+/g, " ").trim();
       result.error = detail ? detail.slice(0, 500) : "failed";
+    }
+    if (capture) {
+      const shas = captureToolResultImages(message.content, {
+        ...capture,
+        sessionId,
+        origin: "tool_result",
+      });
+      if (shas.length > 0) result.images = shas;
     }
     results.push(result);
   }

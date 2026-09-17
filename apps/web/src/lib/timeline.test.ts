@@ -312,3 +312,80 @@ describe("mergeEvents", () => {
     ).toEqual([1, 2, 5]);
   });
 });
+
+describe("turn consumption (derived usage)", () => {
+  const request = (turnId: string, usage: Record<string, number>) =>
+    ev({
+      kind: "model_request",
+      provider: "p",
+      model: "m",
+      duration_ms: 5,
+      turn_id: turnId,
+      usage,
+    });
+
+  test("sums the turn's model requests when no turn:end usage exists (ZCode)", () => {
+    const timeline = buildTimeline([
+      ev({ kind: "turn", event: "start", turn_id: "turn_1" }),
+      request("turn_1", {
+        input_tokens: 1000,
+        output_tokens: 20,
+        cache_read_tokens: 900,
+      }),
+      request("turn_1", {
+        input_tokens: 500,
+        output_tokens: 30,
+        cache_read_tokens: 700,
+      }),
+    ]);
+    const turn = timeline.turns[0]!;
+    expect(turn.usage).toEqual({
+      input_tokens: 1500,
+      output_tokens: 50,
+      cache_read_tokens: 1600,
+      cache_write_tokens: 0,
+    });
+  });
+
+  test("a turn:end usage wins over the derived sum", () => {
+    const timeline = buildTimeline([
+      ev({ kind: "turn", event: "start", turn_id: "turn_1" }),
+      request("turn_1", { input_tokens: 1000, output_tokens: 20 }),
+      ev({
+        kind: "turn",
+        event: "end",
+        turn_id: "turn_1",
+        usage: { input_tokens: 1, output_tokens: 2 },
+      }),
+    ]);
+    expect(timeline.turns[0]!.usage).toEqual({
+      input_tokens: 1,
+      output_tokens: 2,
+    });
+  });
+
+  test("turn images ride from the start event; tool results keep their shas", () => {
+    const sha = "a".repeat(64);
+    const timeline = buildTimeline([
+      ev({
+        kind: "turn",
+        event: "start",
+        turn_id: "turn_1",
+        user_message: "look [image #1]",
+        images: [{ n: 1, sha256: sha, size: 12 }],
+      }),
+      ev({
+        kind: "tool",
+        event: "result",
+        tool_call_id: "c1",
+        tool: "screenshot",
+        ok: true,
+        images: [sha],
+      }),
+    ]);
+    expect(timeline.turns[0]!.images).toEqual([
+      { n: 1, sha256: sha, size: 12 },
+    ]);
+    expect(timeline.turns[0]!.tools[0]!.result!.images).toEqual([sha]);
+  });
+});

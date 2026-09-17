@@ -215,6 +215,7 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
       </nav>
       {tab === "turns" ? (
         <TurnsView
+          sessionId={summary.session_id}
           timeline={timeline}
           comments={review.comments}
           canComment={review.me !== null}

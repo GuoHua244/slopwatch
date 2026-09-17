@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
+  ATTACHMENT_MAX_BYTES,
   isNormalEvent,
   joinUrl,
   SCHEMA_VERSION,
   sendEvents,
+  verifyAttachment,
+  type AttachmentEvent,
   type ModelRequestEvent,
   type NormalEvent,
   type SessionEndEvent,
@@ -92,6 +96,26 @@ const sessionSummary: SessionSummaryEvent = {
   model: "glm-4",
 };
 
+/** Real PNG-headed bytes so mime/size/hash all cohere. */
+const pngBytes = (seed: number): Buffer =>
+  Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from([seed, seed, seed]),
+  ]);
+
+const attachment: AttachmentEvent = (() => {
+  const bytes = pngBytes(1);
+  return {
+    ...base,
+    kind: "attachment",
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    mime: "image/png",
+    size: bytes.length,
+    data: bytes.toString("base64"),
+    origin: "user_message",
+  };
+})();
+
 describe("NormalEvent v0 schema", () => {
   test("accepts every event variant", () => {
     const events: NormalEvent[] = [
@@ -103,10 +127,49 @@ describe("NormalEvent v0 schema", () => {
       modelRequest,
       toolCall,
       toolResult,
+      attachment,
     ];
     for (const event of events) {
       expect(isNormalEvent(event)).toBe(true);
     }
+  });
+
+  test("accepts image refs on turn:start and tool results", () => {
+    expect(
+      isNormalEvent({
+        ...turnStart,
+        user_message: "look [image #1]",
+        images: [{ n: 1, sha256: attachment.sha256, size: attachment.size }],
+      }),
+    ).toBe(true);
+    expect(isNormalEvent({ ...toolResult, images: [attachment.sha256] })).toBe(
+      true,
+    );
+  });
+
+  test("rejects malformed image refs", () => {
+    expect(
+      isNormalEvent({
+        ...turnStart,
+        images: [{ n: 0, sha256: "ab".repeat(32) }],
+      }),
+    ).toBe(false); // n is 1-based
+    expect(
+      isNormalEvent({
+        ...turnStart,
+        images: [{ n: 1, sha256: "zz".repeat(32) }],
+      }),
+    ).toBe(false); // not hex
+    expect(
+      isNormalEvent({
+        ...turnStart,
+        images: Array.from({ length: 21 }, (_, i) => ({
+          n: i + 1,
+          sha256: "ab".repeat(32),
+        })),
+      }),
+    ).toBe(false); // over the ref cap
+    expect(isNormalEvent({ ...toolResult, images: ["nope"] })).toBe(false);
   });
 
   test("accepts any non-empty agent string — never a closed enum", () => {
@@ -215,6 +278,56 @@ describe("NormalEvent v0 schema", () => {
       isNormalEvent({ ...modelRequest, response_text: "Fixed — tests pass." }),
     ).toBe(true);
     expect(isNormalEvent({ ...modelRequest, response_text: "" })).toBe(false);
+  });
+});
+
+describe("attachment events (captured image bytes)", () => {
+  test("verifyAttachment accepts a coherent payload", () => {
+    expect(verifyAttachment(attachment)).toBe(true);
+  });
+
+  test("verifyAttachment rejects a payload that does not match its hash/size", () => {
+    const bytes = pngBytes(2);
+    const other = pngBytes(3);
+    expect(
+      verifyAttachment({
+        ...attachment,
+        data: bytes.toString("base64"),
+        sha256: attachment.sha256,
+      }),
+    ).toBe(false); // different bytes, claimed hash kept
+    expect(
+      verifyAttachment({
+        ...attachment,
+        data: bytes.toString("base64"),
+        size: bytes.length + 1,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      }),
+    ).toBe(false); // size lies
+  });
+
+  test("rejects structural violations", () => {
+    expect(isNormalEvent({ ...attachment, sha256: "short" })).toBe(false);
+    expect(isNormalEvent({ ...attachment, mime: "image/svg+xml" })).toBe(false);
+    expect(isNormalEvent({ ...attachment, size: 0 })).toBe(false);
+    expect(
+      isNormalEvent({ ...attachment, size: ATTACHMENT_MAX_BYTES + 1 }),
+    ).toBe(false);
+    expect(isNormalEvent({ ...attachment, data: "" })).toBe(false);
+    expect(isNormalEvent({ ...attachment, data: "not base64!!" })).toBe(false);
+    expect(isNormalEvent({ ...attachment, origin: "vibes" })).toBe(false);
+    expect(isNormalEvent({ ...attachment, kind: "model_request" })).toBe(false);
+  });
+
+  test("oversized data strings fail before decode", () => {
+    const big = Buffer.alloc(ATTACHMENT_MAX_BYTES + 16, 7).toString("base64");
+    expect(
+      isNormalEvent({
+        ...attachment,
+        data: big,
+        size: ATTACHMENT_MAX_BYTES + 12,
+      }),
+    ).toBe(false);
   });
 });
 

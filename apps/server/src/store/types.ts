@@ -209,6 +209,14 @@ export type Store = {
    */
   listSessions(teamId?: string, userId?: string): Promise<SessionRow[]>;
   eventsSince(sessionId: string, sinceSeq: number): Promise<StoredEvent[]>;
+  /**
+   * One captured image by content hash — mime plus raw bytes for the
+   * attachment download route. Null when the session has no such image.
+   */
+  getAttachment(
+    sessionId: string,
+    sha256: string,
+  ): Promise<{ mime: string; data: Uint8Array } | null>;
   /** The session's owning user, or null when the session does not exist. */
   sessionOwner(sessionId: string): Promise<string | null>;
   /**

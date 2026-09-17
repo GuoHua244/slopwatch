@@ -93,6 +93,7 @@ const memStore = () => {
     },
     listSessions: async () => [],
     eventsSince: async (): Promise<StoredEvent[]> => [],
+    getAttachment: async () => null,
     pruneRaw: async () => ({ archived: 0, pruned: 0 }),
     getSetting: async () => null,
     setSetting: async () => {},

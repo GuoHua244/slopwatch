@@ -1,6 +1,7 @@
-import { useState } from "react";
-import type { ModelRequestEvent } from "@slopwatch/events";
+import { useEffect, useState, type ReactNode } from "react";
+import type { ModelRequestEvent, TurnImageRef } from "@slopwatch/events";
 import type { CommentRow } from "../api";
+import { attachmentUrl } from "../lib/attachments";
 import type { SessionTimeline, ToolActivity } from "../lib/timeline";
 import {
   clock,
@@ -10,8 +11,14 @@ import {
   summarizeArgs,
 } from "../lib/format";
 
-const usage = (inTokens?: number, outTokens?: number): string =>
-  `${fmtTokens(inTokens ?? 0)}in/${fmtTokens(outTokens ?? 0)}out`;
+const usage = (
+  inTokens?: number,
+  outTokens?: number,
+  cacheReadTokens = 0,
+): string =>
+  `${fmtTokens(inTokens ?? 0)}in/${fmtTokens(outTokens ?? 0)}out${
+    cacheReadTokens > 0 ? `/${fmtTokens(cacheReadTokens)}crd` : ""
+  }`;
 
 /** Stable React keys: the listener's request id when present, else the
  * request's own time+duration (stable for the append-only stream). */
@@ -22,12 +29,166 @@ const requestKey = (request: ModelRequestEvent): string =>
 const toolKey = (tool: ToolActivity, index: number): string =>
   tool.call?.tool_call_id ?? tool.result?.tool_call_id ?? String(index);
 
+/** Click-to-zoom overlay: the full captured image over a dimmed page. */
+const Lightbox = ({
+  src,
+  title,
+  onClose,
+}: {
+  src: string;
+  title: string;
+  onClose: () => void;
+}) => (
+  <div className="lightbox" onClick={onClose} title="click to close">
+    <img src={src} alt={title} />
+  </div>
+);
+
+/** One captured image: fetches its (immutable) bytes via the authed loader
+ * and shows a thumbnail; a failed load means the image never made it. */
+const TurnImage = ({
+  sessionId,
+  sha256,
+  label,
+  onOpen,
+}: {
+  sessionId: string;
+  sha256: string;
+  label: string;
+  onOpen: (src: string, title: string) => void;
+}) => {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void attachmentUrl(sessionId, sha256).then((url) => {
+      if (alive) setSrc(url);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, sha256]);
+  if (src === null)
+    return (
+      <span className="msg-img missing" title={`image not archived (${label})`}>
+        ▲?
+      </span>
+    );
+  return (
+    <img
+      className="msg-img"
+      src={src}
+      alt={label}
+      title={label}
+      loading="lazy"
+      onClick={() => onOpen(src, label)}
+    />
+  );
+};
+
+const markerPattern = /\[image #(\d+)\]/g;
+const legacyPattern = /\[Image: source: ([^\]]+)\]/g;
+
+/** The user's words with their images: `[image #n]` markers become
+ * thumbnails, legacy `[Image: source: <path>]` leftovers (cache pruned
+ * before capture shipped) render as a dim not-archived chip. Refs the text
+ * never mentions — image-only inputs — append as a trailing strip. */
+const UserMessageContent = ({
+  sessionId,
+  text,
+  images,
+  onOpen,
+}: {
+  sessionId: string;
+  text: string;
+  images?: TurnImageRef[];
+  onOpen: (src: string, title: string) => void;
+}) => {
+  const refFor = (n: number): TurnImageRef | undefined =>
+    images?.find((img) => img.n === n);
+  const referenced = new Set<number>();
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  const pushImage = (ref: TurnImageRef, key: string) => {
+    parts.push(
+      <TurnImage
+        key={key}
+        sessionId={sessionId}
+        sha256={ref.sha256}
+        label={`image #${ref.n}`}
+        onOpen={onOpen}
+      />,
+    );
+  };
+  const scan = (pattern: RegExp, handle: (m: RegExpExecArray) => void) => {
+    pattern.lastIndex = 0;
+    for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
+      parts.push(text.slice(cursor, m.index));
+      handle(m);
+      cursor = m.index + m[0].length;
+    }
+  };
+  scan(markerPattern, (m) => {
+    const n = Number(m[1]!);
+    const ref = refFor(n);
+    referenced.add(n);
+    if (ref) pushImage(ref, `img-${ref.sha256}-${n}`);
+    else parts.push(m[0]);
+  });
+  scan(legacyPattern, (m) => {
+    parts.push(
+      <span
+        key={`gone-${m.index}`}
+        className="msg-img-gone"
+        title={m[1]!}
+      >{`[image not archived]`}</span>,
+    );
+  });
+  parts.push(text.slice(cursor));
+  const stripped = (images ?? []).filter((img) => !referenced.has(img.n));
+  if (stripped.length > 0)
+    parts.push(
+      <span key="strip" className="msg-img-strip">
+        {stripped.map((ref) => (
+          <TurnImage
+            key={`strip-${ref.sha256}`}
+            sessionId={sessionId}
+            sha256={ref.sha256}
+            label={`image #${ref.n}`}
+            onOpen={onOpen}
+          />
+        ))}
+      </span>,
+    );
+  return <>{parts}</>;
+};
+
+/** Screenshots a tool returned, shown as thumbnails on the tool's row. */
+const ToolImages = ({
+  sessionId,
+  shas,
+  onOpen,
+}: {
+  sessionId: string;
+  shas: string[];
+  onOpen: (src: string, title: string) => void;
+}) => (
+  <span className="msg-img-strip">
+    {shas.map((sha) => (
+      <TurnImage
+        key={sha}
+        sessionId={sessionId}
+        sha256={sha}
+        label={`tool image ${sha.slice(0, 8)}`}
+        onOpen={onOpen}
+      />
+    ))}
+  </span>
+);
+
 type NoteInputProps = {
   placeholder: string;
   onComment: (body: string) => void;
-};
-
-/** Inline one-turn note composer: collapsed to a button until opened. */
+}; /** Inline one-turn note composer: collapsed to a button until opened. */
 const NoteInput = ({ placeholder, onComment }: NoteInputProps) => {
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState("");
@@ -108,6 +269,8 @@ const TurnComments = ({
 );
 
 type TurnsViewProps = {
+  /** The session the timeline belongs to — attachment fetches are per-session. */
+  sessionId: string;
   timeline: SessionTimeline;
   comments?: CommentRow[];
   canComment?: boolean;
@@ -120,6 +283,7 @@ type TurnsViewProps = {
 };
 
 export const TurnsView = ({
+  sessionId,
   timeline,
   comments = [],
   canComment = false,
@@ -129,6 +293,11 @@ export const TurnsView = ({
   sessionEnded = false,
 }: TurnsViewProps) => {
   const { turns, orphans } = timeline;
+  const [lightbox, setLightbox] = useState<{
+    src: string;
+    title: string;
+  } | null>(null);
+  const openImage = (src: string, title: string) => setLightbox({ src, title });
   if (
     turns.length === 0 &&
     orphans.requests.length === 0 &&
@@ -138,6 +307,13 @@ export const TurnsView = ({
   }
   return (
     <div className="turns">
+      {lightbox !== null && (
+        <Lightbox
+          src={lightbox.src}
+          title={lightbox.title}
+          onClose={() => setLightbox(null)}
+        />
+      )}
       {turns.map((turn) => (
         <article key={turn.turnId} className="turn">
           <header className="turn-head">
@@ -145,7 +321,11 @@ export const TurnsView = ({
             <span className="meta">
               {turn.modelRequests.length} requests · {turn.tools.length} tools
               {turn.usage
-                ? ` · ${usage(turn.usage.input_tokens, turn.usage.output_tokens)}`
+                ? ` · ${usage(
+                    turn.usage.input_tokens,
+                    turn.usage.output_tokens,
+                    turn.usage.cache_read_tokens,
+                  )}`
                 : ""}
             </span>
             {canComment && (
@@ -155,8 +335,30 @@ export const TurnsView = ({
               />
             )}
           </header>
-          {turn.userMessage && (
-            <blockquote className="user-msg">{turn.userMessage}</blockquote>
+          {turn.userMessage !== undefined && (
+            <blockquote className="user-msg">
+              <UserMessageContent
+                sessionId={sessionId}
+                text={turn.userMessage}
+                images={turn.images}
+                onOpen={openImage}
+              />
+            </blockquote>
+          )}
+          {turn.userMessage === undefined && (turn.images?.length ?? 0) > 0 && (
+            <blockquote className="user-msg">
+              <span className="msg-img-strip">
+                {turn.images!.map((ref) => (
+                  <TurnImage
+                    key={ref.sha256}
+                    sessionId={sessionId}
+                    sha256={ref.sha256}
+                    label={`image #${ref.n}`}
+                    onOpen={openImage}
+                  />
+                ))}
+              </span>
+            </blockquote>
           )}
           <TurnComments
             comments={comments.filter((c) => c.turn_id === turn.turnId)}
@@ -193,6 +395,14 @@ export const TurnsView = ({
                     ? " · no result captured"
                     : " · running…"}
               </span>
+              {tool.result?.images !== undefined &&
+                tool.result.images.length > 0 && (
+                  <ToolImages
+                    sessionId={sessionId}
+                    shas={tool.result.images}
+                    onOpen={openImage}
+                  />
+                )}
             </div>
           ))}
           {turn.assistantMessage && (

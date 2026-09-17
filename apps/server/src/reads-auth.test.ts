@@ -20,6 +20,7 @@ const scriptedStore = (): Store & { calls: string[] } => {
       return [];
     },
     sessionOwner: async () => "alice",
+    getAttachment: async () => null,
     deleteSession: async () => false,
     pruneRaw: async () => ({ archived: 0, pruned: 0 }),
     getSetting: async () => null,
@@ -282,5 +283,80 @@ describe("read-plane authentication (decision 22)", () => {
       oidc: { verify: async () => null },
     });
     expect((await get(a, "/sessions", "tok-alice")).status).toBe(200);
+  });
+});
+
+describe("attachment route (captured image bytes)", () => {
+  const sha = "a".repeat(64);
+  const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+  test("follows the read-plane gate: 401 anonymous, 404 foreign, 200 own", async () => {
+    const store = scriptedStore();
+    store.getAttachment = async () => ({ mime: "image/png", data: bytes });
+    const a = createApp({
+      tokens: new Map([["tok-alice", "alice"]]),
+      store,
+    });
+    expect((await get(a, `/sessions/sess_x/attachments/${sha}`)).status).toBe(
+      401,
+    );
+    // owner bob → 404 without touching the store (existence never leaks)
+    store.sessionOwner = async () => "bob";
+    let probed = false;
+    const probe = store.getAttachment;
+    store.getAttachment = async (...args) => {
+      probed = true;
+      return probe(...(args as [string, string]));
+    };
+    expect(
+      (await get(a, `/sessions/sess_x/attachments/${sha}`, "tok-alice")).status,
+    ).toBe(404);
+    expect(probed).toBe(false);
+    // her own session streams the bytes back
+    store.sessionOwner = async () => "alice";
+    const res = await get(
+      a,
+      `/sessions/sess_x/attachments/${sha}`,
+      "tok-alice",
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("cache-control")).toContain("immutable");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
+  });
+
+  test("an admin reads any session's images", async () => {
+    const store = scriptedStore();
+    store.roleOf = async () => "admin";
+    store.sessionOwner = async () => "bob";
+    store.getAttachment = async () => ({ mime: "image/png", data: bytes });
+    const a = createApp({
+      tokens: new Map([["tok-alice", "alice"]]),
+      store,
+    });
+    expect(
+      (await get(a, `/sessions/sess_x/attachments/${sha}`, "tok-alice")).status,
+    ).toBe(200);
+  });
+
+  test("an unknown sha answers 404; a malformed one is not even routed", async () => {
+    const store = scriptedStore();
+    const a = createApp({
+      tokens: new Map([["tok-alice", "alice"]]),
+      store,
+    });
+    expect(
+      (await get(a, `/sessions/sess_x/attachments/${sha}`, "tok-alice")).status,
+    ).toBe(404);
+    // 63 chars — off-spec ids fall through to the plain 404
+    expect(
+      (
+        await get(
+          a,
+          `/sessions/sess_x/attachments/${"a".repeat(63)}`,
+          "tok-alice",
+        )
+      ).status,
+    ).toBe(404);
   });
 });

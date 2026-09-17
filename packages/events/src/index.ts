@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /** Version of the Listener→Server event contract. Bump on breaking changes. */
 export const SCHEMA_VERSION = 1 as const;
 
@@ -59,6 +61,27 @@ export type TurnStartEvent = Envelope & {
   /** Set when the agent branches its turn DAG (e.g. Pi). */
   parent_turn_id?: string;
   user_message?: string;
+  /**
+   * Images attached to the turn's input message, in order. `n` matches the
+   * `[image #n]` markers in user_message; refs without a marker render as a
+   * trailing strip (image-only inputs). The bytes ride separately on
+   * attachment events — refs are the render-side handles only.
+   */
+  images?: TurnImageRef[];
+};
+
+/** Hard cap on one captured image (decoded bytes). */
+export const ATTACHMENT_MAX_BYTES = 4 * 1024 * 1024;
+
+/** Ref cap per turn / per tool result — renders stay sane, batches bounded. */
+export const MAX_IMAGES_PER_REF = 20;
+
+export type TurnImageRef = {
+  /** 1-based index matching `[image #n]` markers in the turn's user_message. */
+  n: number;
+  sha256: string;
+  /** Decoded byte size, when known at capture time. */
+  size?: number;
 };
 
 export type TurnEndEvent = Envelope & {
@@ -123,6 +146,43 @@ export type ToolResultEvent = Envelope & {
   duration_ms?: number;
   ok?: boolean;
   error?: string;
+  /** Images the tool returned (e.g. screenshots), by sha256. */
+  images?: string[];
+};
+
+/**
+ * One captured image's bytes, content-addressed by sha256. The listener reads
+ * the file the moment it sees the referencing record — the agent's local
+ * image cache is pruned, so a path reference alone is worthless to server
+ * readers. Stored in the attachments table, never in the event log; turn and
+ * tool events carry the references.
+ */
+export type AttachmentEvent = Envelope & {
+  kind: "attachment";
+  sha256: string;
+  mime: string;
+  /** Decoded byte size — must match the base64 payload exactly. */
+  size: number;
+  /** base64 of the image bytes. */
+  data: string;
+  origin: "user_message" | "tool_result";
+};
+
+const IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+/**
+ * Integrity check beyond the structural guard: the base64 payload must decode
+ * to exactly `size` bytes hashing to `sha256`. Server-side ingest runs it so
+ * content addressing is earned, not claimed.
+ */
+export const verifyAttachment = (event: AttachmentEvent): boolean => {
+  if (!SHA256_PATTERN.test(event.sha256)) return false;
+  if (event.data.length > Math.ceil((ATTACHMENT_MAX_BYTES * 4) / 3) + 4)
+    return false;
+  const bytes = Buffer.from(event.data, "base64");
+  if (bytes.length !== event.size) return false;
+  return createHash("sha256").update(bytes).digest("hex") === event.sha256;
 };
 
 /**
@@ -185,6 +245,7 @@ export type NormalEvent =
   | ModelRequestEvent
   | ToolCallEvent
   | ToolResultEvent
+  | AttachmentEvent
   | QuarantineEvent;
 
 export const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -199,7 +260,7 @@ const isNonNegativeNumber = (v: unknown): boolean =>
 /** Token counts are summed into Postgres bigint columns both at ingest and on
  * every rollup recompute — a fractional or beyond-2^53 value would fail the
  * `::bigint` cast and poison recomputes/backfills for that data forever. */
-const isTokenCount = (v: unknown): boolean =>
+const isTokenCount = (v: unknown): v is number =>
   typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 
 const isOptional = (v: unknown, pred: (v: unknown) => boolean): boolean =>
@@ -227,6 +288,29 @@ const isOneOf =
 
 const isLifecycleEvent = isOneOf(["start", "end"] as const);
 const isToolPhase = isOneOf(["call", "result"] as const);
+const isImageMime = isOneOf(IMAGE_MIME_TYPES);
+const isSha256 = (v: unknown): v is string =>
+  typeof v === "string" && SHA256_PATTERN.test(v);
+
+const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
+
+const isImageRefList = (v: unknown): boolean =>
+  Array.isArray(v) &&
+  v.length <= MAX_IMAGES_PER_REF &&
+  v.every(
+    (ref) =>
+      isObject(ref) &&
+      isTokenCount(ref.n) &&
+      ref.n >= 1 &&
+      isSha256(ref.sha256) &&
+      isOptional(ref.size, isTokenCount) &&
+      Object.keys(ref).every((k) => ["n", "sha256", "size"].includes(k)),
+  );
+
+const isShaList = (v: unknown): boolean =>
+  Array.isArray(v) &&
+  v.length <= MAX_IMAGES_PER_REF &&
+  v.every((sha) => isSha256(sha));
 
 /** Runtime type guard for a NormalEvent. Strict: unknown keys in usage fail. */
 export const isNormalEvent = (value: unknown): value is NormalEvent => {
@@ -271,6 +355,7 @@ export const isNormalEvent = (value: unknown): value is NormalEvent => {
       if (!isOptional(value.parent_turn_id, isNonEmptyString)) return false;
       if (!isOptional(value.user_message, isNonEmptyString)) return false;
       if (!isOptional(value.usage, isTokenUsage)) return false;
+      if (!isOptional(value.images, isImageRefList)) return false;
       return true;
     }
     case "model_request": {
@@ -294,7 +379,24 @@ export const isNormalEvent = (value: unknown): value is NormalEvent => {
       if (!isOptional(value.duration_ms, isNonNegativeNumber)) return false;
       if (!isOptional(value.ok, (v) => typeof v === "boolean")) return false;
       if (!isOptional(value.error, isNonEmptyString)) return false;
+      if (!isOptional(value.images, isShaList)) return false;
       return true;
+    }
+    case "attachment": {
+      if (!isNonEmptyString(value.sha256) || !isSha256(value.sha256))
+        return false;
+      if (!isImageMime(value.mime)) return false;
+      const size = value.size;
+      if (!isTokenCount(size) || size < 1 || size > ATTACHMENT_MAX_BYTES)
+        return false;
+      if (
+        typeof value.data !== "string" ||
+        value.data.length === 0 ||
+        value.data.length > Math.ceil((ATTACHMENT_MAX_BYTES * 4) / 3) + 4 ||
+        !BASE64_PATTERN.test(value.data)
+      )
+        return false;
+      return isOneOf(["user_message", "tool_result"] as const)(value.origin);
     }
     case "quarantine": {
       if (value.event !== "line") return false;

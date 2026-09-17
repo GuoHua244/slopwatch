@@ -24,6 +24,7 @@ const auditStore = (
     appendEvents: async () => ({ accepted: 0 }),
     listSessions: async () => [],
     eventsSince: async () => [],
+    getAttachment: async () => null,
     deleteSession: async () => false,
     pruneRaw: async () => ({ archived: 0, pruned: 0 }),
     getSetting: async () => null,

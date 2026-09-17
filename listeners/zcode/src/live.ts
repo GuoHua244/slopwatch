@@ -16,7 +16,7 @@ import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type NormalEvent } from "@slopwatch/events";
+import { type AttachmentEvent, type NormalEvent } from "@slopwatch/events";
 import { resolveShipConfig } from "@slopwatch/config";
 import {
   argvHelpers,
@@ -80,7 +80,14 @@ try {
 // results of earlier tool calls (echoed in the next request's messages).
 const seenTurns = new Set<string>();
 const seenToolResults = new Set<string>();
+const seenImages = new Set<string>();
 let taskPreviewSent = false;
+const recordOccurredAt = (record: unknown): string =>
+  typeof record === "object" &&
+  record !== null &&
+  typeof (record as { completedAt?: unknown }).completedAt === "string"
+    ? (record as { completedAt: string }).completedAt
+    : new Date().toISOString();
 const adapter: RecordAdapter = {
   driftFromRecord,
   eventsFromRecord: (record, sessionId) => {
@@ -94,10 +101,31 @@ const adapter: RecordAdapter = {
         taskPreviewSent = true;
       }
     }
-    const turnStart = turnStartFromRecord(record, sessionId, seenTurns);
+    // Attachment events ride ahead of the referencing turn/tool event, and
+    // the seen-sha set keeps history re-echoes from re-shipping bytes.
+    const capture = {
+      sessionId,
+      occurredAt: recordOccurredAt(record),
+      seen: seenImages,
+      attachments: [] as AttachmentEvent[],
+    };
+    const turnStart = turnStartFromRecord(
+      record,
+      sessionId,
+      seenTurns,
+      capture,
+    );
+    events.push(...capture.attachments.splice(0));
     if (turnStart) events.push(turnStart);
     events.push(...eventsFromRecord(record, sessionId));
-    events.push(...toolResultsFromRecord(record, sessionId, seenToolResults));
+    const toolResults = toolResultsFromRecord(
+      record,
+      sessionId,
+      seenToolResults,
+      capture,
+    );
+    events.push(...capture.attachments.splice(0));
+    events.push(...toolResults);
     return events;
   },
 };
