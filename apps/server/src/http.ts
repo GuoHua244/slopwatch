@@ -162,7 +162,7 @@ const route = async (
     return json(200, { session_id: sessionId, events });
   }
 
-  // One captured image's bytes — same read-plane gate and member scoping as
+  // One captured attachment's bytes — same read-plane gate and member scoping as
   // the events route. sha256-addressed, so the response is safe to cache
   // forever; `private` keeps it out of shared proxy caches.
   const attachmentMatch = url.pathname.match(

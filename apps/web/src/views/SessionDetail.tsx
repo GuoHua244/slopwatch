@@ -79,6 +79,20 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
   const lastEnd = timeline.ends.at(-1);
   const ended = isEnded(timeline);
   const latestSummary = timeline.summaries.at(-1);
+  // The task statement, promoted: the first turn's user message in full
+  // (the listener caps it at 2000 chars), falling back to the 160-char
+  // task_preview for sessions whose first turn produced no text. Render
+  // markers ([image #1] / [file #2]) are noise in prose and stripped; the
+  // attachments still show in the turn view below.
+  const taskQuote = (
+    timeline.turns.find((turn) => turn.userMessage !== undefined)
+      ?.userMessage ??
+    summary.task_preview ??
+    ""
+  )
+    .replace(/\[(?:image|file) #\d+\]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   // Event sums are the ground truth once loaded; the Server's token columns
   // undercount sessions that predate that migration.
   const totals = stream.events.length > 0 ? sessionTotals(stream.events) : null;
@@ -111,6 +125,12 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
           <span className="chip chip-down">stream connection lost</span>
         )}
       </div>
+      {taskQuote !== "" && (
+        <blockquote className="task-quote">
+          <span className="task-quote-label">Task</span>
+          {taskQuote}
+        </blockquote>
+      )}
       <div className="review-bar">
         <span className={`chip ${review.review ? "chip-live" : ""}`}>
           {review.review
@@ -182,12 +202,6 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
               {start.hostname} · {start.cwd}
               {start.git_remote ? ` · ${start.git_remote}` : ""}
             </dd>
-          </div>
-        )}
-        {summary.task_preview && (
-          <div className="wide">
-            <dt>Task</dt>
-            <dd>{summary.task_preview}</dd>
           </div>
         )}
       </dl>

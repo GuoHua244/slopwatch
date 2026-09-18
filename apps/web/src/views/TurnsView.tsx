@@ -1,10 +1,15 @@
 import { useEffect, useState, type ReactNode } from "react";
-import type { ModelRequestEvent, TurnImageRef } from "@slopwatch/events";
+import type {
+  ModelRequestEvent,
+  TurnFileRef,
+  TurnImageRef,
+} from "@slopwatch/events";
 import type { CommentRow } from "../api";
 import { attachmentUrl } from "../lib/attachments";
 import type { SessionTimeline, ToolActivity } from "../lib/timeline";
 import {
   clock,
+  fmtBytes,
   fmtDuration,
   fmtTokens,
   shortId,
@@ -85,27 +90,98 @@ const TurnImage = ({
   );
 };
 
-const markerPattern = /\[image #(\d+)\]/g;
-const legacyPattern = /\[Image: source: ([^\]]+)\]/g;
+/** A doc-glyph SVG for file chips (shape varies by mime family). */
+const FileGlyph = ({ mime }: { mime: string }) => {
+  const path = mime.startsWith("video/")
+    ? "M2 2.5h6.5v7H2zM8.5 5l1.8-1.4v4.8L8.5 7z" // play-in-frame
+    : mime.startsWith("audio/")
+      ? "M3 2h4v6H3zM7 3a2.4 2.4 0 1 1 0 4" // note
+      : "M2.5 1.5h4l3 3v6h-7zM6.5 1.5v3h3"; // document with folded corner
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+      <path
+        d={path}
+        stroke="currentColor"
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+};
 
-/** The user's words with their images: `[image #n]` markers become
- * thumbnails, legacy `[Image: source: <path>]` leftovers (cache pruned
- * before capture shipped) render as a dim not-archived chip. Refs the text
- * never mentions — image-only inputs — append as a trailing strip. */
+/** One captured file: an authed link to its (immutable) bytes — PDFs and
+ * videos open in a new tab, everything else downloads. A failed load means
+ * the file never made it to the server. */
+const TurnFile = ({
+  sessionId,
+  file,
+}: {
+  sessionId: string;
+  file: TurnFileRef;
+}) => {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void attachmentUrl(sessionId, file.sha256).then((url) => {
+      if (alive) setSrc(url);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, file.sha256]);
+  const label = `${file.name} · ${fmtBytes(file.size)}`;
+  if (src === null)
+    return (
+      <span
+        className="file-chip missing"
+        title={`file not archived (${file.name})`}
+      >
+        <FileGlyph mime={file.mime} />
+        ▦?
+      </span>
+    );
+  return (
+    <a
+      className="file-chip"
+      href={src}
+      target="_blank"
+      rel="noreferrer"
+      title={label}
+    >
+      <FileGlyph mime={file.mime} />
+      <span className="file-chip-name">{file.name}</span>
+      <span className="file-chip-size">{fmtBytes(file.size)}</span>
+    </a>
+  );
+};
+
+const markerPattern =
+  /\[image #(\d+)\]|\[file #(\d+)\]|\[Image: source: ([^\]]+)\]/g;
+
+/** The user's words with their images and files: `[image #n]` markers become
+ * thumbnails, `[file #n]` markers become file chips, legacy
+ * `[Image: source: <path>]` leftovers (cache pruned before capture shipped)
+ * render as a dim not-archived chip. Refs the text never mentions —
+ * image-only or file-only inputs — append as trailing strips. */
 const UserMessageContent = ({
   sessionId,
   text,
   images,
+  files,
   onOpen,
 }: {
   sessionId: string;
   text: string;
   images?: TurnImageRef[];
+  files?: TurnFileRef[];
   onOpen: (src: string, title: string) => void;
 }) => {
   const refFor = (n: number): TurnImageRef | undefined =>
     images?.find((img) => img.n === n);
+  const fileRefFor = (n: number): TurnFileRef | undefined =>
+    files?.find((file) => file.n === n);
   const referenced = new Set<number>();
+  const referencedFiles = new Set<number>();
   const parts: ReactNode[] = [];
   let cursor = 0;
   const pushImage = (ref: TurnImageRef, key: string) => {
@@ -127,20 +203,37 @@ const UserMessageContent = ({
       cursor = m.index + m[0].length;
     }
   };
+  // One combined pass in text order — sequential per-pattern passes sharing
+  // this cursor would re-emit text whenever a later pattern matches earlier
+  // in the string (a file and an image in one message is the normal case).
   scan(markerPattern, (m) => {
-    const n = Number(m[1]!);
-    const ref = refFor(n);
-    referenced.add(n);
-    if (ref) pushImage(ref, `img-${ref.sha256}-${n}`);
-    else parts.push(m[0]);
-  });
-  scan(legacyPattern, (m) => {
+    if (m[1] !== undefined) {
+      const n = Number(m[1]);
+      const ref = refFor(n);
+      referenced.add(n);
+      if (ref) pushImage(ref, `img-${ref.sha256}-${n}`);
+      else parts.push(m[0]);
+      return;
+    }
+    if (m[2] !== undefined) {
+      const n = Number(m[2]);
+      const ref = fileRefFor(n);
+      referencedFiles.add(n);
+      if (ref)
+        parts.push(
+          <TurnFile
+            key={`file-${ref.sha256}-${n}`}
+            sessionId={sessionId}
+            file={ref}
+          />,
+        );
+      else parts.push(m[0]);
+      return;
+    }
     parts.push(
-      <span
-        key={`gone-${m.index}`}
-        className="msg-img-gone"
-        title={m[1]!}
-      >{`[image not archived]`}</span>,
+      <span key={`gone-${m.index}`} className="msg-img-gone" title={m[3]!}>
+        {`[image not archived]`}
+      </span>,
     );
   });
   parts.push(text.slice(cursor));
@@ -155,6 +248,21 @@ const UserMessageContent = ({
             sha256={ref.sha256}
             label={`image #${ref.n}`}
             onOpen={onOpen}
+          />
+        ))}
+      </span>,
+    );
+  const strippedFiles = (files ?? []).filter(
+    (file) => !referencedFiles.has(file.n),
+  );
+  if (strippedFiles.length > 0)
+    parts.push(
+      <span key="file-strip" className="msg-file-strip">
+        {strippedFiles.map((ref) => (
+          <TurnFile
+            key={`file-strip-${ref.sha256}`}
+            sessionId={sessionId}
+            file={ref}
           />
         ))}
       </span>,
@@ -341,25 +449,25 @@ export const TurnsView = ({
                 sessionId={sessionId}
                 text={turn.userMessage}
                 images={turn.images}
+                files={turn.files}
                 onOpen={openImage}
               />
             </blockquote>
           )}
-          {turn.userMessage === undefined && (turn.images?.length ?? 0) > 0 && (
-            <blockquote className="user-msg">
-              <span className="msg-img-strip">
-                {turn.images!.map((ref) => (
-                  <TurnImage
-                    key={ref.sha256}
-                    sessionId={sessionId}
-                    sha256={ref.sha256}
-                    label={`image #${ref.n}`}
-                    onOpen={openImage}
-                  />
-                ))}
-              </span>
-            </blockquote>
-          )}
+          {turn.userMessage === undefined &&
+            (turn.images?.length ?? 0) + (turn.files?.length ?? 0) > 0 && (
+              <blockquote className="user-msg">
+                {/* empty text: both scans no-op, so this renders exactly the
+                    trailing strips the refs would get in the text path */}
+                <UserMessageContent
+                  sessionId={sessionId}
+                  text=""
+                  images={turn.images}
+                  files={turn.files}
+                  onOpen={openImage}
+                />
+              </blockquote>
+            )}
           <TurnComments
             comments={comments.filter((c) => c.turn_id === turn.turnId)}
             currentUser={currentUser}

@@ -4,6 +4,26 @@ import { fmtTokens, shortId, sinceDuration } from "../lib/format";
 /** Events newer than this light the session's activity dot up. */
 const ACTIVE_WINDOW_MS = 5 * 60_000;
 
+/**
+ * Strip file-transport noise that pre-dates the file-capture cleaning on the
+ * listener: placeholders, `Attached <mime>: <path>` lines with their reader
+ * instructions, and synthetic Read transcripts. Rows captured after that
+ * cleaning are already clean and pass through unchanged.
+ */
+const cleanTaskPreview = (preview: string): string =>
+  preview
+    .replace(/\[(?:PDF|File|Image): source: [^\]]+\]/g, " ")
+    // the capture-side 160-char cut can truncate mid-placeholder, leaving an
+    // unclosed "[PDF: source: D:\…" tail that the closed-form regex misses
+    .replace(/\[(?:PDF|File|Image): source: [^\]]*$/g, " ")
+    .replace(
+      /Attached \S+: \S+ The file was sent by local path.*?(?=Attached |Called the Read tool|$)/g,
+      " ",
+    )
+    .replace(/Called the Read tool[\s\S]*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
 type Props = {
   sessions: SessionSummary[];
   selectedId: string | null;
@@ -16,6 +36,7 @@ export const SessionList = ({ sessions, selectedId, onSelect }: Props) => (
       const active =
         s.last_event_at !== null &&
         Date.now() - new Date(s.last_event_at).getTime() < ACTIVE_WINDOW_MS;
+      const task = s.task_preview ? cleanTaskPreview(s.task_preview) : "";
       return (
         <li
           key={s.session_id}
@@ -41,7 +62,7 @@ export const SessionList = ({ sessions, selectedId, onSelect }: Props) => (
             {s.user_id ?? "?"} · {s.agent} · {fmtTokens(s.total_input_tokens)}/
             {fmtTokens(s.total_output_tokens)}
           </span>
-          {s.task_preview && <span className="task">{s.task_preview}</span>}
+          {task && <span className="task">{task}</span>}
         </li>
       );
     })}

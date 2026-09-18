@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   clock,
+  fmtBytes,
   fmtCost,
   fmtDelta,
   fmtDuration,
@@ -25,6 +26,18 @@ describe("fmtTokens", () => {
   test("millions abbreviate to M", () => {
     expect(fmtTokens(1e6)).toBe("1.0M");
     expect(fmtTokens(2125000)).toBe("2.1M");
+  });
+});
+
+describe("fmtBytes", () => {
+  test("bytes stay bare with a unit", () => {
+    expect(fmtBytes(0)).toBe("0 B");
+    expect(fmtBytes(512)).toBe("512 B");
+  });
+
+  test("kilobytes and megabytes abbreviate", () => {
+    expect(fmtBytes(513823)).toBe("513.8 KB");
+    expect(fmtBytes(5242880)).toBe("5.2 MB");
   });
 });
 

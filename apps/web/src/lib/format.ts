@@ -20,6 +20,13 @@ export const fmtDelta = (ratio: number | null): string => {
 export const fmtCost = (usd: number): string =>
   usd === 0 ? "$0" : usd < 1 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
 
+/** 512 → "512 B", 513823 → "501.8 KB", 5242880 → "5.0 MB" */
+export const fmtBytes = (n: number): string => {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)} KB`;
+  return `${n} B`;
+};
+
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 
 /** ISO 8601 timestamp → local "15:26:58". */

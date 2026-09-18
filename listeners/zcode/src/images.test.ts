@@ -8,7 +8,7 @@ import {
   captureUserMessageImages,
   imageMarker,
   sniffImageMime,
-  type ImageCapture,
+  type AttachmentCapture,
 } from "./images";
 
 const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -16,13 +16,13 @@ const JPEG_HEAD = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
 const bytes = (head: Buffer, seed: number): Buffer =>
   Buffer.concat([head, Buffer.from([seed, seed, seed])]);
 
-const captureWith = (files: Map<string, Buffer>): ImageCapture => ({
+const captureWith = (files: Map<string, Buffer>): AttachmentCapture => ({
   sessionId: "sess_demo",
   occurredAt: "2026-09-17T00:00:00.000Z",
   origin: "user_message",
   seen: new Set<string>(),
   attachments: [],
-  readImage: (path) => files.get(path) ?? null,
+  readFile: (path) => files.get(path) ?? null,
 });
 
 describe("sniffImageMime", () => {
@@ -109,7 +109,7 @@ describe("captureUserMessageImages", () => {
     captureUserMessageImages(`[Image: source: ${pngPath}]`, [], first);
     expect(first.attachments).toHaveLength(1);
 
-    const second: ImageCapture = {
+    const second: AttachmentCapture = {
       ...first,
       attachments: [],
     };

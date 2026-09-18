@@ -404,7 +404,7 @@ describe("turnStartFromRecord with image capture", () => {
       origin: "user_message" as const,
       seen: new Set<string>(),
       attachments: [] as AttachmentEvent[],
-      readImage: (path: string) => (path === imgPath ? png : null),
+      readFile: (path: string) => (path === imgPath ? png : null),
     };
     const event = turnStartFromRecord(recordWithImage, "s", new Set(), capture);
     expect(event?.user_message).toBe("bug report [image #1] please");
@@ -432,12 +432,192 @@ describe("turnStartFromRecord with image capture", () => {
       origin: "user_message" as const,
       seen: new Set<string>(),
       attachments: [] as AttachmentEvent[],
-      readImage: () => null,
+      readFile: () => null,
     };
     const event = turnStartFromRecord(recordWithImage, "s", new Set(), capture);
     expect(event?.user_message).toContain("[Image: source:");
     expect(event?.images).toBeUndefined();
     expect(capture.attachments).toHaveLength(0);
+  });
+});
+
+describe("turnStartFromRecord with file capture", () => {
+  const pdfBytes = Buffer.concat([
+    Buffer.from("%PDF-1.5\n"),
+    Buffer.from([1, 2, 3, 4]),
+  ]);
+  const pdfSha = createHash("sha256").update(pdfBytes).digest("hex");
+  const pdfPath = "D:\\docs\\spec.pdf";
+  const docxPath = "D:\\docs\\需求.docx";
+  const docxBytes = Buffer.from("PK docx bytes");
+  const docxSha = createHash("sha256").update(docxBytes).digest("hex");
+
+  const recordWithFiles = {
+    ...mainTurnRecord,
+    request: {
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "review the spec please" },
+            {
+              type: "file",
+              mediaType: "application/pdf",
+              name: "spec.pdf",
+              dataUrl: `data:application/pdf;base64,${pdfBytes.toString("base64")}`,
+              source: {
+                kind: "local_file",
+                path: pdfPath,
+                sizeBytes: pdfBytes.length,
+                sha256: `sha256:${pdfSha}`,
+              },
+            },
+            {
+              type: "text",
+              text: `[PDF: source: ${pdfPath}]`,
+            },
+            {
+              type: "text",
+              text: `Attached application/octet-stream: ${docxPath}\nThe file was sent by local path because the file is not a known text attachment.\nUse the available file reading tools if you need to inspect the file contents.`,
+            },
+            {
+              type: "text",
+              text: 'Called the Read tool with the following input: {"file_path": "D:\\docs\\notes.md"}\nResult of calling the Read tool:\n1\tinline text content',
+            },
+          ],
+        },
+      ],
+    },
+  };
+
+  const captureWith = (readFile: (path: string) => Buffer | null) => ({
+    sessionId: "sess_demo-0001",
+    occurredAt: mainTurnRecord.completedAt,
+    origin: "user_message" as const,
+    seen: new Set<string>(),
+    attachments: [] as AttachmentEvent[],
+    readFile,
+  });
+
+  test("pdf dataUrl bytes ship; placeholder and Attached block become [file #n] markers", () => {
+    const capture = captureWith((path) => {
+      if (path === docxPath) return docxBytes;
+      throw new Error("pdf bytes must come from the dataUrl, not disk");
+    });
+    const event = turnStartFromRecord(recordWithFiles, "s", new Set(), capture);
+    expect(event?.user_message).toBe(
+      'review the spec please [file #1] [file #2] Called the Read tool with the following input: {"file_path": "D:\\docs\\notes.md"} Result of calling the Read tool: 1 inline text content',
+    );
+    expect(event?.files).toEqual([
+      {
+        n: 1,
+        sha256: pdfSha,
+        size: pdfBytes.length,
+        name: "spec.pdf",
+        mime: "application/pdf",
+      },
+      {
+        n: 2,
+        sha256: docxSha,
+        size: docxBytes.length,
+        name: "需求.docx",
+        mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      },
+    ]);
+    expect(capture.attachments).toHaveLength(2);
+    expect(capture.attachments[0]!.mime).toBe("application/pdf");
+    expect(capture.attachments[0]!.size).toBe(pdfBytes.length);
+    expect(isNormalEvent(capture.attachments[0]!)).toBe(true);
+  });
+
+  test("an oversize file keeps its text and emits no ref or event", () => {
+    const capture = captureWith(() => null);
+    const oversize = {
+      ...recordWithFiles,
+      request: {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "too big" },
+              {
+                type: "file",
+                mediaType: "application/pdf",
+                name: "huge.pdf",
+                dataUrl: `data:application/pdf;base64,${Buffer.alloc(11 * 1024 * 1024, 1).toString("base64")}`,
+                source: { kind: "local_file", path: pdfPath },
+              },
+              { type: "text", text: `[PDF: source: ${pdfPath}]` },
+            ],
+          },
+        ],
+      },
+    };
+    const event = turnStartFromRecord(oversize, "s", new Set(), capture);
+    expect(event?.user_message).toContain("[PDF: source:");
+    expect(event?.files).toBeUndefined();
+    expect(capture.attachments).toHaveLength(0);
+  });
+
+  test("a file-only input (no speech) rides on files alone", () => {
+    const capture = captureWith(() => docxBytes);
+    const fileOnly = {
+      ...recordWithFiles,
+      request: {
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `Attached application/octet-stream: ${docxPath}\nThe file was sent by local path.`,
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const event = turnStartFromRecord(fileOnly, "s", new Set(), capture);
+    expect(event?.user_message).toBe("[file #1]");
+    expect(event?.files).toHaveLength(1);
+  });
+
+  test("a gone file keeps the verbatim placeholder and emits nothing", () => {
+    const capture = captureWith(() => null);
+    // "gone" for a PDF means the record carries the redacted dataUrl form;
+    // the disk path it references is unreadable (reader returns null).
+    const gone = {
+      ...recordWithFiles,
+      request: {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "review the spec please" },
+              {
+                type: "file",
+                mediaType: "application/pdf",
+                name: "spec.pdf",
+                dataUrl:
+                  "[dataUrl omitted from model-io: application/pdf, 20 chars]",
+                source: { kind: "local_file", path: pdfPath },
+              },
+              { type: "text", text: `[PDF: source: ${pdfPath}]` },
+            ],
+          },
+        ],
+      },
+    };
+    const event = turnStartFromRecord(gone, "s", new Set(), capture);
+    expect(event?.user_message).toContain(`[PDF: source: ${pdfPath}]`);
+    expect(event?.files).toBeUndefined();
+    expect(capture.attachments).toHaveLength(0);
+  });
+
+  test("without capture the raw file text rides verbatim (back-compat)", () => {
+    const event = turnStartFromRecord(recordWithFiles, "s", new Set());
+    expect(event?.user_message).toContain("[PDF: source:");
+    expect(event?.files).toBeUndefined();
   });
 });
 
@@ -476,7 +656,7 @@ describe("toolResultsFromRecord with image capture", () => {
       origin: "tool_result" as const,
       seen: new Set<string>(),
       attachments: [] as AttachmentEvent[],
-      readImage: (path: string) => (path === imgPath ? png : null),
+      readFile: (path: string) => (path === imgPath ? png : null),
     };
     const results = toolResultsFromRecord(
       recordWithToolImage,
@@ -497,7 +677,7 @@ describe("toolResultsFromRecord with image capture", () => {
       origin: "tool_result" as const,
       seen: new Set<string>(),
       attachments: [] as AttachmentEvent[],
-      readImage: () => null,
+      readFile: () => null,
     };
     const textOnlyTool = {
       ...recordWithToolImage,

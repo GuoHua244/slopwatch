@@ -24,29 +24,36 @@ export const imageMarker = (n: number): string => `[image #${n}]`;
 
 export type ImageOrigin = "user_message" | "tool_result";
 
-/** Shared per-listener capture state: sha dedup plus an injectable reader. */
-export type ImageCapture = {
+/**
+ * Shared per-listener capture state (images and files alike): sha dedup plus
+ * an injectable reader.
+ */
+export type AttachmentCapture = {
   origin: ImageOrigin;
   sessionId: string;
   occurredAt: string;
-  /** shas already shipped this listener run — history re-echoes images. */
+  /** shas already shipped this listener run — history re-echoes attachments. */
   seen: Set<string>;
   /** Injectable for tests; defaults to a capped synchronous file read. */
-  readImage?: (path: string) => Buffer | null;
-  /** OUT: attachment events for newly captured images, in capture order. */
+  readFile?: (path: string) => Buffer | null;
+  /** OUT: attachment events for newly captured attachments, in capture order. */
   attachments: AttachmentEvent[];
 };
 
-const defaultReadImage = (path: string): Buffer | null => {
+/** Capped fail-open file read: null for anything missing, unreadable, or
+ * oversized (checked via stat first — reading a giant file wastes memory). */
+export const readCapped = (path: string, maxBytes: number): Buffer | null => {
   try {
-    // size check first: readFileSync on a giant file wastes memory
-    if (statSync(path).size > ATTACHMENT_MAX_BYTES) return null;
+    if (statSync(path).size > maxBytes) return null;
     const buf = readFileSync(path);
     return buf.length > 0 ? buf : null;
   } catch {
-    return null; // pruned cache, unreadable, whatever — fail open
+    return null;
   }
 };
+
+const defaultReadImage = (path: string): Buffer | null =>
+  readCapped(path, ATTACHMENT_MAX_BYTES);
 
 /** Magic-byte sniffing — the rollout's own mime labels disagree with the
  * bytes (observed: mediaType jpeg over a png payload), so trust the file. */
@@ -73,8 +80,8 @@ export const sniffImageMime = (buf: Buffer): string | null => {
 
 type Captured = { sha256: string; size: number } | null;
 
-const captureAtPath = (path: string, capture: ImageCapture): Captured => {
-  const buf = (capture.readImage ?? defaultReadImage)(path);
+const captureAtPath = (path: string, capture: AttachmentCapture): Captured => {
+  const buf = (capture.readFile ?? defaultReadImage)(path);
   if (buf === null) return null;
   const sha256 = createHash("sha256").update(buf).digest("hex");
   if (capture.seen.has(sha256)) return { sha256, size: buf.length };
@@ -119,7 +126,8 @@ export const blockImagePaths = (content: unknown): string[] => {
 export const hasImageBlock = (content: unknown): boolean =>
   blockImagePaths(content).length > 0;
 
-const basename = (path: string): string => path.split(/[\\/]/).pop() ?? path;
+export const basename = (path: string): string =>
+  path.split(/[\\/]/).pop() ?? path;
 
 /**
  * Capture the images of a turn's input message and rewrite its text: every
@@ -132,7 +140,7 @@ const basename = (path: string): string => path.split(/[\\/]/).pop() ?? path;
 export const captureUserMessageImages = (
   text: string,
   blockPaths: string[],
-  capture: ImageCapture,
+  capture: AttachmentCapture,
 ): { text: string; refs: TurnImageRef[] } => {
   const candidates = [...blockPaths];
   for (const match of text.matchAll(IMAGE_PLACEHOLDER)) {
@@ -177,7 +185,7 @@ export const captureUserMessageImages = (
  */
 export const captureToolResultImages = (
   content: unknown,
-  capture: ImageCapture,
+  capture: AttachmentCapture,
 ): string[] => {
   const shas: string[] = [];
   for (const path of blockImagePaths(content)) {

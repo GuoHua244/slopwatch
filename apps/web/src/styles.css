@@ -705,6 +705,29 @@ ul.sessions li.selected {
   margin: 0;
   font-size: 12.5px;
 }
+/* The session's task statement, promoted to sit right under the title:
+ * the first user message in full, quoted like the evidence it is. */
+.task-quote {
+  margin: 12px 0 0;
+  padding: 10px 16px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: color-mix(in srgb, var(--panel-2) 75%, transparent);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.task-quote-label {
+  display: block;
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  margin-bottom: 4px;
+}
 .facts {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -1834,6 +1857,55 @@ ul.sessions li.selected {
   padding: 1px 6px;
   font-size: 11.5px;
   cursor: help;
+}
+/* --- Captured files in the turn view --- */
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 340px;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 12px;
+  text-decoration: none;
+  vertical-align: middle;
+}
+.file-chip:hover {
+  border-color: var(--accent-soft);
+  background: var(--accent-wash);
+}
+.file-chip > svg {
+  flex: none;
+  color: var(--faint);
+}
+.file-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-chip-size {
+  flex: none;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.file-chip.missing {
+  gap: 4px;
+  cursor: help;
+  color: var(--faint);
+  border-style: dashed;
+  font: 11px var(--font-mono);
+}
+.msg-file-strip {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  vertical-align: middle;
+  margin-left: 6px;
 }
 .lightbox {
   position: fixed;

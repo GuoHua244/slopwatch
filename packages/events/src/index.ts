@@ -68,13 +68,27 @@ export type TurnStartEvent = Envelope & {
    * attachment events — refs are the render-side handles only.
    */
   images?: TurnImageRef[];
+  /**
+   * Non-image files attached to the turn's input message, in order. `n`
+   * matches the `[file #n]` markers in user_message; refs without a marker
+   * render as a trailing strip (file-only inputs). Same transport as images:
+   * bytes ride on attachment events, refs are render handles.
+   */
+  files?: TurnFileRef[];
 };
 
 /** Hard cap on one captured image (decoded bytes). */
 export const ATTACHMENT_MAX_BYTES = 4 * 1024 * 1024;
 
+/** Hard cap on one captured non-image file (decoded bytes). PDFs ride with
+ * their full bytes in the rollout record; disk reads back the rest. */
+export const FILE_MAX_BYTES = 10 * 1024 * 1024;
+
 /** Ref cap per turn / per tool result — renders stay sane, batches bounded. */
 export const MAX_IMAGES_PER_REF = 20;
+
+/** Ref cap for files per turn. */
+export const MAX_FILES_PER_REF = 20;
 
 export type TurnImageRef = {
   /** 1-based index matching `[image #n]` markers in the turn's user_message. */
@@ -82,6 +96,18 @@ export type TurnImageRef = {
   sha256: string;
   /** Decoded byte size, when known at capture time. */
   size?: number;
+};
+
+export type TurnFileRef = {
+  /** 1-based index matching `[file #n]` markers in the turn's user_message. */
+  n: number;
+  sha256: string;
+  /** Decoded byte size. */
+  size: number;
+  /** File name for the dashboard chip, e.g. "spec.pdf". */
+  name: string;
+  /** Best-effort mime for the chip icon and serve content-type. */
+  mime: string;
 };
 
 export type TurnEndEvent = Envelope & {
@@ -157,11 +183,13 @@ export type ToolResultEvent = Envelope & {
 };
 
 /**
- * One captured image's bytes, content-addressed by sha256. The listener reads
- * the file the moment it sees the referencing record — the agent's local
- * image cache is pruned, so a path reference alone is worthless to server
- * readers. Stored in the attachments table, never in the event log; turn and
- * tool events carry the references.
+ * One captured attachment's bytes, content-addressed by sha256. The listener
+ * reads the bytes the moment it sees the referencing record — image caches are
+ * pruned, a bare path reference is worthless to server readers. PDF file
+ * blocks instead carry their full bytes in the record (dataUrl), and other
+ * files are read from their on-disk path at capture time. Stored in the
+ * attachments table, never in the event log; turn and tool events carry the
+ * references.
  */
 export type AttachmentEvent = Envelope & {
   kind: "attachment";
@@ -169,7 +197,7 @@ export type AttachmentEvent = Envelope & {
   mime: string;
   /** Decoded byte size — must match the base64 payload exactly. */
   size: number;
-  /** base64 of the image bytes. */
+  /** base64 of the attachment bytes. */
   data: string;
   origin: "user_message" | "tool_result";
 };
@@ -178,14 +206,41 @@ const IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 /**
+ * Byte cap for one attachment by mime: images keep their tighter 4 MiB cap,
+ * every other accepted type gets the file cap.
+ */
+export const attachmentCapBytes = (mime: string): number =>
+  IMAGE_MIME_TYPES.includes(mime) ? ATTACHMENT_MAX_BYTES : FILE_MAX_BYTES;
+
+/**
+ * Non-image mimes an attachment may carry. An allowlist, not a denylist —
+ * bytes come back from the serve route with this content-type, so anything a
+ * browser would execute (text/html, image/svg+xml) must never be storable.
+ */
+const FILE_MIME_EXACT = [
+  "application/pdf",
+  "application/zip",
+  "application/octet-stream",
+];
+const FILE_MIME_PREFIXES = [
+  "video/",
+  "audio/",
+  "application/vnd.openxmlformats-officedocument.",
+];
+const isFileMime = (v: unknown): boolean =>
+  typeof v === "string" &&
+  (FILE_MIME_EXACT.includes(v) ||
+    FILE_MIME_PREFIXES.some((prefix) => v.startsWith(prefix)));
+
+/**
  * Integrity check beyond the structural guard: the base64 payload must decode
  * to exactly `size` bytes hashing to `sha256`. Server-side ingest runs it so
  * content addressing is earned, not claimed.
  */
 export const verifyAttachment = (event: AttachmentEvent): boolean => {
   if (!SHA256_PATTERN.test(event.sha256)) return false;
-  if (event.data.length > Math.ceil((ATTACHMENT_MAX_BYTES * 4) / 3) + 4)
-    return false;
+  const cap = attachmentCapBytes(event.mime);
+  if (event.data.length > Math.ceil((cap * 4) / 3) + 4) return false;
   const bytes = Buffer.from(event.data, "base64");
   if (bytes.length !== event.size) return false;
   return createHash("sha256").update(bytes).digest("hex") === event.sha256;
@@ -298,6 +353,15 @@ const isImageMime = isOneOf(IMAGE_MIME_TYPES);
 const isSha256 = (v: unknown): v is string =>
   typeof v === "string" && SHA256_PATTERN.test(v);
 
+/**
+ * Whether an attachment event with this mime passes ingest. The listener
+ * uses it to coerce an unexpected block mediaType to application/octet-stream
+ * instead of shipping an event the server would reject — one rejected event
+ * fails the whole batch, losing the record's other events with it.
+ */
+export const isAttachmentMime = (v: unknown): boolean =>
+  isImageMime(v) || isFileMime(v);
+
 const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/;
 
 const isImageRefList = (v: unknown): boolean =>
@@ -317,6 +381,23 @@ const isShaList = (v: unknown): boolean =>
   Array.isArray(v) &&
   v.length <= MAX_IMAGES_PER_REF &&
   v.every((sha) => isSha256(sha));
+
+const isFileRefList = (v: unknown): boolean =>
+  Array.isArray(v) &&
+  v.length <= MAX_FILES_PER_REF &&
+  v.every(
+    (ref) =>
+      isObject(ref) &&
+      isTokenCount(ref.n) &&
+      ref.n >= 1 &&
+      isSha256(ref.sha256) &&
+      isTokenCount(ref.size) &&
+      isNonEmptyString(ref.name) &&
+      isNonEmptyString(ref.mime) &&
+      Object.keys(ref).every((k) =>
+        ["n", "sha256", "size", "name", "mime"].includes(k),
+      ),
+  );
 
 /** Runtime type guard for a NormalEvent. Strict: unknown keys in usage fail. */
 export const isNormalEvent = (value: unknown): value is NormalEvent => {
@@ -364,6 +445,7 @@ export const isNormalEvent = (value: unknown): value is NormalEvent => {
       if (!isOptional(value.user_message, isNonEmptyString)) return false;
       if (!isOptional(value.usage, isTokenUsage)) return false;
       if (!isOptional(value.images, isImageRefList)) return false;
+      if (!isOptional(value.files, isFileRefList)) return false;
       return true;
     }
     case "model_request": {
@@ -393,14 +475,16 @@ export const isNormalEvent = (value: unknown): value is NormalEvent => {
     case "attachment": {
       if (!isNonEmptyString(value.sha256) || !isSha256(value.sha256))
         return false;
-      if (!isImageMime(value.mime)) return false;
+      const mime = value.mime;
+      if (typeof mime !== "string") return false;
+      if (!isImageMime(mime) && !isFileMime(mime)) return false;
+      const cap = attachmentCapBytes(mime);
       const size = value.size;
-      if (!isTokenCount(size) || size < 1 || size > ATTACHMENT_MAX_BYTES)
-        return false;
+      if (!isTokenCount(size) || size < 1 || size > cap) return false;
       if (
         typeof value.data !== "string" ||
         value.data.length === 0 ||
-        value.data.length > Math.ceil((ATTACHMENT_MAX_BYTES * 4) / 3) + 4 ||
+        value.data.length > Math.ceil((cap * 4) / 3) + 4 ||
         !BASE64_PATTERN.test(value.data)
       )
         return false;

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   ATTACHMENT_MAX_BYTES,
+  FILE_MAX_BYTES,
   isNormalEvent,
   joinUrl,
   SCHEMA_VERSION,
@@ -343,6 +344,118 @@ describe("attachment events (captured image bytes)", () => {
         ...attachment,
         data: big,
         size: ATTACHMENT_MAX_BYTES + 12,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("attachment events (captured file bytes)", () => {
+  const pdf = (size: number): Buffer =>
+    Buffer.concat([Buffer.from("%PDF-1.5\n"), Buffer.alloc(size - 9, 5)]);
+  const fileAttachment = (bytes: Buffer, mime = "application/pdf") => ({
+    ...base,
+    kind: "attachment",
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    mime,
+    size: bytes.length,
+    data: bytes.toString("base64"),
+    origin: "user_message",
+  });
+
+  test("accepts a coherent pdf payload of any accepted file mime", () => {
+    expect(isNormalEvent(fileAttachment(pdf(4096)))).toBe(true);
+    expect(isNormalEvent(fileAttachment(pdf(4096), "application/zip"))).toBe(
+      true,
+    );
+    expect(isNormalEvent(fileAttachment(pdf(4096), "video/mp4"))).toBe(true);
+    expect(
+      isNormalEvent(fileAttachment(pdf(4096), "application/octet-stream")),
+    ).toBe(true);
+    expect(
+      isNormalEvent(
+        fileAttachment(
+          pdf(4096),
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects executable-ish mimes the serve route would emit verbatim", () => {
+    expect(isNormalEvent(fileAttachment(pdf(4096), "text/html"))).toBe(false);
+    expect(isNormalEvent(fileAttachment(pdf(4096), "image/svg+xml"))).toBe(
+      false,
+    );
+    expect(
+      isNormalEvent(fileAttachment(pdf(4096), "application/xhtml+xml")),
+    ).toBe(false);
+  });
+
+  test("files get the 10 MiB cap, images keep 4 MiB", () => {
+    const fileBytes = pdf(FILE_MAX_BYTES);
+    const fileEvent = fileAttachment(fileBytes);
+    expect(isNormalEvent(fileEvent)).toBe(true);
+    expect(isNormalEvent({ ...fileEvent, size: fileBytes.length + 1 })).toBe(
+      false,
+    );
+    expect(isNormalEvent(fileAttachment(pdf(FILE_MAX_BYTES + 1)))).toBe(false);
+    const imageBytes = Buffer.alloc(ATTACHMENT_MAX_BYTES, 7);
+    expect(
+      isNormalEvent({
+        ...attachment,
+        size: ATTACHMENT_MAX_BYTES,
+        data: imageBytes.toString("base64"),
+        sha256: createHash("sha256").update(imageBytes).digest("hex"),
+      }),
+    ).toBe(true); // image cap unchanged at 4 MiB
+  });
+
+  test("verifyAttachment enforces the file cap too", () => {
+    const bytes = pdf(1024);
+    expect(
+      verifyAttachment({
+        ...base,
+        kind: "attachment",
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        mime: "application/pdf",
+        size: bytes.length,
+        data: bytes.toString("base64"),
+        origin: "user_message",
+      }),
+    ).toBe(true);
+  });
+
+  test("turn:start accepts file refs and rejects malformed ones", () => {
+    const fileSha = createHash("sha256").update("file-bytes").digest("hex");
+    const files = [
+      {
+        n: 1,
+        sha256: fileSha,
+        size: 11,
+        name: "spec.pdf",
+        mime: "application/pdf",
+      },
+    ];
+    expect(isNormalEvent({ ...turnStart, files })).toBe(true);
+    expect(
+      isNormalEvent({ ...turnStart, files: [{ ...files[0]!, size: -1 }] }),
+    ).toBe(false);
+    expect(
+      isNormalEvent({ ...turnStart, files: [{ ...files[0]!, name: "" }] }),
+    ).toBe(false);
+    expect(
+      isNormalEvent({
+        ...turnStart,
+        files: [{ ...files[0]!, mime: "text/html" }],
+      }),
+    ).toBe(true); // refs render only; the mime gate is on attachment events
+    expect(
+      isNormalEvent({
+        ...turnStart,
+        files: Array.from({ length: 21 }, (_, i) => ({
+          ...files[0]!,
+          n: i + 1,
+        })),
       }),
     ).toBe(false);
   });

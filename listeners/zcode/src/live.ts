@@ -80,7 +80,7 @@ try {
 // results of earlier tool calls (echoed in the next request's messages).
 const seenTurns = new Set<string>();
 const seenToolResults = new Set<string>();
-const seenImages = new Set<string>();
+const seenAttachments = new Set<string>();
 let taskPreviewSent = false;
 const recordOccurredAt = (record: unknown): string =>
   typeof record === "object" &&
@@ -106,7 +106,7 @@ const adapter: RecordAdapter = {
     const capture = {
       sessionId,
       occurredAt: recordOccurredAt(record),
-      seen: seenImages,
+      seen: seenAttachments,
       attachments: [] as AttachmentEvent[],
     };
     const turnStart = turnStartFromRecord(

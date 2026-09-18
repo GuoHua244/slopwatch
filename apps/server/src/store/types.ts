@@ -210,7 +210,7 @@ export type Store = {
   listSessions(teamId?: string, userId?: string): Promise<SessionRow[]>;
   eventsSince(sessionId: string, sinceSeq: number): Promise<StoredEvent[]>;
   /**
-   * One captured image by content hash — mime plus raw bytes for the
+   * One captured attachment by content hash — mime plus raw bytes for the
    * attachment download route. Null when the session has no such image.
    */
   getAttachment(

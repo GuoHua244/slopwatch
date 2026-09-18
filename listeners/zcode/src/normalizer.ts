@@ -10,6 +10,7 @@ import {
   type TokenUsage,
   type ToolCallEvent,
   type ToolResultEvent,
+  type TurnFileRef,
   type TurnStartEvent,
 } from "@slopwatch/events";
 import {
@@ -17,18 +18,28 @@ import {
   captureToolResultImages,
   captureUserMessageImages,
   hasImageBlock,
+  type AttachmentCapture,
 } from "./images";
+import {
+  FILE_PLACEHOLDER,
+  FILE_PLACEHOLDER_SCAN,
+  attachedFilePath,
+  captureFileCandidates,
+  fileMarker,
+  hasFileBlock,
+  userFileCandidates,
+} from "./files";
 
 /**
  * The caller-owned capture state threaded through the normalizer: the sha
  * dedup set, an injectable reader, and the OUT list of attachment events.
  * The origin is supplied per extraction point (turn input vs tool result).
  */
-export type ImageCaptureState = {
+export type AttachmentCaptureState = {
   sessionId: string;
   occurredAt: string;
   seen: Set<string>;
-  readImage?: (path: string) => Buffer | null;
+  readFile?: (path: string) => Buffer | null;
   attachments: AttachmentEvent[];
 };
 
@@ -92,21 +103,34 @@ const stripLeadingBlocks = (text: string): string => {
 };
 
 /**
+ * The text blocks of a block-array user message that read as human speech:
+ * type:"text", non-empty, not an injected "<tag …>" block. `userSpeech` joins
+ * these; the file pass rewrites some of them into `[file #n]` markers.
+ */
+const speechBlocks = (content: unknown): string[] | null => {
+  if (!Array.isArray(content)) return null;
+  return content
+    .filter(isObject)
+    .filter((block) => block.type === "text")
+    .map((block) => String(block.text ?? "").trim())
+    .filter((text) => text.length > 0 && !text.startsWith("<"));
+};
+
+/**
  * User-message text with injected context blocks removed: the client stuffs
  * ambient-state / system blocks (`<in-app-browser-context>…`, tool results)
  * into user messages ahead of (or instead of) the human's words. For block
  * arrays keep only non-injection text blocks; for strings, strip the leading
  * block run and keep whatever the human actually wrote.
  */
+/** One speech-assembly rule for every path that turns blocks into message
+ * text — plain speech and file-marker-rewritten speech must stay identical. */
+const joinSpeech = (blocks: string[]): string =>
+  blocks.join(" ").replace(/\s+/g, " ").trim();
+
 const userSpeech = (content: unknown): string => {
-  if (Array.isArray(content)) {
-    const kept = content
-      .filter(isObject)
-      .filter((block) => block.type === "text")
-      .map((block) => String(block.text ?? "").trim())
-      .filter((text) => text.length > 0 && !text.startsWith("<"));
-    return kept.join(" ").replace(/\s+/g, " ").trim();
-  }
+  const blocks = speechBlocks(content);
+  if (blocks !== null) return joinSpeech(blocks);
   const text = contentToText(content).trim();
   if (text.startsWith("<")) {
     const afterBlocks = stripLeadingBlocks(text)
@@ -116,6 +140,43 @@ const userSpeech = (content: unknown): string => {
     return afterBlocks.replace(/\s+/g, " ");
   }
   return text.replace(/\s+/g, " ");
+};
+
+/**
+ * File pass over a block-array turn input: capture the file candidates'
+ * bytes, then rewrite the speech text so each captured reference becomes a
+ * `[file #n]` marker — `[PDF: source: <path>]` placeholders are rewritten
+ * inline, a whole `Attached <mime>: <path>` block collapses to its marker.
+ * Failed captures keep their original text (the dashboard shows the raw
+ * path). The synthetic "Called the Read tool …" transcripts of text
+ * attachments ride in the text itself and are left untouched.
+ */
+const captureUserMessageFiles = (
+  content: unknown,
+  capture: AttachmentCapture,
+): { text: string; refs: TurnFileRef[] } => {
+  const blocks = speechBlocks(content) ?? [];
+  const { refs, refByPath } = captureFileCandidates(
+    userFileCandidates(content),
+    capture,
+  );
+  const text = blocks.map((block) => {
+    let replaced = false;
+    const rewritten = block.replace(FILE_PLACEHOLDER, (original, path) => {
+      const ref = refByPath.get(path);
+      if (ref === undefined) return original;
+      replaced = true;
+      return fileMarker(ref.n);
+    });
+    if (replaced) return rewritten;
+    const attachedPath = attachedFilePath(block);
+    if (attachedPath !== null) {
+      const ref = refByPath.get(attachedPath);
+      if (ref !== undefined) return fileMarker(ref.n);
+    }
+    return block;
+  });
+  return { text: joinSpeech(text), refs };
 };
 
 /**
@@ -152,10 +213,22 @@ export const metaFromRecord = (
 };
 
 /**
+ * A text block that exists to transport a file rather than to speak: an
+ * `Attached <mime>: <path>` marker line, a bare `[PDF: source: <path>]`
+ * placeholder, or a synthetic "Called the Read tool …" transcript.
+ */
+const isFileTransportNoise = (block: string): boolean =>
+  attachedFilePath(block) !== null ||
+  FILE_PLACEHOLDER_SCAN.test(block) ||
+  block.startsWith("Called the Read tool");
+
+/**
  * The first main_turn record's first real user message is the session's task
  * statement — emit it once per session (caller dedupes). Messages live on
  * request.messages (not request.body); injected context blocks are stripped
- * (see userSpeech).
+ * (see userSpeech), and file-transport noise (`Attached …` lines,
+ * `[PDF: source: …]` placeholders, synthetic Read transcripts) is skipped so
+ * the preview stays readable — attachment-only messages yield no preview.
  */
 export const taskPreviewFromRecord = (
   record: unknown,
@@ -168,7 +241,15 @@ export const taskPreviewFromRecord = (
       : [];
   for (const message of messages) {
     if (!isObject(message) || message.role !== "user") continue;
-    const text = userSpeech(message.content);
+    const blocks = speechBlocks(message.content);
+    const text = (
+      blocks !== null
+        ? blocks.filter((block) => !isFileTransportNoise(block))
+        : [userSpeech(message.content)]
+    )
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
     if (!text) continue;
     return {
       ...envelope("zcode", sessionId, recordTime(record)),
@@ -190,16 +271,17 @@ export const taskPreviewFromRecord = (
  * riding on model_request events.
  *
  * With a capture context, the input message's `[Image: source: <path>]`
- * placeholders are rewritten to `[image #n]` markers, the files' bytes ship
- * as attachment events (see images.ts), and the event carries the render
- * refs. Unreadable images keep their placeholder — the dashboard shows those
- * as not archived.
+ * placeholders are rewritten to `[image #n]` markers and its file references
+ * (`{type:"file"}` blocks, `Attached <mime>: <path>` lines) to `[file #n]`
+ * markers; the bytes ship as attachment events (see images.ts / files.ts) and
+ * the event carries the render refs. Unreadable references keep their
+ * original text — the dashboard shows those as not archived.
  */
 export const turnStartFromRecord = (
   record: unknown,
   sessionId: string,
   seenTurns: Set<string>,
-  capture?: ImageCaptureState,
+  capture?: AttachmentCaptureState,
 ): TurnStartEvent | null => {
   if (!isObject(record) || record.type !== "model_io") return null;
   if (!isNonEmptyString(record.turnId) || seenTurns.has(record.turnId))
@@ -218,8 +300,13 @@ export const turnStartFromRecord = (
     if (text) {
       userMessage = text.slice(0, 2000);
       chosenContent = message.content;
-    } else if (imageOnlyContent === null && hasImageBlock(message.content)) {
-      // image-only inputs speak through their attachments instead
+    } else if (
+      hasImageBlock(message.content) ||
+      hasFileBlock(message.content)
+    ) {
+      // Attachment-only inputs speak through their attachments instead.
+      // Last wins — history re-echoes earlier turns, so the first hit is
+      // often an old turn's input, not this one's.
       imageOnlyContent = message.content;
     }
   }
@@ -238,8 +325,23 @@ export const turnStartFromRecord = (
   if (capture) {
     const content = chosenContent ?? imageOnlyContent;
     if (content !== null) {
+      // File pass first, at block level: `Attached …` blocks and
+      // `[PDF: source: …]` placeholders only survive text assembly as
+      // markers if they are rewritten before the whitespace-collapsing
+      // join. Then the image pass rewrites the assembled text as before.
+      let baseText = userMessage ?? "";
+      let fileRefs: TurnFileRef[] | undefined;
+      if (Array.isArray(content)) {
+        const filePass = captureUserMessageFiles(content, {
+          ...capture,
+          sessionId,
+          origin: "user_message",
+        });
+        baseText = filePass.text;
+        fileRefs = filePass.refs;
+      }
       const captured = captureUserMessageImages(
-        userMessage ?? "",
+        baseText,
         blockImagePaths(content),
         // the record's session id is authoritative for everything it emits
         { ...capture, sessionId, origin: "user_message" },
@@ -248,6 +350,7 @@ export const turnStartFromRecord = (
       if (capturedText) event.user_message = capturedText.slice(0, 2000);
       else if (userMessage) event.user_message = userMessage;
       if (captured.refs.length > 0) event.images = captured.refs;
+      if (fileRefs !== undefined && fileRefs.length > 0) event.files = fileRefs;
     } else if (userMessage) {
       event.user_message = userMessage;
     }
@@ -388,7 +491,7 @@ export const toolResultsFromRecord = (
   record: unknown,
   sessionId: string,
   seenToolResults: Set<string>,
-  capture?: ImageCaptureState,
+  capture?: AttachmentCaptureState,
 ): ToolResultEvent[] => {
   if (!isObject(record) || record.type !== "model_io") return [];
   const messages =

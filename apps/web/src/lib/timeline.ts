@@ -7,6 +7,7 @@ import type {
   ToolCallEvent,
   ToolResultEvent,
   TokenUsage,
+  TurnFileRef,
   TurnImageRef,
 } from "@slopwatch/events";
 import type { StoredEvent } from "../api";
@@ -26,6 +27,8 @@ export type TurnActivity = {
   assistantMessage?: string;
   /** The turn's input images, in `[image #n]` marker order. */
   images?: TurnImageRef[];
+  /** The turn's input files, in `[file #n]` marker order. */
+  files?: TurnFileRef[];
   startedAt?: string;
   endedAt?: string;
   /** Turn-end usage when the agent emits one; otherwise derived by summing
@@ -101,6 +104,7 @@ export const buildTimeline = (events: StoredEvent[]): SessionTimeline => {
           if (turn) {
             turn.userMessage = event.user_message;
             turn.images = event.images;
+            turn.files = event.files;
             turn.startedAt = event.occurred_at;
           }
         } else {
@@ -216,6 +220,7 @@ export const describeEvent = (event: StoredEvent["event"]): string => {
         return [
           event.user_message ?? event.turn_id,
           event.images ? `${event.images.length} image(s)` : "",
+          event.files ? event.files.map((file) => file.name).join(", ") : "",
         ]
           .filter(Boolean)
           .join(" · ");
