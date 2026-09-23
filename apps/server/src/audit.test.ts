@@ -350,14 +350,16 @@ describe("audit trail (in memory)", () => {
     const store = auditStore({
       roleOf: async () => "admin",
       getUser: async () => userRow(),
-      mintToken: async () => ({
+      mintToken: async (_name, label) => ({
         token_id: "a1b2c3d4-0000-4000-8000-0000000000b2",
         hint: "sw_abcd1234",
         token: "sw_secret",
+        label: label ?? null,
       }),
       getToken: async () => ({
         token_id: "a1b2c3d4-0000-4000-8000-0000000000b2",
         hint: "sw_abcd1234",
+        label: "ci",
         user_name: "bob",
         created_at: "2026-09-01T00:00:00.000Z",
         revoked_at: null,
@@ -368,7 +370,11 @@ describe("audit trail (in memory)", () => {
     const minted = await req(
       app,
       "/admin/users/bob/tokens",
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label: "ci" }),
+      },
       "tok-admin",
     );
     expect(minted.status).toBe(201);
@@ -387,6 +393,7 @@ describe("audit trail (in memory)", () => {
         detail: {
           token_id: "a1b2c3d4-0000-4000-8000-0000000000b2",
           hint: "sw_abcd1234",
+          label: "ci",
         },
       },
       {
@@ -396,6 +403,7 @@ describe("audit trail (in memory)", () => {
         detail: {
           token_id: "a1b2c3d4-0000-4000-8000-0000000000b2",
           hint: "sw_abcd1234",
+          label: "ci",
           user: "bob",
         },
       },

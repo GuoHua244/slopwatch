@@ -8,7 +8,12 @@ import type {
 } from "../api";
 import { usePolled, type PollError } from "../hooks/usePolled";
 import { clock, errorMessage } from "../lib/format";
-import { ConfirmButton, ErrorBanner, useAsyncAction } from "./admin-shared";
+import {
+  ConfirmButton,
+  ClipTip,
+  ErrorBanner,
+  useAsyncAction,
+} from "./admin-shared";
 import { Select } from "./Select";
 
 type Props = {
@@ -35,6 +40,8 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
   const [email, setEmail] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [minted, setMinted] = useState<MintedToken | null>(null);
+  const [mintFor, setMintFor] = useState<string | null>(null);
+  const [mintLabel, setMintLabel] = useState("");
   const [openTokens, setOpenTokens] = useState<Record<string, AdminTokenRow[]>>(
     {},
   );
@@ -67,7 +74,15 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
   };
 
   const mintAndShow = (u: AdminUserRow) =>
-    run(async () => setMinted(await api.mintToken(u.name)));
+    run(async () => {
+      setMinted(await api.mintToken(u.name, mintLabel.trim() || null));
+      setMintFor(null);
+      if (openTokens[u.name])
+        setOpenTokens({
+          ...openTokens,
+          [u.name]: await api.tokens(u.name),
+        });
+    });
 
   const revoke = (u: AdminUserRow, t: AdminTokenRow) =>
     run(async () => {
@@ -101,7 +116,8 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
         {formError && <ErrorBanner message={formError} />}
         {minted && (
           <div className="token-reveal">
-            Token minted — copy it now, it is shown once:
+            Token minted{minted.label ? ` (${minted.label})` : ""} — copy it
+            now, it is shown once:
             <div className="secret">{minted.token}</div>
             <button onClick={() => setMinted(null)}>Hide</button>
           </div>
@@ -116,7 +132,12 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
                 <th>Status</th>
                 <th>Role</th>
                 <th>DRI</th>
-                <th className="num">Tokens</th>
+                <th
+                  className="num"
+                  title="API access tokens minted for this user (not LLM usage)"
+                >
+                  API tokens
+                </th>
                 <th>Created</th>
                 <th className="actions">Actions</th>
               </tr>
@@ -125,17 +146,14 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
               {(users ?? []).flatMap((u) => [
                 <tr key={u.name}>
                   <td>
-                    <span className="cell-clip" title={u.name}>
+                    <ClipTip label={u.name} className="cell-clip">
                       {u.name}
-                    </span>
+                    </ClipTip>
                   </td>
                   <td>
-                    <span
-                      className="cell-clip wide"
-                      title={u.email ?? undefined}
-                    >
+                    <ClipTip label={u.email} className="cell-clip wide">
                       {u.email ?? "—"}
-                    </span>
+                    </ClipTip>
                   </td>
                   <td>
                     <Select
@@ -207,8 +225,17 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
                     >
                       {u.is_dri ? "Unset DRI" : "Make DRI"}
                     </button>
-                    <button onClick={() => mintAndShow(u)}>Mint token</button>
-                    <button onClick={() => void toggleTokens(u)}>Tokens</button>
+                    <button
+                      onClick={() => {
+                        setMintFor(u.name);
+                        setMintLabel("");
+                      }}
+                    >
+                      Mint token
+                    </button>
+                    <button onClick={() => void toggleTokens(u)}>
+                      API tokens
+                    </button>
                     <ConfirmButton
                       className="danger"
                       message={`Delete user "${u.name}" and all their tokens?`}
@@ -218,6 +245,38 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
                     </ConfirmButton>
                   </td>
                 </tr>,
+                ...(mintFor === u.name
+                  ? [
+                      <tr key={`${u.name}-mint`} className="token-row">
+                        <td colSpan={9}>
+                          <form
+                            className="admin-form"
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              mintAndShow(u);
+                            }}
+                          >
+                            <input
+                              autoFocus
+                              value={mintLabel}
+                              maxLength={100}
+                              onChange={(e) => setMintLabel(e.target.value)}
+                              placeholder={`label for ${u.name}'s new token (optional)`}
+                            />
+                            <button className="primary" type="submit">
+                              Mint
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setMintFor(null)}
+                            >
+                              Cancel
+                            </button>
+                          </form>
+                        </td>
+                      </tr>,
+                    ]
+                  : []),
                 ...(openTokens[u.name]
                   ? [
                       <tr key={`${u.name}-tokens`} className="token-row">
@@ -227,6 +286,14 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
                             : openTokens[u.name]!.map((t) => (
                                 <div className="row" key={t.token_id}>
                                   <span className="kind">{t.hint}…</span>
+                                  {t.label && (
+                                    <ClipTip
+                                      label={t.label}
+                                      className="tag tag-dim token-label"
+                                    >
+                                      {t.label}
+                                    </ClipTip>
+                                  )}
                                   <span className="detail">
                                     created {clock(t.created_at)}
                                     {t.revoked_at

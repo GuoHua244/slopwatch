@@ -35,6 +35,7 @@ const memStore = () => {
     {
       hash: string;
       hint: string;
+      label: string | null;
       user: string;
       created_at: string;
       revoked_at: string | null;
@@ -256,17 +257,23 @@ const memStore = () => {
       for (const [id, t] of tokens) if (t.user === name) tokens.delete(id);
       return true;
     },
-    mintToken: async (userName) => {
+    mintToken: async (userName, label) => {
       const token = `sw_${crypto.randomUUID().replaceAll("-", "")}`;
       const token_id = crypto.randomUUID();
       tokens.set(token_id, {
         hash: hashToken(token),
         hint: token.slice(0, 10),
+        label: label ?? null,
         user: userName,
         created_at: new Date().toISOString(),
         revoked_at: null,
       });
-      return { token_id, hint: token.slice(0, 10), token };
+      return {
+        token_id,
+        hint: token.slice(0, 10),
+        token,
+        label: label ?? null,
+      };
     },
     listTokens: async (userName): Promise<AdminTokenRow[]> =>
       [...tokens.entries()]
@@ -274,6 +281,7 @@ const memStore = () => {
         .map(([token_id, t]) => ({
           token_id,
           hint: t.hint,
+          label: t.label,
           created_at: t.created_at,
           revoked_at: t.revoked_at,
         })),
@@ -874,6 +882,22 @@ describe.skipIf(!dbTests())("admin store semantics against Postgres", () => {
     expect(await store!.deleteUser(name)).toBe(true);
     expect(await store!.resolveTokenUser(second.token)).toBeNull();
     expect(await store!.getUser(name)).toBeNull();
+  });
+
+  test("minted tokens carry an optional label", async () => {
+    await ensure();
+    const name = `admin-pg-label-${crypto.randomUUID().slice(0, 8)}`;
+    await store!.createUser(name, null);
+    const labeled = await store!.mintToken(name, "work laptop");
+    expect(labeled.label).toBe("work laptop");
+    const plain = await store!.mintToken(name);
+    expect(plain.label).toBeNull();
+    const byId = new Map(
+      (await store!.listTokens(name)).map((t) => [t.token_id, t]),
+    );
+    expect(byId.get(labeled.token_id)!.label).toBe("work laptop");
+    expect(byId.get(plain.token_id)!.label).toBeNull();
+    await store!.deleteUser(name);
   });
 
   test("duplicate user names are rejected", async () => {

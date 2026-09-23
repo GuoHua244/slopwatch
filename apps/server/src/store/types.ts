@@ -73,6 +73,8 @@ export type TeamInfo = {
 export type AdminTokenRow = {
   token_id: string;
   hint: string;
+  /** Admin-given nickname ("work laptop", "ci"); null when minted unlabeled. */
+  label: string | null;
   created_at: string;
   revoked_at: string | null;
 };
@@ -273,7 +275,13 @@ export type Store = {
   /** Mint a bearer token; the plaintext appears exactly once, in the return. */
   mintToken(
     userName: string,
-  ): Promise<{ token_id: string; hint: string; token: string }>;
+    label?: string | null,
+  ): Promise<{
+    token_id: string;
+    hint: string;
+    token: string;
+    label: string | null;
+  }>;
   listTokens(userName: string): Promise<AdminTokenRow[]>;
   revokeToken(tokenId: string): Promise<boolean>;
   /** Bearer token → user name; null for unknown, revoked, or disabled. */

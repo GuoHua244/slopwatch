@@ -963,6 +963,13 @@ ul.sessions li.selected {
 .admin-table tr.token-row td {
   background: var(--panel-2);
 }
+/* labeled token: clip a long label instead of wrapping the row apart */
+.admin-table .token-label {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .admin-table .select-trigger {
   padding: 4px 10px;
   font-size: 12px;
@@ -1565,9 +1572,64 @@ ul.sessions li.selected {
   min-height: 2px;
   border-radius: 2px 2px 0 0;
   background: var(--accent);
+  position: relative;
 }
 .bars .bar.unpriced {
   background: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+/* App-owned hover tooltips — the native title bubble is light-on-dark
+ * hostile, lags ~1s, and positions itself. These show the moment the cursor
+ * enters and sit where the content dictates. */
+.bar-tip,
+.tip {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  box-shadow: 0 14px 36px -14px rgba(0, 0, 0, 0.75);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.bar-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  gap: 1px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+  z-index: 40;
+}
+.bar:hover .bar-tip {
+  display: flex;
+}
+.bar-tip-day {
+  color: var(--faint);
+  font-size: 10px;
+}
+.bar-tip-cost {
+  color: var(--accent);
+  font-weight: 600;
+}
+.bar:hover.unpriced .bar-tip-cost {
+  color: var(--dim);
+  font-weight: 400;
+}
+.bar-tip-tokens {
+  color: var(--dim);
+}
+/* Table-cell variant (ClipTip): fixed against the viewport, portalled to
+ * <body>, so scrollable table wrappers can neither clip nor scroll it. */
+.tip {
+  position: fixed;
+  transform: translate(-50%, -100%);
+  font-size: 12px;
+  color: var(--text);
+  z-index: 100;
 }
 .developer h3 {
   font-size: 12px;

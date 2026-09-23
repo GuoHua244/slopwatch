@@ -139,12 +139,19 @@ export type AdminTeamRow = {
 export type AdminTokenRow = {
   token_id: string;
   hint: string;
+  /** Admin-given nickname; null when minted unlabeled. */
+  label: string | null;
   created_at: string;
   revoked_at: string | null;
 };
 
 /** Payload of POST /admin/users/:name/tokens — the plaintext shows once. */
-export type MintedToken = { token_id: string; hint: string; token: string };
+export type MintedToken = {
+  token_id: string;
+  hint: string;
+  token: string;
+  label: string | null;
+};
 
 /** Row of GET /admin/quarantine — one unparseable listener line, verbatim. */
 export type QuarantineRow = {

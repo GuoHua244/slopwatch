@@ -293,11 +293,30 @@ describe("dailyCostSeries", () => {
       day: localDay(-1),
       cost: 0.65,
       unpriced: false,
+      inputTokens: MEGA,
+      outputTokens: MEGA,
     });
     expect(series[4]).toEqual({
       day: localDay(0),
       cost: 0,
       unpriced: true,
+      inputTokens: MEGA,
+      outputTokens: MEGA,
     });
+  });
+
+  test("token counts accumulate per day even when the model is unpriced", () => {
+    const series = dailyCostSeries(
+      [
+        modelRow("alice", localHourBucket(-2, 8), PRICED, 2, 300, 120),
+        modelRow("alice", localHourBucket(-2, 20), UNPRICED, 1, 50, 30),
+      ],
+      4,
+      NOW,
+    );
+    const day = series[1]!; // days=4 spans offsets -3..0; the rows sit on offset -2
+    expect(day.inputTokens).toBe(350);
+    expect(day.outputTokens).toBe(150);
+    expect(day.unpriced).toBe(true);
   });
 });

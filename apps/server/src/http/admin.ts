@@ -19,6 +19,7 @@ import {
   UUID_RE,
   decodeParam,
   isRetention,
+  readJson,
   readJsonOr400,
   trimField,
   windowParam,
@@ -368,10 +369,15 @@ export const handleAdmin = async (
     if ((await store.getUser(name)) === null)
       return json(404, { error: "no such user" });
     if (req.method === "POST") {
-      const minted = await store.mintToken(name);
+      // The only field is optional, so a missing body mints unlabeled rather
+      // than 400ing — readJson, not readJsonOr400.
+      const body = await readJson(req);
+      const label = trimField(body?.label, 100);
+      const minted = await store.mintToken(name, label);
       await audit(adminActor, "token.mint", name, {
         token_id: minted.token_id,
         hint: minted.hint,
+        ...(label !== null ? { label } : {}),
       });
       return json(201, minted);
     }
@@ -390,6 +396,7 @@ export const handleAdmin = async (
       await audit(adminActor, "token.revoke", before?.user_name ?? id, {
         token_id: id,
         hint: before?.hint ?? null,
+        ...(before?.label ? { label: before.label } : {}),
         user: before?.user_name ?? null,
       });
       return json(200, { ok: true });

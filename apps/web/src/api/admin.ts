@@ -22,7 +22,7 @@ export type AdminApi = {
   setUserDri(name: string, isDri: boolean): Promise<void>;
   setUserRole(name: string, role: "admin" | "member"): Promise<void>;
   deleteUser(name: string): Promise<void>;
-  mintToken(name: string): Promise<MintedToken>;
+  mintToken(name: string, label?: string | null): Promise<MintedToken>;
   tokens(name: string): Promise<AdminTokenRow[]>;
   revokeToken(tokenId: string): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
@@ -118,10 +118,10 @@ export const createAdminApi = (
         auth({ method: "DELETE" }),
       );
     },
-    mintToken: async (name) =>
+    mintToken: async (name, label) =>
       unwrap<MintedToken>(
         `/admin/users/${encodeURIComponent(name)}/tokens`,
-        auth({ method: "POST" }),
+        authedJson("POST", { label: label ?? null }),
       ),
     tokens: async (name) =>
       (

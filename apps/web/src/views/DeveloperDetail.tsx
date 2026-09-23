@@ -92,19 +92,31 @@ export const DeveloperDetail = ({ userId }: { userId: string }) => {
             role="img"
             aria-label="daily spend, last 30 days"
           >
-            {series.slice(0, -1).map((d) => (
+            {series.map((d, i) => (
               <div
                 key={d.day}
                 className={`bar${d.unpriced ? " unpriced" : ""}`}
-                title={`${d.day} · ${d.unpriced ? "partly unpriced" : fmtCost(d.cost)}`}
                 style={{
                   height: maxDay > 0 ? `${(d.cost / maxDay) * 100}%` : "0",
                 }}
-              />
+              >
+                <span className="bar-tip" aria-hidden>
+                  <span className="bar-tip-day">
+                    {i === series.length - 1 ? `${d.day} · so far` : d.day}
+                  </span>
+                  <span className="bar-tip-cost">
+                    {d.unpriced ? "partly unpriced" : fmtCost(d.cost)}
+                  </span>
+                  <span className="bar-tip-tokens">
+                    in {fmtTokens(d.inputTokens)} · out{" "}
+                    {fmtTokens(d.outputTokens)}
+                  </span>
+                </span>
+              </div>
             ))}
           </div>
           <p className="dim">
-            {series[0]?.day} → {series[series.length - 2]?.day} · today{" "}
+            {series[0]?.day} → {series[series.length - 1]?.day} · today{" "}
             {row.todayCostUsd === null ? "—" : fmtCost(row.todayCostUsd)}
           </p>
         </>

@@ -232,16 +232,29 @@ describe("createAdminApi", () => {
     expect(calls[0]!.init?.method).toBe("DELETE");
   });
 
-  test("mintToken POSTs and returns the plaintext exactly once", async () => {
+  test("mintToken POSTs the label and returns the plaintext exactly once", async () => {
     const { api, calls } = recordingApi(201, {
       token_id: "tid-1",
       hint: "sw_71a0d6d",
       token: "sw_fullsecret",
+      label: "ci",
     });
-    const minted = await api.mintToken("bob");
+    const minted = await api.mintToken("bob", "ci");
     expect(calls[0]!.path).toBe("/admin/users/bob/tokens");
     expect(calls[0]!.init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]!.init?.body)).label).toBe("ci");
     expect(minted.token).toBe("sw_fullsecret");
+  });
+
+  test("mintToken without a label sends null", async () => {
+    const { api, calls } = recordingApi(201, {
+      token_id: "tid-1",
+      hint: "sw_71a0d6d",
+      token: "sw_fullsecret",
+      label: null,
+    });
+    await api.mintToken("bob");
+    expect(JSON.parse(String(calls[0]!.init?.body)).label).toBeNull();
   });
 
   test("tokens and health unwrap their payloads", async () => {
@@ -250,6 +263,7 @@ describe("createAdminApi", () => {
         {
           token_id: "tid-1",
           hint: "sw_71a0d6d",
+          label: null,
           created_at: "t",
           revoked_at: null,
         },

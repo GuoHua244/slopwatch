@@ -69,6 +69,9 @@ CREATE TABLE IF NOT EXISTS tokens (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   revoked_at TIMESTAMPTZ
 );
+-- Optional human label ("work laptop", "ci") telling a user's tokens apart;
+-- the hint only carries the value's first chars.
+ALTER TABLE tokens ADD COLUMN IF NOT EXISTS label TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_dri BOOLEAN NOT NULL DEFAULT FALSE;
 -- Role-based authorization: admins run the operator plane and read org-wide;
 -- everyone else reads only their own rows. Existing rows default to member.

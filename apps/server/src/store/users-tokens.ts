@@ -169,23 +169,29 @@ export const userMethods = (
       return (rowCount ?? 0) > 0;
     },
 
-    async mintToken(userName) {
+    async mintToken(userName, label) {
       const { token, hash, hint } = mintTokenValue();
       const { rows } = await pool.query(
-        "INSERT INTO tokens (token_id, token_hash, hint, user_name) VALUES ($1, $2, $3, $4) RETURNING token_id",
-        [crypto.randomUUID(), hash, hint, userName],
+        "INSERT INTO tokens (token_id, token_hash, hint, user_name, label) VALUES ($1, $2, $3, $4, $5) RETURNING token_id",
+        [crypto.randomUUID(), hash, hint, userName, label ?? null],
       );
-      return { token_id: rows[0]!.token_id as string, hint, token };
+      return {
+        token_id: rows[0]!.token_id as string,
+        hint,
+        token,
+        label: label ?? null,
+      };
     },
 
     async listTokens(userName) {
       const { rows } = await pool.query(
-        "SELECT token_id, hint, created_at, revoked_at FROM tokens WHERE user_name = $1 ORDER BY created_at ASC",
+        "SELECT token_id, hint, label, created_at, revoked_at FROM tokens WHERE user_name = $1 ORDER BY created_at ASC",
         [userName],
       );
       return rows.map((r) => ({
         token_id: r.token_id as string,
         hint: r.hint as string,
+        label: (r.label as string | null) ?? null,
         created_at: iso(r.created_at),
         revoked_at: r.revoked_at ? iso(r.revoked_at) : null,
       }));
@@ -267,13 +273,14 @@ export const userMethods = (
 
     async getToken(tokenId) {
       const { rows } = await pool.query(
-        "SELECT token_id, hint, user_name, created_at, revoked_at FROM tokens WHERE token_id = $1",
+        "SELECT token_id, hint, label, user_name, created_at, revoked_at FROM tokens WHERE token_id = $1",
         [tokenId],
       );
       return rows[0]
         ? {
             token_id: rows[0]!.token_id as string,
             hint: rows[0]!.hint as string,
+            label: (rows[0]!.label as string | null) ?? null,
             user_name: rows[0]!.user_name as string,
             created_at: iso(rows[0]!.created_at),
             revoked_at: rows[0]!.revoked_at ? iso(rows[0]!.revoked_at) : null,

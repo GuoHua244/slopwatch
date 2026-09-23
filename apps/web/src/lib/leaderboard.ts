@@ -94,19 +94,42 @@ const hourlyTrend = (rows: ModelRollupRow[], now: Date): number[] => {
   });
 };
 
-/** Priced spend + request count + unpriced flag per LOCAL day, from UTC-hour rollup rows. */
+/** Priced spend + request/token counts + unpriced flag per LOCAL day, from UTC-hour rollup rows. */
 const localDaySpend = (
   rows: ModelRollupRow[],
-): Map<string, { cost: number; unpriced: boolean; requests: number }> => {
+): Map<
+  string,
+  {
+    cost: number;
+    unpriced: boolean;
+    requests: number;
+    inputTokens: number;
+    outputTokens: number;
+  }
+> => {
   const byDay = new Map<
     string,
-    { cost: number; unpriced: boolean; requests: number }
+    {
+      cost: number;
+      unpriced: boolean;
+      requests: number;
+      inputTokens: number;
+      outputTokens: number;
+    }
   >();
   for (const row of rows) {
     const price = priceFor(row.model);
     const day = localDayOfHourBucket(row.bucket);
-    const entry = byDay.get(day) ?? { cost: 0, unpriced: false, requests: 0 };
+    const entry = byDay.get(day) ?? {
+      cost: 0,
+      unpriced: false,
+      requests: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    };
     entry.requests += row.model_requests;
+    entry.inputTokens += row.input_tokens;
+    entry.outputTokens += row.output_tokens;
     if (price === null) entry.unpriced = true;
     else entry.cost += estimateCost(rowUsage(row), price);
     byDay.set(day, entry);
@@ -125,7 +148,13 @@ export const dailyCostSeries = (
   rows: ModelRollupRow[],
   days: number,
   now = new Date(),
-): { day: string; cost: number; unpriced: boolean }[] => {
+): {
+  day: string;
+  cost: number;
+  unpriced: boolean;
+  inputTokens: number;
+  outputTokens: number;
+}[] => {
   const byDay = localDaySpend(rows);
   return Array.from({ length: days }, (_, i) => {
     const day = localDayKey(
@@ -140,6 +169,8 @@ export const dailyCostSeries = (
       day,
       cost: entry?.cost ?? 0,
       unpriced: entry?.unpriced ?? false,
+      inputTokens: entry?.inputTokens ?? 0,
+      outputTokens: entry?.outputTokens ?? 0,
     };
   });
 };

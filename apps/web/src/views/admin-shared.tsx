@@ -1,4 +1,6 @@
+import { useState } from "react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { errorMessage } from "../lib/format";
 
 /**
@@ -26,6 +28,51 @@ export const useAsyncAction = (
 /** The standard red banner; null renders nothing. */
 export const ErrorBanner = ({ message }: { message: string | null }) =>
   message === null ? null : <p className="banner-error">{message}</p>;
+
+type ClipTipProps = {
+  /** The full text to reveal; null/undefined renders the children with no tooltip. */
+  label: string | null | undefined;
+  className?: string;
+  children: ReactNode;
+};
+
+/**
+ * The truncated-cell hover tooltip: the native title bubble is light-on-dark
+ * hostile, lags about a second, and positions itself. This one is themed,
+ * shows the moment the cursor enters, and always sits above the cell —
+ * portalled to <body> so scrollable table wrappers cannot clip it.
+ */
+export const ClipTip = ({ label, className, children }: ClipTipProps) => {
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  return (
+    <span
+      className={className}
+      onMouseEnter={(e) => setRect(e.currentTarget.getBoundingClientRect())}
+      onMouseLeave={() => setRect(null)}
+    >
+      {children}
+      {rect !== null &&
+        label !== null &&
+        label !== undefined &&
+        createPortal(
+          <span
+            className="tip"
+            style={{
+              /* Keep the bubble on-screen even for edge cells. */
+              left: Math.min(
+                Math.max(rect.left + rect.width / 2, 110),
+                window.innerWidth - 110,
+              ),
+              top: rect.top - 6,
+            }}
+          >
+            {label}
+          </span>,
+          document.body,
+        )}
+    </span>
+  );
+};
 
 type ConfirmButtonProps = {
   className?: string;
