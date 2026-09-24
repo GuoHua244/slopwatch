@@ -110,6 +110,22 @@ const scriptedStore = (): Store & { calls: string[] } => {
       calls.push("teamsWithMembers");
       return [];
     },
+    createRetro: async () => {
+      throw new Error("not scripted");
+    },
+    getRetro: async () => null,
+    listRetros: async () => [],
+    setRetroRunning: async () => {},
+    setRetroCompleted: async () => {},
+    setRetroFailed: async () => {},
+    failStaleRetros: async () => 0,
+    hasOpenRetroFor: async () => false,
+    allEvents: async () => [],
+    rawForEvents: async () => [],
+    childRollups: async () => [],
+    getLlmConfig: async () => null,
+    setLlmConfig: async () => {},
+    clearLlmConfig: async () => {},
     close: async () => {},
   };
   store = base as Store;

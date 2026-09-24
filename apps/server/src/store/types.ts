@@ -167,6 +167,61 @@ export type UserHourlyRollupRow = {
   tool_calls: number;
 };
 
+/**
+ * A user's own LLM credentials for server-side retrospectives (ADR 0008).
+ * The api key rides only inside the server: reads return masked hints.
+ */
+export type LlmConfig = { endpoint: string; model: string; apiKey: string };
+
+/** What a subagent session contributes to its parent's retrospective input. */
+export type ChildSessionRollup = {
+  session_id: string;
+  agent: string;
+  title: string | null;
+  task_preview: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  turns: number;
+  model_requests: number;
+  tool_calls: number;
+  tool_errors: number;
+  /** Tool-name histogram, call counts descending. */
+  tools: { tool: string; calls: number }[];
+  /** The child's first captured user message (truncated at capture). */
+  first_user_message: string | null;
+  /** Direct children of this child (nested subagents). */
+  sub_sessions: number;
+};
+
+/**
+ * One retrospective run (ADR 0008): the resolved prompt snapshots, the run
+ * state, and the outcome. `status` is the in-process queue's durable state.
+ */
+export type RetroRow = {
+  id: number;
+  session_id: string;
+  /** The triggering user — the run bills to their LLM credentials. */
+  user_id: string;
+  /** Preset angle id or "custom". */
+  angle: string;
+  supplement: string | null;
+  system_snapshot: string;
+  prompt_snapshot: string;
+  status: "pending" | "running" | "completed" | "failed";
+  result: string | null;
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  reasoning_tokens: number | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
 /** Per-model request/token counts over a UTC day or hour bucket (decision 18). */
 export type ModelRollupRow = {
   user_id: string;
@@ -377,5 +432,54 @@ export type Store = {
   getToken(
     tokenId: string,
   ): Promise<(AdminTokenRow & { user_name: string }) | null>;
+  /** ADR 0008: the retrospective plane. */
+  createRetro(row: {
+    sessionId: string;
+    userId: string;
+    angle: string;
+    supplement: string | null;
+    systemSnapshot: string;
+    promptSnapshot: string;
+  }): Promise<RetroRow>;
+  /** One retrospective run by id, snapshots included. */
+  getRetro(id: number): Promise<RetroRow | null>;
+  /** A session's runs, newest first; the bulky snapshots stay out. */
+  listRetros(sessionId: string): Promise<RetroRow[]>;
+  setRetroRunning(id: number): Promise<void>;
+  setRetroCompleted(
+    id: number,
+    patch: {
+      result: string;
+      model: string;
+      usage?: {
+        inputTokens?: number;
+        outputTokens?: number;
+        cacheReadTokens?: number;
+        reasoningTokens?: number;
+      };
+    },
+  ): Promise<void>;
+  setRetroFailed(id: number, error: string): Promise<void>;
+  /** Boot reconcile: rows the dying process left open become failed runs. */
+  failStaleRetros(): Promise<number>;
+  /** The per-user single-flight check: any pending/running run for the user. */
+  hasOpenRetroFor(userId: string): Promise<boolean>;
+  /**
+   * Every event of a session in seq order — the retrospective's raw
+   * material. Unlike eventsSince there is no page cap: the transcript
+   * builder applies the budget instead.
+   */
+  allEvents(sessionId: string): Promise<StoredEvent[]>;
+  /** The retained raw records for specific event seqs (missing ones dropped). */
+  rawForEvents(
+    sessionId: string,
+    seqs: number[],
+  ): Promise<{ event_seq: number; raw: unknown }[]>;
+  /** Direct subagent sessions of one session, rollup form (ADR 0008). */
+  childRollups(sessionId: string): Promise<ChildSessionRollup[]>;
+  /** ADR 0008: the per-user LLM credential plane. */
+  getLlmConfig(name: string): Promise<LlmConfig | null>;
+  setLlmConfig(name: string, config: LlmConfig): Promise<void>;
+  clearLlmConfig(name: string): Promise<void>;
   close(): Promise<void>;
 };

@@ -1315,6 +1315,14 @@ ul.sessions li.selected {
   border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
   background: var(--accent-wash);
 }
+.settings-status.live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-right: 6px;
+}
 .settings-status.off {
   color: var(--faint);
 }
@@ -1987,4 +1995,293 @@ ul.sessions li.selected {
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+
+/* --- retrospectives (ADR 0008) --- */
+
+/* the trigger bar: angle select, optional supplement, estimate at a glance */
+.retro-trigger .card-head {
+  align-items: baseline;
+}
+.retro-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 12px;
+  margin-top: 12px;
+}
+.retro-form .select-trigger {
+  min-width: 200px;
+  background: var(--panel-2);
+}
+.retro-supplement {
+  flex: 1;
+  min-width: 260px;
+  resize: none;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: 12.5px/1.5 var(--font-ui);
+  padding: 8px 11px;
+}
+.retro-supplement::placeholder {
+  color: var(--faint);
+}
+.retro-supplement:focus {
+  outline: none;
+  border-color: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent-wash);
+}
+.retro-form .primary {
+  align-self: stretch;
+}
+
+/* the run history: one collapse card per run */
+.retro-runs {
+  margin-top: 16px;
+}
+.retro-runs-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.retro-run {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.retro-run.failed {
+  border-color: color-mix(in srgb, var(--down) 30%, var(--line-soft));
+}
+.retro-run-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 12px 16px;
+  cursor: pointer;
+  font: inherit;
+}
+.retro-run-head:hover {
+  background: color-mix(in srgb, var(--panel-2) 60%, transparent);
+}
+.retro-run-title {
+  font-weight: 600;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.retro-run-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+.retro-run-body {
+  border-top: 1px solid var(--line-soft);
+  padding: 14px 18px 16px;
+}
+.retro-run-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 11.5px;
+  margin: 0 0 12px;
+}
+.retro-run-facts > * + *::before {
+  content: "·";
+  margin-right: 12px;
+  color: var(--faint);
+}
+.retro-run-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+.retro-run-error .banner-error {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* the report itself — markdown rendered inside the dark panel */
+.retro-report {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.retro-report h1 {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+  margin: 2px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.retro-report h2 {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0.2px;
+  margin: 18px 0 8px;
+}
+.retro-report h3 {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--dim);
+  margin: 14px 0 6px;
+}
+.retro-report p {
+  margin: 6px 0;
+}
+.retro-report ul,
+.retro-report ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+.retro-report li {
+  margin: 3px 0;
+}
+.retro-report strong {
+  color: var(--text);
+  font-weight: 650;
+}
+.retro-report blockquote {
+  margin: 8px 0;
+  padding: 6px 14px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: color-mix(in srgb, var(--panel-2) 75%, transparent);
+  color: var(--dim);
+}
+.retro-report code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.retro-report pre {
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.retro-report pre code {
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+.retro-report table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12.5px;
+}
+.retro-report th,
+.retro-report td {
+  border: 1px solid color-mix(in srgb, var(--line) 55%, var(--line-soft));
+  padding: 5px 10px;
+  text-align: left;
+}
+.retro-report th {
+  background: var(--panel-2);
+  color: var(--dim);
+  font-weight: 600;
+}
+.retro-report hr {
+  border: none;
+  border-top: 1px solid var(--line-soft);
+  margin: 14px 0;
+}
+
+.llm-form {
+  grid-template-columns: 1fr 1fr;
+}
+
+/* admin: the angle editor */
+.retro-angles {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.retro-angle {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel-2) 55%, transparent);
+  padding: 10px 14px;
+}
+.retro-angle summary {
+  display: grid;
+  grid-template-columns: 150px 1fr 12px;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+}
+.retro-angle summary::-webkit-details-marker {
+  display: none;
+}
+.retro-angle summary::after {
+  content: "▾";
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11px;
+}
+.retro-angle[open] summary::after {
+  content: "▴";
+}
+.retro-angle .field {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.retro-angle .field > span {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--faint);
+}
+.retro-angle input,
+.retro-angle textarea {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: 12.5px/1.55 var(--font-ui);
+  padding: 7px 10px;
+}
+.retro-angle textarea {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  resize: none;
+}
+.retro-angle input:focus,
+.retro-angle textarea:focus {
+  outline: none;
+  border-color: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent-wash);
+}
+.retro-angle-title {
+  font-weight: 600;
 }

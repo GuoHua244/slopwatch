@@ -56,6 +56,14 @@ _Avoid_: message, payload, wire format, record.
 Whoever minted a bearer token: the **Server** (admin-minted, stored hashed in `tokens`) or the org's OIDC IdP (verified against its published JWKS, ADR 0005). The token's wire shape is the same either way — a Listener can never tell which Issuer stood behind it.
 _Avoid_: SSO, identity provider without naming which Issuer.
 
+**Summary**:
+A rolling digest of a **Session**'s progress so far, generated on the observed machine with the developer's own LLM key and shipped as an **Event** — a reading aid for someone joining mid-run, never evidence of what happened.
+_Avoid_: recap, digest, abstract. (Not a **Retrospective**.)
+
+**Retrospective**:
+An LLM-generated process analysis of a **Session**, produced by the **Server** from that Session's captured **Events** — turns, tool calls, model requests, Subagent activity. The LLM call is made with the triggering **User**'s own LLM credentials (configured per user; a User who has not configured credentials sees no Retrospective affordance), so its token cost belongs to the User who triggered it. Its aim is to critique how the work was done (efficiency, token spend, approach, process) and suggest improvements, not to restate what happened: a **Summary** compresses the work for reading, a **Retrospective** critiques the work for improvement. Like a Summary it is generated text, never captured evidence.
+_Avoid_: review (that is the DRI's human evaluation), analysis, insight, postmortem, 复盘→use Retrospective in code.
+
 **Audit log**:
 The append-only record of every mutation to the Server's own data — Users, Teams, tokens, settings, Sessions, review markers, and notes — capturing who acted (a User, the operator bypass, or the system), when, on what target, and the before/after change; hard deletes carry a snapshot of what vanished (ADR 0007). Written by the Server at the moment each mutation succeeds; read through the admin plane.
 _Avoid_: activity log, operation log, history (collides with captured Events), changelog.
@@ -71,6 +79,7 @@ _Avoid_: activity log, operation log, history (collides with captured Events), c
 - A **Listener** produces **Sessions**, **Turns**, and **Model requests** for exactly one **Coding agent**; it runs either as a subprocess (Claude Code, Codex, Copilot, ZCode) or as an in-process extension (Pi, OpenCode).
 - Many **Listeners** POST to one **Server**; the **Server** is the only component that talks to Postgres.
 - **Listeners** and the **Server** communicate by exchanging **Events** defined in `@slopwatch/events`.
+- A **Summary** is produced by a **Listener** and arrives as an **Event**; a **Retrospective** is produced by the **Server** from already-stored **Events** and never enters the Event stream. Both are generated text, never evidence.
 
 ## Example dialogue
 

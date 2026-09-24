@@ -14,6 +14,15 @@ import {
   trimField,
   windowParam,
 } from "./http/validate";
+import {
+  CUSTOM_ANGLE_ID,
+  DEFAULT_ANGLES,
+  RETRO_ANGLES_SETTING_KEY,
+  RETRO_SYSTEM_CORE,
+  effectiveRetroAngles,
+} from "./retrospective/presets";
+import type { RetroQueue } from "./retrospective/queue";
+import { buildTranscript, failureRawSeqs } from "./retrospective/transcript";
 import type { Store } from "./store";
 import { pushSessionEnds } from "./webhook";
 import type { OidcVerifier } from "./oidc";
@@ -52,6 +61,12 @@ export type AppOptions = {
    * tokens only.
    */
   oidc?: OidcVerifier;
+  /**
+   * ADR 0008: the in-process retrospective runner. Present, POST
+   * /sessions/:id/retrospectives schedules runs on it; absent (tests),
+   * triggers answer 503.
+   */
+  retrospectives?: RetroQueue;
 };
 
 /** Everything a route handler needs beyond the request itself. */
@@ -63,7 +78,11 @@ type RouteContext = {
   defaultRawTtlDays: number;
   auth: Auth;
   audit: Audit;
+  retrospectives?: RetroQueue;
 };
+
+/** Masked form of a stored LLM api key — the only shape any read returns. */
+export const maskKey = (key: string): string => `••••${key.slice(-4)}`;
 
 /**
  * Route one request. Auth/400 guards throw prebuilt HttpError responses; the
@@ -80,6 +99,7 @@ const route = async (
     defaultRawTtlDays,
     auth,
     audit,
+    retrospectives,
   }: RouteContext,
 ): Promise<Response> => {
   if (url.pathname === "/healthz") return json(200, { ok: true });
@@ -194,6 +214,145 @@ const route = async (
     );
   }
 
+  // --- Retrospectives (ADR 0008): visibility follows the session read
+  // scope — whoever can read a session's events can trigger and read its
+  // retrospectives. Runs bill to the triggering user's own LLM credentials;
+  // a user without credentials gets 409 with the fix, not a silent 403. ---
+  const retroAnglesMatch = url.pathname.match(/^\/retrospectives\/angles$/);
+  if (retroAnglesMatch && req.method === "GET") {
+    await auth.requireReader(req);
+    const angles = effectiveRetroAngles(
+      await store.getSetting(RETRO_ANGLES_SETTING_KEY),
+    ).map(({ id, title }) => ({ id, title }));
+    return json(200, {
+      angles: [
+        ...angles,
+        { id: CUSTOM_ANGLE_ID, title: "自由复盘（自定义指令）" },
+      ],
+    });
+  }
+
+  const retrosMatch = url.pathname.match(
+    /^\/sessions\/([^/]+)\/retrospectives$/,
+  );
+  if (retrosMatch) {
+    const sessionId = decodeParam(retrosMatch[1]!);
+    if (sessionId === null) return json(400, { error: "malformed session id" });
+    if (req.method === "GET") {
+      const reader = await auth.requireReader(req);
+      if (reader.role !== "admin") {
+        const owner = await store.sessionOwner(sessionId);
+        if (owner !== reader.user)
+          return json(404, { error: "no such session" });
+      } else if ((await store.getSession(sessionId)) === null) {
+        return json(404, { error: "no such session" });
+      }
+      return json(200, {
+        retrospectives: await store.listRetros(sessionId),
+      });
+    }
+    if (req.method === "POST") {
+      const reader = await auth.requireReader(req);
+      if (reader.role !== "admin") {
+        const owner = await store.sessionOwner(sessionId);
+        if (owner !== reader.user)
+          return json(404, { error: "no such session" });
+      }
+      const session = await store.getSession(sessionId);
+      if (session === null) return json(404, { error: "no such session" });
+      const body = await readJsonOr400(req);
+      const angle = trimField(body.angle, 40);
+      const supplement = trimField(body.supplement, 4000);
+      if (angle === null)
+        return json(400, { error: "angle must be a non-empty string" });
+      const preset =
+        angle === CUSTOM_ANGLE_ID
+          ? null
+          : effectiveRetroAngles(
+              await store.getSetting(RETRO_ANGLES_SETTING_KEY),
+            ).find((a) => a.id === angle);
+      if (preset === undefined)
+        return json(400, { error: `unknown retrospective angle "${angle}"` });
+      if (preset === null && supplement === null)
+        return json(400, {
+          error:
+            "a custom retrospective needs its instruction text in `supplement`",
+        });
+      const credentials = await store.getLlmConfig(reader.user);
+      if (credentials === null)
+        return json(409, {
+          error:
+            "retrospectives run on your own LLM credentials — configure endpoint, model, and API key on your profile page first",
+        });
+      if (await store.hasOpenRetroFor(reader.user))
+        return json(409, {
+          error:
+            "you already have a retrospective queued or running — one at a time per user",
+        });
+      if (retrospectives === undefined)
+        return json(503, { error: "the retrospective runner is unavailable" });
+      // The whole input is built (and snapshotted) at trigger time: what the
+      // triggerer saw is what the run analyzes, forever reproducible.
+      const events = await store.allEvents(sessionId);
+      const children = await store.childRollups(sessionId);
+      const rawBySeq = new Map(
+        (await store.rawForEvents(sessionId, failureRawSeqs(events))).map(
+          (r) => [r.event_seq, r.raw],
+        ),
+      );
+      const transcript = buildTranscript({
+        session,
+        events,
+        children,
+        rawBySeq,
+      });
+      const system =
+        preset === null
+          ? `${RETRO_SYSTEM_CORE}\n\n【本角度使命】本次复盘没有预设角度——以下是触发者自定义的复盘指令，请以其为准，但证据纪律与输出要求仍然全部适用：\n\n${supplement}`
+          : `${RETRO_SYSTEM_CORE}\n\n${preset.prompt}`;
+      const user =
+        transcript.text +
+        (preset !== null && supplement !== null
+          ? `\n\n# 补充关注点（触发者附言，优先核查）\n${supplement}`
+          : "");
+      const retro = await store.createRetro({
+        sessionId,
+        userId: reader.user,
+        angle,
+        supplement,
+        systemSnapshot: system,
+        promptSnapshot: user,
+      });
+      await audit(
+        { kind: "user", user: reader.user },
+        "retrospective.trigger",
+        sessionId,
+        {
+          retro_id: retro.id,
+          angle,
+          supplement_chars: supplement?.length ?? 0,
+          estimated_input_tokens: transcript.estimatedTokens,
+          compacted_turns: transcript.compactedTurns,
+          raw_enriched_turns: transcript.enrichedTurns,
+        },
+      );
+      retrospectives.enqueue(retro.id);
+      return json(201, {
+        retro: {
+          ...retro,
+          system_snapshot: undefined,
+          prompt_snapshot: undefined,
+        },
+        estimate: {
+          input_tokens: transcript.estimatedTokens,
+          budget_tokens: transcript.budgetTokens,
+          compacted_turns: transcript.compactedTurns,
+          raw_enriched_turns: transcript.enrichedTurns,
+        },
+      });
+    }
+  }
+
   if (url.pathname === "/sessions" && req.method === "GET") {
     const reader = await auth.requireReader(req);
     // Team-scoped DRI filter: membership resolves through the owner's
@@ -262,6 +421,9 @@ const route = async (
       );
     }
     const row = await store.getUser(reader.user);
+    // ADR 0008: the profile page needs to know whether retrospectives are
+    // available to this user — credentials come back masked, never plain.
+    const credentials = await store.getLlmConfig(reader.user);
     return json(200, {
       user: reader.user,
       role: reader.role,
@@ -269,8 +431,77 @@ const route = async (
       team_name: row?.team_name ?? null,
       is_dri: row?.is_dri ?? false,
       created_at: row?.created_at ?? null,
+      llm:
+        credentials === null
+          ? null
+          : {
+              endpoint: credentials.endpoint,
+              model: credentials.model,
+              api_key_hint: maskKey(credentials.apiKey),
+            },
       usage: await store.ownUsage(reader.user),
     });
+  }
+
+  // ADR 0008: each user's own LLM credentials. The api key is write-only —
+  // a blank field on update keeps the stored one, and no read ever returns it.
+  if (url.pathname === "/me/llm" && req.method === "PUT") {
+    const reader = await auth.requireReader(req);
+    const body = await readJsonOr400(req);
+    const endpoint = trimField(body.endpoint, 500);
+    if (endpoint === null)
+      return json(400, { error: "endpoint must be a non-empty string" });
+    try {
+      const parsed = new URL(endpoint);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+        return json(400, { error: "endpoint must be an http(s) URL" });
+    } catch {
+      return json(400, { error: "endpoint must be a valid URL" });
+    }
+    const model = trimField(body.model, 200);
+    if (model === null)
+      return json(400, { error: "model must be a non-empty string" });
+    const rawKey = body.api_key;
+    const apiKey =
+      rawKey === undefined || rawKey === null || String(rawKey).trim() === ""
+        ? null
+        : trimField(String(rawKey), 2000);
+    const existing = await store.getLlmConfig(reader.user);
+    if (apiKey === null && existing === null)
+      return json(400, {
+        error: "api_key is required the first time you configure LLM access",
+      });
+    const before = existing;
+    await store.setLlmConfig(reader.user, {
+      endpoint,
+      model,
+      apiKey: apiKey ?? existing!.apiKey,
+    });
+    await audit(
+      { kind: "user", user: reader.user },
+      "llm.update",
+      reader.user,
+      {
+        endpoint,
+        model,
+        key_changed: apiKey !== null,
+        first_configuration: before === null,
+      },
+    );
+    return json(200, {
+      llm: {
+        endpoint,
+        model,
+        api_key_hint: maskKey(apiKey ?? existing!.apiKey),
+      },
+    });
+  }
+
+  if (url.pathname === "/me/llm" && req.method === "DELETE") {
+    const reader = await auth.requireReader(req);
+    await store.clearLlmConfig(reader.user);
+    await audit({ kind: "user", user: reader.user }, "llm.clear", reader.user);
+    return new Response(null, { status: 204 });
   }
 
   // --- Review plane (decision 10): reads are org-wide for token holders;
@@ -392,6 +623,7 @@ export const createApp = ({
   defaultRawTtlDays = 90,
   archive,
   oidc,
+  retrospectives,
 }: AppOptions): App => ({
   async fetch(req) {
     const url = new URL(req.url);
@@ -406,6 +638,7 @@ export const createApp = ({
         defaultRawTtlDays,
         auth,
         audit,
+        retrospectives,
       });
     } catch (e) {
       // Guards throw prebuilt responses for the auth/400 prologues; anything

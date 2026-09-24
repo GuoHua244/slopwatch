@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@slopwatch/events": "workspace:*",
+    "@slopwatch/summary": "workspace:*",
     "pg": "^8.16.0"
   },
   "devDependencies": {

@@ -3,12 +3,14 @@ import type { TokenUsage } from "@slopwatch/events";
 import type { CommentRow } from "../api";
 import type { SessionSummary } from "../api";
 import { useEventStream } from "../hooks/useEventStream";
+import { useRetrospectives } from "../hooks/useRetrospectives";
 import { useReview } from "../hooks/useReview";
 import { sessionTotals } from "../lib/aggregate";
 import { clock, fmtTokens } from "../lib/format";
 import { buildTimeline, isEnded } from "../lib/timeline";
 import { ConfirmButton, useAsyncAction } from "./admin-shared";
 import { RawEventsView } from "./RawEventsView";
+import { RetrospectivesView } from "./RetrospectivesView";
 import { TurnsView } from "./TurnsView";
 import { UsageView } from "./UsageView";
 
@@ -31,7 +33,7 @@ const summaryUsageNote = (usage: TokenUsage): string => {
   return parts.length > 0 ? ` · summary cost: ${parts.join(" · ")}` : "";
 };
 
-type Tab = "turns" | "raw";
+type Tab = "turns" | "raw" | "retros";
 
 /** One review note line: who, where it points, what they said. */
 const CommentLine = ({
@@ -71,6 +73,7 @@ const CommentLine = ({
 export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
   const stream = useEventStream(summary.session_id);
   const review = useReview(summary.session_id);
+  const retro = useRetrospectives(summary.session_id);
   const [tab, setTab] = useState<Tab>("turns");
   const [note, setNote] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
@@ -251,6 +254,14 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
           Raw events
           <span className="seg-count">{stream.events.length}</span>
         </button>
+        <button
+          type="button"
+          className={tab === "retros" ? "active" : ""}
+          onClick={() => setTab("retros")}
+        >
+          Retrospectives
+          <span className="seg-count">{retro.retros.length}</span>
+        </button>
       </nav>
       {tab === "turns" ? (
         <TurnsView
@@ -268,8 +279,15 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
           }
           onDeleteComment={deleteNote}
         />
-      ) : (
+      ) : tab === "raw" ? (
         <RawEventsView events={stream.events} />
+      ) : (
+        <RetrospectivesView
+          sessionId={summary.session_id}
+          retro={retro}
+          me={review.me}
+          events={stream.events}
+        />
       )}
       <section className="review-notes">
         <h3>Review notes</h3>

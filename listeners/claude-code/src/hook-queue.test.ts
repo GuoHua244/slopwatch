@@ -57,5 +57,7 @@ describe("claude-code hook queues an undeliverable session:end", () => {
       );
     expect(ends.length).toBe(1);
     expect(ends[0]!.session_id).toBe(sessionId);
-  }, 15_000);
+    // the hook spawns bun (seconds on Windows) and its POST waits out a 3s
+    // timeout — 15s flaked whenever the full monorepo suite ran in parallel
+  }, 60_000);
 });

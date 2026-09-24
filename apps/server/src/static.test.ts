@@ -133,6 +133,22 @@ const refusingStore = (): Store => ({
   teamsWithMembers: () => {
     throw new Error("store must not be touched");
   },
+  createRetro: async () => {
+    throw new Error("store must not be touched");
+  },
+  getRetro: async () => null,
+  listRetros: async () => [],
+  setRetroRunning: async () => {},
+  setRetroCompleted: async () => {},
+  setRetroFailed: async () => {},
+  failStaleRetros: async () => 0,
+  hasOpenRetroFor: async () => false,
+  allEvents: async () => [],
+  rawForEvents: async () => [],
+  childRollups: async () => [],
+  getLlmConfig: async () => null,
+  setLlmConfig: async () => {},
+  clearLlmConfig: async () => {},
   close: async () => {},
 });
 

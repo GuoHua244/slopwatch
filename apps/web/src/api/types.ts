@@ -59,7 +59,45 @@ export type MeInfo = {
   team_name: string | null;
   is_dri: boolean;
   created_at: string | null;
+  /**
+   * ADR 0008: the user's own LLM credentials for retrospectives — masked
+   * (the api key only ever comes back as a `••••` hint), null when unset.
+   */
+  llm: { endpoint: string; model: string; api_key_hint: string } | null;
   usage: MeUsage;
+};
+
+/** One retrospective run of GET /sessions/:id/retrospectives (ADR 0008). */
+export type RetroRow = {
+  id: number;
+  session_id: string;
+  /** The triggering user — the run billed to their LLM credentials. */
+  user_id: string;
+  /** Preset angle id or "custom". */
+  angle: string;
+  supplement: string | null;
+  status: "pending" | "running" | "completed" | "failed";
+  result: string | null;
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  reasoning_tokens: number | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+/** One selectable retrospective angle of GET /retrospectives/angles. */
+export type RetroAngleInfo = { id: string; title: string };
+
+/** POST /sessions/:id/retrospectives' picture of what the run will cost. */
+export type RetroEstimate = {
+  input_tokens: number;
+  budget_tokens: number;
+  compacted_turns: number;
+  raw_enriched_turns: number;
 };
 
 /** Row of GET /rollups — per-day turn/tool counts for one user. */

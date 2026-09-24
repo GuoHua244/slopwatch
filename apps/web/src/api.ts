@@ -10,3 +10,4 @@ export * from "./api/http";
 export * from "./api/read";
 export * from "./api/review";
 export * from "./api/admin";
+export * from "./api/retro";

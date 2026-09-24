@@ -10,6 +10,140 @@ type Props = {
   refresh: () => void;
 };
 
+type AngleDraft = { id: string; title: string; prompt: string };
+
+/**
+ * The org's retrospective angle texts (ADR 0008) as one editable JSON
+ * setting: seeded defaults shipped with the server, editable here, reset
+ * to the defaults by clearing the stored override.
+ */
+const RetroAnglesCard = ({
+  api,
+  refresh,
+  stored,
+}: {
+  api: AdminApi;
+  refresh: () => void;
+  stored: string;
+}) => {
+  const parsed: AngleDraft[] | null = (() => {
+    try {
+      const list = JSON.parse(stored) as AngleDraft[];
+      return Array.isArray(list) &&
+        list.every(
+          (a) =>
+            typeof a?.id === "string" &&
+            typeof a?.title === "string" &&
+            typeof a?.prompt === "string",
+        )
+        ? list
+        : null;
+    } catch {
+      return null;
+    }
+  })();
+  const [drafts, setDrafts] = useState<AngleDraft[] | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const run = useAsyncAction((message) => {
+    setFormError(message);
+    if (message === null) setNotice(null);
+  }, refresh);
+
+  if (parsed === null)
+    return (
+      <p className="dim">
+        The stored retrospective angles are not valid JSON — reset them to the
+        shipped defaults below.
+      </p>
+    );
+  const current = drafts ?? parsed;
+
+  const save = () => {
+    if (current.some((a) => !a.title.trim() || !a.prompt.trim())) {
+      setFormError("Every angle needs a title and a non-empty prompt.");
+      return;
+    }
+    void run(async () => {
+      await api.updateSettings({
+        retro_angles: JSON.stringify(
+          current.map((a) => ({
+            ...a,
+            title: a.title.trim(),
+            prompt: a.prompt.trim(),
+          })),
+        ),
+      });
+      setDrafts(null);
+      setNotice("Retrospective angles saved — new runs use them immediately.");
+    });
+  };
+
+  const reset = () =>
+    void run(async () => {
+      await api.updateSettings({ retro_angles: "" });
+      setDrafts(null);
+      setNotice("Angles reset to the shipped defaults.");
+    });
+
+  return (
+    <>
+      <p className="card-lede">
+        The preset angles every user can run a session retrospective with.
+        Prompts decide the quality of the analysis — edit with intent; more
+        specific instruction reads better than more general.
+      </p>
+      <div className="retro-angles">
+        {current.map((angle, i) => (
+          <details key={angle.id} className="retro-angle" open={i === 0}>
+            <summary>
+              <span className="mono">{angle.id}</span>
+              <span className="retro-angle-title">{angle.title}</span>
+            </summary>
+            <label className="field">
+              <span>Title</span>
+              <input
+                value={angle.title}
+                onChange={(e) =>
+                  setDrafts(
+                    current.map((a, j) =>
+                      j === i ? { ...a, title: e.target.value } : a,
+                    ),
+                  )
+                }
+              />
+            </label>
+            <label className="field">
+              <span>Prompt</span>
+              <textarea
+                rows={8}
+                value={angle.prompt}
+                onChange={(e) =>
+                  setDrafts(
+                    current.map((a, j) =>
+                      j === i ? { ...a, prompt: e.target.value } : a,
+                    ),
+                  )
+                }
+              />
+            </label>
+          </details>
+        ))}
+      </div>
+      <div className="field actions" style={{ marginTop: 12 }}>
+        <button className="primary" type="button" onClick={save}>
+          Save angles
+        </button>
+        <button type="button" onClick={reset}>
+          Reset to defaults
+        </button>
+      </div>
+      {formError && <p className="banner-error">{formError}</p>}
+      {notice && <p className="dim">{notice}</p>}
+    </>
+  );
+};
+
 /**
  * Operator settings (v2 decision 25, broadened), written for the lead who
  * just wants the outcome: "my team chat hears about finished sessions" and
@@ -90,7 +224,7 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
     <>
       <h2 className="page-title">Settings</h2>
       <p className="page-sub">
-        Two org-wide behaviors. Everything applies immediately on save.
+        Org-wide behaviors. Everything applies immediately on save.
       </p>
       <ErrorBanner message={error?.message ?? null} />
 
@@ -195,6 +329,17 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
               </button>
             </div>
           </form>
+        </section>
+        <section className="settings-card">
+          <div className="card-head">
+            <h3 className="card-title">Retrospective angles</h3>
+            <span className="settings-status off">org-wide presets</span>
+          </div>
+          <RetroAnglesCard
+            api={api}
+            refresh={refresh}
+            stored={current.retro_angles ?? "[]"}
+          />
         </section>
       </div>
 

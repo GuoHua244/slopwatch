@@ -167,6 +167,44 @@ CREATE TABLE IF NOT EXISTS audit_log (
   detail      JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS audit_log_action ON audit_log (action);
+-- ADR 0008: per-user LLM credentials for server-side retrospectives. The key
+-- is stored reversibly (the server must send it back to the provider) but is
+-- never echoed by any read — masked hints only.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS llm_endpoint TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS llm_model TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS llm_api_key TEXT;
+-- ADR 0008: one retrospective run per row — the resolved prompt snapshots
+-- ride with the row so any report stays reproducible against exactly the
+-- text that produced it.
+CREATE TABLE IF NOT EXISTS retrospectives (
+  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  session_id      TEXT NOT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,
+  user_id         TEXT NOT NULL,
+  angle           TEXT NOT NULL,
+  supplement      TEXT,
+  system_snapshot TEXT NOT NULL,
+  prompt_snapshot TEXT NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'pending',
+  result          TEXT,
+  model           TEXT,
+  input_tokens      BIGINT,
+  output_tokens     BIGINT,
+  cache_read_tokens BIGINT,
+  reasoning_tokens  BIGINT,
+  error           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  started_at      TIMESTAMPTZ,
+  finished_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS retrospectives_session ON retrospectives (session_id);
+-- The per-user single-flight check reads only open rows.
+CREATE INDEX IF NOT EXISTS retrospectives_user_open
+  ON retrospectives (user_id) WHERE status IN ('pending', 'running');
+-- Subagent sessions are found through their session:start payload's
+-- parent_session_id — a partial expression index keeps the lookup targeted.
+CREATE INDEX IF NOT EXISTS events_child_parent
+  ON events ((payload->>'parent_session_id'))
+  WHERE payload->>'parent_session_id' IS NOT NULL;
 `;
 
 export const schemaMethods = ({ pool }: PgCtx): Pick<Store, "migrate"> => ({

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { MeInfo, ModelRollupRow } from "../api";
-import { createReviewApi } from "../api";
+import { createRetroApi, createReviewApi } from "../api";
 import { storedToken } from "../auth";
 import {
   errorMessage,
@@ -11,6 +11,7 @@ import {
 } from "../lib/format";
 import { pricedCost } from "../lib/leaderboard";
 import { priceFor } from "../lib/pricing";
+import { ConfirmButton, useAsyncAction } from "./admin-shared";
 
 const sumTokens = (rows: ModelRollupRow[]): number =>
   rows.reduce(
@@ -24,6 +25,111 @@ const sumTokens = (rows: ModelRollupRow[]): number =>
   );
 
 /**
+ * ADR 0008: the user's own LLM credentials for session retrospectives. The
+ * api key is write-only — the form shows a masked hint, a blank field keeps
+ * the stored key, and no read ever returns it.
+ */
+const LlmCard = ({ me, onChanged }: { me: MeInfo; onChanged: () => void }) => {
+  const retroApi = useState(() => createRetroApi(storedToken))[0];
+  const [endpoint, setEndpoint] = useState(me.llm?.endpoint ?? "");
+  const [model, setModel] = useState(me.llm?.model ?? "");
+  const [apiKey, setApiKey] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const run = useAsyncAction((message) => {
+    setFormError(message);
+    if (message === null) setNotice(null);
+  }, onChanged);
+
+  const save = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!endpoint.trim() || !model.trim()) {
+      setFormError("Endpoint and model are both required.");
+      return;
+    }
+    void run(async () => {
+      await retroApi.setLlm({
+        endpoint: endpoint.trim(),
+        model: model.trim(),
+        ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+      });
+      setApiKey("");
+      setNotice("LLM credentials saved — retrospectives are now available.");
+    });
+  };
+
+  return (
+    <div className="panel-card">
+      <div className="card-head">
+        <h3 className="card-title">LLM for retrospectives</h3>
+        <span
+          className={`settings-status ${me.llm ? "live" : "off"}`}
+          title={me.llm ? `key ${me.llm.api_key_hint}` : "not configured"}
+        >
+          {me.llm
+            ? `Configured · key ${me.llm.api_key_hint}`
+            : "Not configured"}
+        </span>
+      </div>
+      <p className="card-lede">
+        Session retrospectives run on this server with <em>your own</em>{" "}
+        OpenAI-compatible LLM credentials — the tokens a retrospective spends
+        are billed to your key, never to anyone else's. The key is stored
+        server-side and never shown again.
+      </p>
+      <form className="settings-form llm-form" onSubmit={save}>
+        <label className="field wide">
+          <span>API base URL</span>
+          <input
+            value={endpoint}
+            onChange={(e) => setEndpoint(e.target.value)}
+            placeholder="https://llm.example.com/v1"
+          />
+        </label>
+        <label className="field">
+          <span>Model</span>
+          <input
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder="glm-4.6"
+          />
+        </label>
+        <label className="field">
+          <span>API key {me.llm ? "(blank = keep current)" : ""}</span>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={me.llm ? `stored · ${me.llm.api_key_hint}` : "sk-…"}
+            autoComplete="off"
+          />
+        </label>
+        <div className="field actions">
+          <button className="primary" type="submit">
+            Save
+          </button>
+          {me.llm && (
+            <ConfirmButton
+              message="clear your LLM credentials? Retrospectives will be unavailable until you configure them again."
+              onClick={() =>
+                void run(async () => {
+                  await retroApi.clearLlm();
+                  setNotice("LLM credentials cleared.");
+                })
+              }
+            >
+              Clear
+            </ConfirmButton>
+          )}
+        </div>
+      </form>
+      {formError && <p className="banner-error">{formError}</p>}
+      {notice && <p className="dim">{notice}</p>}
+    </div>
+  );
+};
+
+/**
  * The "me" page (profile): everything that belongs to the signed-in user —
  * identity, role, team, their lifetime footprint, and the one sign-out — in
  * one view. Every identity/auth affordance in the product lives here.
@@ -31,13 +137,14 @@ const sumTokens = (rows: ModelRollupRow[]): number =>
 export const MeView = ({ onSignOut }: { onSignOut: () => void }) => {
   const [me, setMe] = useState<MeInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
 
   useEffect(() => {
     void createReviewApi(storedToken)
       .me()
       .then(setMe)
       .catch((e) => setError(errorMessage(e)));
-  }, []);
+  }, [version]);
 
   if (error) return <p className="banner-error">{error}</p>;
   if (me === null) return <p className="empty">Loading…</p>;
@@ -131,6 +238,8 @@ export const MeView = ({ onSignOut }: { onSignOut: () => void }) => {
           {me.usage.last_seen_at ? fmtDate(me.usage.last_seen_at) : "—"}
         </p>
       </div>
+
+      <LlmCard me={me} onChanged={() => setVersion((v) => v + 1)} />
 
       <div className="panel-card">
         <div className="card-head">

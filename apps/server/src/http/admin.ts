@@ -11,6 +11,11 @@ import {
   postWebhook,
   webhookBody,
 } from "../webhook";
+import {
+  DEFAULT_ANGLES,
+  RETRO_ANGLES_SETTING_KEY,
+  parseRetroAngles,
+} from "../retrospective/presets";
 import { bearerToken, timingSafeTokenEq, type Auth } from "./auth";
 import type { Audit } from "./audit";
 import { HttpError, json } from "./respond";
@@ -418,6 +423,7 @@ export const handleAdmin = async (
         webhook_enabled: stored.webhook_enabled ?? "true",
         webhook_format: stored.webhook_format ?? "slack",
         raw_ttl_days: stored.raw_ttl_days ?? String(defaultRawTtlDays),
+        retro_angles: stored.retro_angles ?? JSON.stringify(DEFAULT_ANGLES),
       };
     };
     if (req.method === "GET") return json(200, { settings: await effective() });
@@ -458,6 +464,20 @@ export const handleAdmin = async (
               error: "raw_ttl_days must be a positive integer",
             });
         }
+        if (key === RETRO_ANGLES_SETTING_KEY && value !== null) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(String(value));
+          } catch {
+            return json(400, {
+              error: `${RETRO_ANGLES_SETTING_KEY} must be a JSON array of {id, title, prompt}`,
+            });
+          }
+          if (parseRetroAngles(parsed) === null)
+            return json(400, {
+              error: `${RETRO_ANGLES_SETTING_KEY}: expected 1-12 unique entries with a slug id (not "custom"), a title, and a non-empty prompt`,
+            });
+        }
       }
       const before = await store.listSettings();
       for (const [key, value] of Object.entries(body)) {
@@ -478,7 +498,13 @@ export const handleAdmin = async (
       for (const key of Object.keys(body)) {
         const b = before[key] ?? null;
         const a = after[key] ?? null;
-        if (b !== a) changes[key] = { before: b, after: a };
+        if (b !== a)
+          // prompt texts (retro_angles) would flood the trail — the audit
+          // entry marks the change, the settings table holds the value
+          changes[key] = {
+            before: b === null ? null : b.slice(0, 300),
+            after: a === null ? null : a.slice(0, 300),
+          };
       }
       if (Object.keys(changes).length > 0)
         await audit(

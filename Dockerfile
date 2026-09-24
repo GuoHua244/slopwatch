@@ -52,6 +52,7 @@ WORKDIR /app
 COPY --from=deps /app/package.json ./package.json
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/packages/events ./packages/events
+COPY --from=build /app/packages/summary ./packages/summary
 COPY --from=build /app/apps/server ./apps/server
 COPY --from=build /app/apps/web/dist ./apps/web/dist
 ENV NODE_ENV=production

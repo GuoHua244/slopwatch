@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createApp, type App } from "./http";
+import { DEFAULT_ANGLES } from "./retrospective/presets";
 import {
   hashToken,
   NoSuchTeamError,
@@ -319,6 +320,22 @@ const memStore = () => {
       last_quarantine_at: null,
     }),
     listQuarantine: async () => [],
+    createRetro: async () => {
+      throw new Error("retrospective store not scripted");
+    },
+    getRetro: async () => null,
+    listRetros: async () => [],
+    setRetroRunning: async () => {},
+    setRetroCompleted: async () => {},
+    setRetroFailed: async () => {},
+    failStaleRetros: async () => 0,
+    hasOpenRetroFor: async () => false,
+    allEvents: async () => [],
+    rawForEvents: async () => [],
+    childRollups: async () => [],
+    getLlmConfig: async () => null,
+    setLlmConfig: async () => {},
+    clearLlmConfig: async () => {},
     close: async () => {},
   };
   return { store, tokens, users };
@@ -779,6 +796,7 @@ describe("operator settings (decision 25)", () => {
         webhook_enabled: "true",
         webhook_format: "slack",
         raw_ttl_days: "45",
+        retro_angles: JSON.stringify(DEFAULT_ANGLES),
       },
     });
   });

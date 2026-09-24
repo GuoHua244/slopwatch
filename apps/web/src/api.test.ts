@@ -409,6 +409,7 @@ describe("createReviewApi", () => {
       team_name: "platform",
       is_dri: true,
       created_at: "2026-09-01T00:00:00.000Z",
+      llm: null,
       usage: {
         sessions: 3,
         first_seen_at: null,

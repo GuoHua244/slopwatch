@@ -7,6 +7,12 @@
 import { joinUrl } from "@slopwatch/events";
 import type { TokenUsage } from "@slopwatch/events";
 
+/** The minimal fetch surface the call needs — real `fetch` or a test stub. */
+export type FetchLike = (
+  input: string | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
 export type ChatOptions = {
   /** OpenAI-compatible base URL, e.g. "https://llm.internal/v1". */
   endpoint: string;
@@ -16,7 +22,7 @@ export type ChatOptions = {
   user: string;
   timeoutMs?: number;
   maxTokens?: number;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: FetchLike;
 };
 
 /**
@@ -73,6 +79,12 @@ type AttemptResult = {
   text: string | null;
   budgetBlown: boolean;
   usage?: TokenUsage;
+  /** HTTP status of a non-ok response — surfaced by the detailed variant. */
+  status?: number;
+  /** The last attempt's finish_reason, when the body carried one. */
+  finishReason?: string;
+  /** Transport-level failure (timeout, unreachable) from the catch path. */
+  error?: string;
 };
 
 const attempt = async (
@@ -105,7 +117,7 @@ const attempt = async (
     // legitimate reasoning generations mid-flight
     signal: AbortSignal.timeout(o.timeoutMs ?? 60_000),
   });
-  if (!res.ok) return { text: null, budgetBlown: false };
+  if (!res.ok) return { text: null, budgetBlown: false, status: res.status };
   const body = (await res.json().catch(() => null)) as {
     choices?: {
       message?: { content?: unknown };
@@ -124,6 +136,10 @@ const attempt = async (
     budgetBlown: clean === null && choice?.finish_reason === "length",
     // a budget-blown attempt still burned tokens — counted by the caller
     usage: toTokenUsage(body?.usage),
+    finishReason:
+      typeof choice?.finish_reason === "string"
+        ? choice.finish_reason
+        : undefined,
   };
 };
 
@@ -148,4 +164,70 @@ export const chatCompletion = async (o: ChatOptions): Promise<ChatResult> => {
   } catch {
     return { text: null };
   }
+};
+
+export type DetailedChatResult = ChatResult & {
+  /**
+   * Why the call failed, when it did: non-ok HTTP status, timeout/unreachable
+   * transport error, or an empty answer. Null/undefined on success.
+   */
+  error?: string;
+  finishReason?: string;
+};
+
+/**
+ * The same call as chatCompletion but with the failure mode visible — the
+ * server-side retrospective needs a failed run row that says why, where the
+ * summary's contract is to collapse every failure to null.
+ */
+export const chatCompletionDetailed = async (
+  o: ChatOptions,
+): Promise<DetailedChatResult> => {
+  const first = await attempt(o, o.maxTokens ?? 4096).catch(
+    (e: unknown): AttemptResult => ({
+      text: null,
+      budgetBlown: false,
+      error: transportError(o.timeoutMs, e),
+    }),
+  );
+  if (first.text !== null || !first.budgetBlown)
+    return {
+      text: first.text,
+      usage: first.usage,
+      finishReason: first.finishReason,
+      error:
+        first.error ??
+        (first.text !== null
+          ? undefined
+          : first.status !== undefined
+            ? `the LLM endpoint responded ${first.status}`
+            : "the LLM endpoint returned no answer content"),
+    };
+  // one budget-raising retry when reasoning consumed the whole cap
+  const second = await attempt(o, (o.maxTokens ?? 4096) * 4).catch(
+    (e: unknown): AttemptResult => ({
+      text: null,
+      budgetBlown: false,
+      error: transportError(o.timeoutMs, e),
+    }),
+  );
+  return {
+    text: second.text,
+    usage: sumUsage(first.usage, second.usage),
+    finishReason: second.finishReason,
+    error:
+      second.text !== null
+        ? undefined
+        : (second.error ??
+          (second.status !== undefined
+            ? `the LLM endpoint responded ${second.status}`
+            : `the answer came back empty with finish_reason ${second.finishReason ?? "unknown"}`)),
+  };
+};
+
+const transportError = (timeoutMs: number | undefined, e: unknown): string => {
+  const message = e instanceof Error ? e.message : String(e);
+  return message.includes("TimeoutError") || message.includes("abort")
+    ? `the LLM call timed out after ${timeoutMs ?? 60_000}ms`
+    : `the LLM endpoint was unreachable: ${message}`;
 };

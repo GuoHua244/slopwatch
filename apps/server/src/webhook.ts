@@ -13,6 +13,7 @@ export const SETTING_KEYS = [
   "webhook_enabled",
   "webhook_format",
   "raw_ttl_days",
+  "retro_angles",
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];

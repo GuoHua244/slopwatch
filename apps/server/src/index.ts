@@ -1,5 +1,6 @@
 import { loadConfig } from "./config";
 import { createApp } from "./http";
+import { createRetroQueue } from "./retrospective/queue";
 import { createPgStore } from "./store";
 import { createS3Client } from "./s3";
 import { createOidcVerifier } from "./oidc";
@@ -21,6 +22,13 @@ if (config.adminToken === undefined) {
 
 const store = createPgStore(config.databaseUrl);
 await store.migrate();
+
+// ADR 0008: the retrospective runner. Reconcile first — rows the previous
+// process left open become failed runs a user can rerun; nothing resumes.
+const stale = await store.failStaleRetros();
+if (stale > 0)
+  console.log(`marked ${stale} interrupted retrospective(s) failed`);
+const retrospectives = createRetroQueue(store);
 
 // The system pseudo-actor for audit entries the server itself causes (ADR
 // 0007) — boot provisioning and prune sweeps. Best-effort like every append.
@@ -105,6 +113,7 @@ const app = createApp({
   defaultRawTtlDays: config.rawTtlDays,
   archive,
   oidc,
+  retrospectives,
 });
 
 Bun.serve({

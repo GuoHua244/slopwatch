@@ -92,6 +92,22 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
     last_quarantine_at: null,
   }),
   listQuarantine: async () => [],
+  createRetro: async () => {
+    throw new Error("retrospective store not scripted");
+  },
+  getRetro: async () => null,
+  listRetros: async () => [],
+  setRetroRunning: async () => {},
+  setRetroCompleted: async () => {},
+  setRetroFailed: async () => {},
+  failStaleRetros: async () => 0,
+  hasOpenRetroFor: async () => false,
+  allEvents: async () => [],
+  rawForEvents: async () => [],
+  childRollups: async () => [],
+  getLlmConfig: async () => null,
+  setLlmConfig: async () => {},
+  clearLlmConfig: async () => {},
   close: async () => {},
   ...overrides,
 });
@@ -331,6 +347,7 @@ describe("review plane authorization (in memory)", () => {
       team_name: null,
       is_dri: true,
       created_at: "2026-09-10T00:00:00.000Z",
+      llm: null,
       usage: {
         sessions: 0,
         first_seen_at: null,

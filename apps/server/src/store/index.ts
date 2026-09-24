@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import { auditMethods } from "./audit";
 import type { PgCtx } from "./db";
 import { quarantineMethods } from "./quarantine";
+import { retrospectiveMethods } from "./retrospectives";
 import { reviewMethods } from "./review";
 import { rollupMethods } from "./rollups";
 import { hashToken } from "./rows";
@@ -20,12 +21,15 @@ export type {
   AuditActor,
   AuditEntry,
   AuditRow,
+  ChildSessionRollup,
   CommentRow,
   DailyRollupRow,
   HealthInfo,
+  LlmConfig,
   MeUsage,
   ModelRollupRow,
   QuarantineRow,
+  RetroRow,
   ReviewRow,
   Role,
   RollupsSnapshot,
@@ -50,6 +54,7 @@ export const createPgStore = (databaseUrl: string): Store => {
     ...auditMethods(ctx),
     ...quarantineMethods(ctx),
     ...settingsMethods(ctx),
+    ...retrospectiveMethods(ctx),
     async close() {
       await pool.end();
     },
