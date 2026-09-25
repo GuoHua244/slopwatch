@@ -13,6 +13,7 @@ export default defineConfig({
       "/rollups": "http://localhost:8787",
       "/teams": "http://localhost:8787",
       "/me": "http://localhost:8787",
+      "/feedback": "http://localhost:8787",
       "/admin": "http://localhost:8787",
     },
   },

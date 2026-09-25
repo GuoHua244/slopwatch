@@ -96,6 +96,40 @@ export type CommentRow = {
   created_at: string;
 };
 
+/** The five feedback kinds (ADR 0009), stored as plain TEXT. */
+export const FEEDBACK_KINDS = [
+  "missing_content",
+  "wrong_data",
+  "compatibility",
+  "feature_suggestion",
+  "other",
+] as const;
+export type FeedbackKind = (typeof FEEDBACK_KINDS)[number];
+
+/**
+ * One filed feedback (ADR 0009): a stateless signal channel entry. Feature
+ * suggestions carry no session; defect feedback anchors the session it was
+ * noticed on. `filer_id` is the user name (users.name is the display name).
+ * Attachment metadata rides every read; the bytes never do.
+ */
+export type FeedbackRow = {
+  feedback_id: number;
+  filer_id: string;
+  session_id: string | null;
+  kind: FeedbackKind;
+  body: string;
+  created_at: string;
+  attachments: FeedbackAttachmentMeta[];
+};
+
+/** Attachment metadata — bytes ride their own read, never the list. */
+export type FeedbackAttachmentMeta = {
+  sha256: string;
+  filename: string;
+  mime: string;
+  size: number;
+};
+
 export type HealthInfo = {
   sessions: number;
   events: number;
@@ -426,6 +460,37 @@ export type Store = {
   getSession(sessionId: string): Promise<SessionRow | null>;
   /** One review note by id, regardless of author — the preview for its own audit entry. */
   getComment(commentId: number): Promise<CommentRow | null>;
+  /** ADR 0009: the feedback plane. Null when the anchored session is unknown. */
+  addFeedback(input: {
+    filerId: string;
+    kind: FeedbackKind;
+    body: string;
+    sessionId: string | null;
+  }): Promise<FeedbackRow | null>;
+  /** One feedback row by id, snapshots included — the delete-audit preview. */
+  getFeedback(feedbackId: number): Promise<FeedbackRow | null>;
+  /** The admin reading surface: newest first, optional kind filter, paginated. */
+  listFeedback(opts: {
+    limit: number;
+    offset: number;
+    kind?: string;
+  }): Promise<{ rows: FeedbackRow[]; total: number }>;
+  deleteFeedback(feedbackId: number): Promise<boolean>;
+  /** Content-addressed attachment store; duplicate shas are no-ops. */
+  addFeedbackAttachments(
+    feedbackId: number,
+    files: {
+      sha256: string;
+      filename: string;
+      mime: string;
+      size: number;
+      data: Buffer;
+    }[],
+  ): Promise<void>;
+  getFeedbackAttachment(
+    feedbackId: number,
+    sha256: string,
+  ): Promise<{ mime: string; filename: string; data: Buffer } | null>;
   /** One team by id; null when unknown. */
   getTeam(id: string): Promise<TeamRow | null>;
   /** One token by id with its owning user; null when unknown. */

@@ -9,6 +9,7 @@ import { storedToken } from "../auth";
 import { usePolled, type PollError } from "../hooks/usePolled";
 import { clock } from "../lib/format";
 import { AdminAuditPanel } from "./AdminAuditPanel";
+import { AdminFeedbackPanel } from "./AdminFeedbackPanel";
 import { AdminSessionsPanel } from "./AdminSessionsPanel";
 import { AdminSettingsPanel } from "./AdminSettingsPanel";
 import { AdminTeamsPanel } from "./AdminTeamsPanel";
@@ -109,6 +110,7 @@ type AdminTab =
   | "users"
   | "teams"
   | "sessions"
+  | "feedback"
   | "settings"
   | "audit"
   | "health";
@@ -151,6 +153,12 @@ const AdminHome = ({ api, user }: { api: AdminApi; user: string }) => {
           Sessions
         </button>
         <button
+          className={tab === "feedback" ? "active" : ""}
+          onClick={() => setTab("feedback")}
+        >
+          Feedback
+        </button>
+        <button
           className={tab === "settings" ? "active" : ""}
           onClick={() => setTab("settings")}
         >
@@ -182,6 +190,12 @@ const AdminHome = ({ api, user }: { api: AdminApi; user: string }) => {
         <AdminTeamsPanel api={api} refreshKey={refreshKey} refresh={refresh} />
       ) : tab === "sessions" ? (
         <AdminSessionsPanel
+          api={api}
+          refreshKey={refreshKey}
+          refresh={refresh}
+        />
+      ) : tab === "feedback" ? (
+        <AdminFeedbackPanel
           api={api}
           refreshKey={refreshKey}
           refresh={refresh}

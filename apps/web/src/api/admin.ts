@@ -11,6 +11,7 @@ import type {
   AdminTokenRow,
   AdminUserRow,
   AuditRow,
+  FeedbackRow,
   MintedToken,
   QuarantineRow,
 } from "./types";
@@ -40,6 +41,16 @@ export type AdminApi = {
     kind?: string;
     actor?: string;
   }): Promise<{ rows: AuditRow[]; total: number }>;
+  /**
+   * ADR 0009: the feedback reading surface — newest first, kind-filterable,
+   * paginated within the filtered total.
+   */
+  feedback(params?: {
+    limit?: number;
+    offset?: number;
+    kind?: string;
+  }): Promise<{ rows: FeedbackRow[]; total: number }>;
+  deleteFeedback(feedbackId: number): Promise<void>;
   teams(): Promise<AdminTeamRow[]>;
   settings(): Promise<Record<string, string>>;
   updateSettings(patch: Record<string, string>): Promise<void>;
@@ -163,6 +174,21 @@ export const createAdminApi = (
         `/admin/audit${query ? `?${query}` : ""}`,
         auth({ method: "GET" }),
       );
+    },
+    feedback: async (params = {}) => {
+      const search = new URLSearchParams();
+      if (params.limit !== undefined) search.set("limit", String(params.limit));
+      if (params.offset !== undefined)
+        search.set("offset", String(params.offset));
+      if (params.kind !== undefined) search.set("kind", params.kind);
+      const query = search.toString();
+      return unwrap<{ rows: FeedbackRow[]; total: number }>(
+        `/admin/feedback${query ? `?${query}` : ""}`,
+        auth({ method: "GET" }),
+      );
+    },
+    deleteFeedback: async (feedbackId) => {
+      await unwrap(`/admin/feedback/${feedbackId}`, auth({ method: "DELETE" }));
     },
     teams: async () =>
       (

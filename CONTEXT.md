@@ -68,6 +68,10 @@ _Avoid_: review (that is the DRI's human evaluation), analysis, insight, postmor
 The append-only record of every mutation to the Server's own data — Users, Teams, tokens, settings, Sessions, review markers, and notes — capturing who acted (a User, the operator bypass, or the system), when, on what target, and the before/after change; hard deletes carry a snapshot of what vanished (ADR 0007). Written by the Server at the moment each mutation succeeds; read through the admin plane.
 _Avoid_: activity log, operation log, history (collides with captured Events), changelog.
 
+**Feedback**:
+A note a **User** files about Slopwatch itself from the dashboard — a defect noticed while reviewing **Sessions** (content that went missing, data that looks wrong, agent **Events** the Server failed to handle) or a feature suggestion. Each Feedback carries one kind — Missing content / Wrong data / Compatibility / Feature suggestion / Other — and may reference the **Session** it was noticed on (feature suggestions carry none) and carry optional attached files. It is an observation recorded for the maintainers: the admin plane lists submitted Feedback and an admin may delete one (audited), but there is no status, assignee, reply, or tracking workflow.
+_Avoid_: bug report (it also carries feature suggestions), issue (implies a tracker workflow), report (collides with **Review**), 问题反馈→use Feedback in code.
+
 ## Relationships
 
 - A **User**'s **Role** decides what they may see: admins get the admin plane and the org-wide read; members get their own **Sessions** only.
@@ -79,6 +83,7 @@ _Avoid_: activity log, operation log, history (collides with captured Events), c
 - A **Listener** produces **Sessions**, **Turns**, and **Model requests** for exactly one **Coding agent**; it runs either as a subprocess (Claude Code, Codex, Copilot, ZCode) or as an in-process extension (Pi, OpenCode).
 - Many **Listeners** POST to one **Server**; the **Server** is the only component that talks to Postgres.
 - **Listeners** and the **Server** communicate by exchanging **Events** defined in `@slopwatch/events`.
+- A **Feedback** optionally references the **Session** it was noticed on — only a **Session** its filer can open (the same owner-or-admin rule as **Retrospectives**); it records the filer's observation about Slopwatch itself, never evidence of what happened in that **Session**.
 - A **Summary** is produced by a **Listener** and arrives as an **Event**; a **Retrospective** is produced by the **Server** from already-stored **Events** and never enters the Event stream. Both are generated text, never evidence.
 
 ## Example dialogue

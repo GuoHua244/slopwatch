@@ -152,6 +152,61 @@ export const handleAdmin = async (
     return json(200, { rows: await store.listQuarantine(limit) });
   }
 
+  // ADR 0009: the feedback reading surface — newest first, kind-filterable,
+  // paginated with a filtered total. Stateless by design: nothing to
+  // mutate, only read and delete.
+  if (url.pathname === "/admin/feedback" && req.method === "GET") {
+    const limit = windowParam(url.searchParams.get("limit"), 200, 50);
+    const offsetRaw = Number(url.searchParams.get("offset") ?? 0);
+    return json(
+      200,
+      await store.listFeedback({
+        limit,
+        offset:
+          Number.isFinite(offsetRaw) && offsetRaw > 0
+            ? Math.min(Math.floor(offsetRaw), 1_000_000_000)
+            : 0,
+        kind: url.searchParams.get("kind")?.trim() || undefined,
+      }),
+    );
+  }
+
+  // A feedback row vanishes only here. Snapshot before the delete so the
+  // audit trail says what was removed, not just that something was.
+  const feedbackDeleteMatch = url.pathname.match(/^\/admin\/feedback\/(\d+)$/);
+  if (feedbackDeleteMatch && req.method === "DELETE") {
+    const id = Number(feedbackDeleteMatch[1]);
+    const snapshot = await store.getFeedback(id);
+    if (snapshot === null) return json(404, { error: "no such feedback" });
+    await store.deleteFeedback(id);
+    await audit(adminActor, "feedback.delete", String(id), snapshot);
+    return json(200, { ok: true });
+  }
+
+  // One feedback attachment's bytes — admin-plane only (ADR 0009: the filer
+  // has no readback). sha256-addressed per row, so safe to cache forever.
+  const feedbackAttachmentMatch = url.pathname.match(
+    /^\/admin\/feedback\/(\d+)\/attachments\/([0-9a-f]{64})$/,
+  );
+  if (feedbackAttachmentMatch && req.method === "GET") {
+    const id = Number(feedbackAttachmentMatch[1]);
+    const attachment = await store.getFeedbackAttachment(
+      id,
+      feedbackAttachmentMatch[2]!,
+    );
+    if (attachment === null) return json(404, { error: "no such attachment" });
+    return new Response(
+      new Blob([new Uint8Array(attachment.data)], { type: attachment.mime }),
+      {
+        headers: {
+          "content-type": attachment.mime,
+          "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`,
+          "cache-control": "private, max-age=31536000, immutable",
+        },
+      },
+    );
+  }
+
   // v2 decision 21: fetch an archived raw payload back by key — the
   // retrieval half of archive-before-prune. Only keys this server writes
   // (raw/<agent>/<sessionId>/<seq>.json) are legal, so the cold store

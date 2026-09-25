@@ -124,6 +124,12 @@ const auditStore = (
     getLlmConfig: async () => null,
     setLlmConfig: async () => {},
     clearLlmConfig: async () => {},
+    addFeedback: async () => null,
+    getFeedback: async () => null,
+    listFeedback: async () => ({ rows: [], total: 0 }),
+    deleteFeedback: async () => false,
+    addFeedbackAttachments: async () => {},
+    getFeedbackAttachment: async () => null,
     close: async () => {},
   };
   return Object.assign(base, { audits }, overrides);

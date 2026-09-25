@@ -71,6 +71,12 @@ Storage and rollup buckets stay UTC (v1 decision 18 stands). Daily aggregates re
 - **Resident helper process, sub-5s spectate, proxy capture path, resumes/compaction modeling** — unchanged deferrals; revisit triggers unchanged.
 - **Tail resync across rollout rewrites** — a same-or-larger rewrite can resume the tail mid-record and quarantine a suffix (research/quarantine-rewrite-suffixes.md); a resync protocol needs dedup groundwork, deferred until the artifacts cost more than the fix.
 
+## Future iteration candidates
+
+Post-launch ideas recorded without commitment; each graduates to a plan and an ADR when picked up.
+
+- **Feedback channel** (logged 2026-09-25 as session bug reports; designed 2026-09-25, see docs/adr/0009-feedback.md; not scheduled) — the generalization of that idea: any signed-in User files a **Feedback** from the dashboard (a session-anchored defect or a global feature suggestion — five kinds, optional attachments), and the admin plane lists and deletes it; stateless by design.
+
 ## Known-bug gate
 
 The intermittent hook non-fire observed during acceptance (2026-09-11) was root-caused afterwards (v1 decision 19): the hooks never miss a user message — the losses happen after the sidecar's idle-timeout exit mid-turn, when nothing re-spawns it until the next prompt. The PostToolUse re-spawn fix (2026-09-12) addresses the cause; M0 still holds a gate — reproduce the acceptance scenario that caught the loss and land a regression test before launch.

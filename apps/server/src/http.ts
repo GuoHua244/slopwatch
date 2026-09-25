@@ -6,6 +6,7 @@ import {
 import { handleAdmin } from "./http/admin";
 import { createAudit, type Audit } from "./http/audit";
 import { createAuth, type Auth } from "./http/auth";
+import { parseFeedbackForm } from "./http/feedback";
 import { HttpError, json, text } from "./http/respond";
 import { staticFile, staticResponse } from "./http/static";
 import {
@@ -589,6 +590,77 @@ const route = async (
       return new Response(null, { status: 204 });
     }
     return json(404, { error: "no such note" });
+  }
+
+  // --- Feedback (ADR 0009): a stateless signal channel, the Server's first
+  // browser-initiated upload. Any signed-in user may file; a session anchor
+  // follows the session read scope (the same owner-or-admin rule as the
+  // retrospectives), so members can only flag what they can see. ---
+  if (url.pathname === "/feedback" && req.method === "POST") {
+    const user = await auth.requireUser(req);
+    const parsed = await parseFeedbackForm(req);
+    const feedback = await store.addFeedback({
+      filerId: user,
+      kind: parsed.kind,
+      body: parsed.text,
+      sessionId: null,
+    });
+    // A global feedback has no session FK to miss — the row cannot be null.
+    if (feedback === null)
+      return json(500, { error: "feedback row vanished unexpectedly" });
+    await store.addFeedbackAttachments(feedback.feedback_id, parsed.files);
+    await audit(
+      { kind: "user", user },
+      "feedback.create",
+      String(feedback.feedback_id),
+      {
+        kind: feedback.kind,
+        session_id: null,
+        attachments: parsed.files.length,
+      },
+    );
+    // Re-read: the insert's RETURNING snapshotted an empty attachment list.
+    return json(201, {
+      feedback: (await store.getFeedback(feedback.feedback_id)) ?? feedback,
+    });
+  }
+
+  const sessionFeedbackMatch = url.pathname.match(
+    /^\/sessions\/([^/]+)\/feedback$/,
+  );
+  if (sessionFeedbackMatch && req.method === "POST") {
+    const reader = await auth.requireReader(req);
+    const sessionId = decodeParam(sessionFeedbackMatch[1]!);
+    if (sessionId === null) return json(400, { error: "malformed session id" });
+    // Ownership before body parsing: never churn through an upload for a
+    // session the filer cannot see. Unknown ids answer 404, not 403.
+    if (reader.role !== "admin") {
+      const owner = await store.sessionOwner(sessionId);
+      if (owner !== reader.user) return json(404, { error: "no such session" });
+    }
+    const parsed = await parseFeedbackForm(req);
+    const feedback = await store.addFeedback({
+      filerId: reader.user,
+      kind: parsed.kind,
+      body: parsed.text,
+      sessionId,
+    });
+    if (feedback === null) return json(404, { error: "no such session" });
+    await store.addFeedbackAttachments(feedback.feedback_id, parsed.files);
+    await audit(
+      { kind: "user", user: reader.user },
+      "feedback.create",
+      String(feedback.feedback_id),
+      {
+        kind: feedback.kind,
+        session_id: sessionId,
+        attachments: parsed.files.length,
+      },
+    );
+    // Re-read: the insert's RETURNING snapshotted an empty attachment list.
+    return json(201, {
+      feedback: (await store.getFeedback(feedback.feedback_id)) ?? feedback,
+    });
   }
 
   // --- Admin plane (decision 13, now role-based): a signed-in user with

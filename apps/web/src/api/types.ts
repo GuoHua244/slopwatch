@@ -227,3 +227,34 @@ export type AdminHealth = {
   quarantine_24h: number;
   last_quarantine_at: string | null;
 };
+
+/** The five feedback kinds (ADR 0009), verbatim from the server. */
+export type FeedbackKind =
+  | "missing_content"
+  | "wrong_data"
+  | "compatibility"
+  | "feature_suggestion"
+  | "other";
+
+/** Attachment metadata of a feedback row — bytes ride their own authed read. */
+export type FeedbackAttachmentMeta = {
+  sha256: string;
+  filename: string;
+  mime: string;
+  size: number;
+};
+
+/**
+ * One feedback row (ADR 0009): a stateless signal-channel entry, optionally
+ * anchored to the session it was noticed on. Feature suggestions carry none.
+ * Attachment metadata rides every read; the bytes never do.
+ */
+export type FeedbackRow = {
+  feedback_id: number;
+  filer_id: string;
+  session_id: string | null;
+  kind: FeedbackKind;
+  body: string;
+  created_at: string;
+  attachments: FeedbackAttachmentMeta[];
+};

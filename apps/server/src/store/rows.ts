@@ -3,6 +3,8 @@ import type {
   AdminUserRow,
   AuditRow,
   CommentRow,
+  FeedbackAttachmentMeta,
+  FeedbackRow,
   ModelRollupRow,
   ReviewRow,
   Role,
@@ -70,6 +72,25 @@ export const pgCommentRow = (r: Record<string, unknown>): CommentRow => ({
   author_id: r.author_id as string,
   body: r.body as string,
   created_at: iso(r.created_at),
+});
+
+export const pgFeedbackRow = (r: Record<string, unknown>): FeedbackRow => ({
+  feedback_id: Number(r.feedback_id),
+  filer_id: r.filer_id as string,
+  session_id: (r.session_id as string | null) ?? null,
+  kind: r.kind as FeedbackRow["kind"],
+  body: r.body as string,
+  created_at: iso(r.created_at),
+  attachments: (r.attachments as FeedbackAttachmentMeta[] | null) ?? [],
+});
+
+export const pgFeedbackAttachmentMeta = (
+  r: Record<string, unknown>,
+): FeedbackAttachmentMeta => ({
+  sha256: r.sha256 as string,
+  filename: r.filename as string,
+  mime: r.mime as string,
+  size: Number(r.size),
 });
 
 export const pgAuditRow = (r: Record<string, unknown>): AuditRow => ({

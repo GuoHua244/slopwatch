@@ -108,6 +108,12 @@ const scriptedStore = (overrides: Partial<Store> = {}): Store => ({
   getLlmConfig: async () => null,
   setLlmConfig: async () => {},
   clearLlmConfig: async () => {},
+  addFeedback: async () => null,
+  getFeedback: async () => null,
+  listFeedback: async () => ({ rows: [], total: 0 }),
+  deleteFeedback: async () => false,
+  addFeedbackAttachments: async () => {},
+  getFeedbackAttachment: async () => null,
   close: async () => {},
   ...overrides,
 });

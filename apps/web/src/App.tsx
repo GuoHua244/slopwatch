@@ -8,6 +8,7 @@ import type { Route } from "./lib/router";
 import { useHashRoute } from "./lib/router";
 import { BackToTop } from "./views/BackToTop";
 import { DeveloperDetail } from "./views/DeveloperDetail";
+import { FeedbackModal } from "./views/FeedbackModal";
 import { LeaderboardView } from "./views/LeaderboardView";
 import { AdminView } from "./views/AdminView";
 import { MeView } from "./views/MeView";
@@ -99,6 +100,10 @@ const Dashboard = ({
     true,
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // ADR 0009: the global feedback entry — feature suggestions have no session
+  // to anchor to, so the header is where they start.
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackSent, setFeedbackSent] = useState(false);
 
   // Team-scoped DRI filter: the roster feeds the admin's sessions dropdown.
   // Members see only their own sessions, so the filter (and the roster) is
@@ -163,6 +168,12 @@ const Dashboard = ({
             Me
           </a>
         </nav>
+        <button className="link" onClick={() => setFeedbackOpen(true)}>
+          Send feedback
+        </button>
+        {feedbackSent && (
+          <span className="chip chip-live">✓ feedback sent</span>
+        )}
         <span className={`live-pill ${feed.status}`}>
           {feed.status === "live" && <span className="pulse" />}
           {feed.status === "live"
@@ -177,6 +188,17 @@ const Dashboard = ({
           <span className="chip-name">{user}</span>
         </a>
       </header>
+      {feedbackOpen && (
+        <FeedbackModal
+          sessionId={null}
+          onClose={() => setFeedbackOpen(false)}
+          onSent={() => {
+            setFeedbackOpen(false);
+            setFeedbackSent(true);
+            setTimeout(() => setFeedbackSent(false), 4000);
+          }}
+        />
+      )}
       {route === "leaderboard" ? (
         isAdmin ? (
           <main className="full">

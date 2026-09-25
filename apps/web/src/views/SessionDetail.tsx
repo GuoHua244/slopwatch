@@ -9,6 +9,7 @@ import { sessionTotals } from "../lib/aggregate";
 import { clock, fmtTokens } from "../lib/format";
 import { buildTimeline, isEnded } from "../lib/timeline";
 import { ConfirmButton, useAsyncAction } from "./admin-shared";
+import { FeedbackModal } from "./FeedbackModal";
 import { RawEventsView } from "./RawEventsView";
 import { RetrospectivesView } from "./RetrospectivesView";
 import { TurnsView } from "./TurnsView";
@@ -77,6 +78,8 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
   const [tab, setTab] = useState<Tab>("turns");
   const [note, setNote] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackSent, setFeedbackSent] = useState(false);
   const timeline = useMemo(() => buildTimeline(stream.events), [stream.events]);
   const start = timeline.starts.at(-1);
   const lastEnd = timeline.ends.at(-1);
@@ -171,8 +174,24 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
             </button>
           )
         ) : null}
+        {/* ADR 0009: anyone signed in can flag what they are looking at. */}
+        <button onClick={() => setFeedbackOpen(true)}>Send feedback</button>
+        {feedbackSent && (
+          <span className="chip chip-live">✓ feedback sent</span>
+        )}
         {actionError && <span className="dim">{actionError}</span>}
       </div>
+      {feedbackOpen && (
+        <FeedbackModal
+          sessionId={summary.session_id}
+          onClose={() => setFeedbackOpen(false)}
+          onSent={() => {
+            setFeedbackOpen(false);
+            setFeedbackSent(true);
+            setTimeout(() => setFeedbackSent(false), 4000);
+          }}
+        />
+      )}
       <dl className="facts">
         <div>
           <dt>Session</dt>

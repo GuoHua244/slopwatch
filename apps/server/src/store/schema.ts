@@ -205,6 +205,32 @@ CREATE INDEX IF NOT EXISTS retrospectives_user_open
 CREATE INDEX IF NOT EXISTS events_child_parent
   ON events ((payload->>'parent_session_id'))
   WHERE payload->>'parent_session_id' IS NOT NULL;
+-- Feedback (ADR 0009): a stateless signal channel filed from the dashboard.
+-- Feature suggestions carry no session; defect feedback anchors the session
+-- it was noticed on and cascades away with it.
+CREATE TABLE IF NOT EXISTS feedback (
+  feedback_id  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  filer_id     TEXT NOT NULL,
+  session_id   TEXT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,
+  kind         TEXT NOT NULL,
+  body         TEXT NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS feedback_created ON feedback (created_at DESC);
+CREATE INDEX IF NOT EXISTS feedback_session ON feedback (session_id);
+CREATE INDEX IF NOT EXISTS feedback_kind ON feedback (kind);
+-- Attachment bytes follow the session-attachment conventions: content-
+-- addressed per feedback row, stored inline, cascading with their row.
+CREATE TABLE IF NOT EXISTS feedback_attachments (
+  feedback_id  BIGINT NOT NULL REFERENCES feedback (feedback_id) ON DELETE CASCADE,
+  sha256       TEXT NOT NULL,
+  filename     TEXT NOT NULL,
+  mime         TEXT NOT NULL,
+  size         BIGINT NOT NULL,
+  data         BYTEA NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (feedback_id, sha256)
+);
 `;
 
 export const schemaMethods = ({ pool }: PgCtx): Pick<Store, "migrate"> => ({

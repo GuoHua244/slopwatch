@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { auditMethods } from "./audit";
 import type { PgCtx } from "./db";
+import { feedbackMethods } from "./feedback";
 import { quarantineMethods } from "./quarantine";
 import { retrospectiveMethods } from "./retrospectives";
 import { reviewMethods } from "./review";
@@ -24,6 +25,9 @@ export type {
   ChildSessionRollup,
   CommentRow,
   DailyRollupRow,
+  FeedbackAttachmentMeta,
+  FeedbackKind,
+  FeedbackRow,
   HealthInfo,
   LlmConfig,
   MeUsage,
@@ -51,6 +55,7 @@ export const createPgStore = (databaseUrl: string): Store => {
     ...userMethods(ctx),
     ...teamMethods(ctx),
     ...reviewMethods(ctx),
+    ...feedbackMethods(ctx),
     ...auditMethods(ctx),
     ...quarantineMethods(ctx),
     ...settingsMethods(ctx),
