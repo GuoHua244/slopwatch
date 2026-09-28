@@ -1,0 +1,43 @@
+# Deploys main to the box that hosts the server. The job runs on a
+# self-hosted runner on the same machine Docker Desktop runs on, gated on a
+# green CI run — red code never deploys. Setup notes live in docs/deploy.md.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: self-hosted
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # .env carries the bootstrap tokens and the MinIO password and is
+      # untracked by design; compose's :? interpolation fails fast without
+      # it. The canonical checkout stays its only home.
+      - name: Bring the untracked .env from the canonical checkout
+        run: cp /d/studySpace/slopwatch/.env .env
+      - name: Rebuild and restart the server container
+        run: |
+          docker compose build server
+          docker compose up -d
+      - name: Smoke check /healthz
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8787/healthz && exit 0
+            sleep 2
+          done
+          echo "server did not answer /healthz within 60s" >&2
+          exit 1

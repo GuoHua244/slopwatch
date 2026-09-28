@@ -52,6 +52,26 @@ ledgers: 1–19 in
    the dashboard loads at `http://<host>:8787/` (anonymous until sign-in —
    every read needs a bearer token, decision 22).
 
+## Automated deploys
+
+This host deploys itself: `.github/workflows/deploy.yml` fires after every
+green `CI` run on `main` and runs on a **self-hosted runner** — a Windows
+service (`actions.runner.GuoHua244-slopwatch.*`) installed at
+`D:\environment\actions-runner` on the same box Docker Desktop runs on, so
+image builds reuse the engine's layer cache. The job checks the repo out
+into the runner's `_work`, copies the untracked `.env` from the canonical
+checkout at `D:\studySpace\slopwatch` (bootstrap tokens and the MinIO
+password never enter git), rebuilds the server image, runs
+`docker compose up -d` (the compose `name: slopwatch` pins the project, so
+this recreates the live containers in place), and smoke-checks `/healthz`.
+
+Red CI never deploys, and a failed smoke check leaves the old containers
+only if `up -d` itself failed — a bad image that starts but answers garbage
+is still a restart, so check the run log before re-running. To take the
+runner down, stop the service; to re-register after wiping it, run
+`config.cmd` in the runner directory with a fresh registration token (repo
+Settings → Actions → Runners).
+
 ## Onboarding the team
 
 1. Open `/#/me` and sign in as one of the `SLOPWATCH_ADMINS` names — the
