@@ -4,7 +4,13 @@ import { usePolled, type PollError } from "../hooks/usePolled";
 import { feedbackAttachmentUrl } from "../lib/attachments";
 import { FEEDBACK_KINDS, FEEDBACK_KIND_LABELS } from "../lib/feedback";
 import { fmtBytes, fmtDate, shortId } from "../lib/format";
-import { ConfirmButton, ErrorBanner, useAsyncAction } from "./admin-shared";
+import {
+  ConfirmButton,
+  ErrorBanner,
+  Pager,
+  pageWindow,
+  useAsyncAction,
+} from "./admin-shared";
 import { Select } from "./Select";
 
 type Props = {
@@ -97,8 +103,7 @@ export const AdminFeedbackPanel = ({ api, refreshKey, refresh }: Props) => {
 
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
-  const from = total === 0 ? 0 : page * PAGE_SIZE + 1;
-  const to = Math.min((page + 1) * PAGE_SIZE, total);
+  const { from, to } = pageWindow(total, page, PAGE_SIZE);
 
   return (
     <>
@@ -211,19 +216,14 @@ export const AdminFeedbackPanel = ({ api, refreshKey, refresh }: Props) => {
             </tbody>
           </table>
         </div>
-        <div className="pagination">
-          <span className="dim">
-            {total === 0 ? "No feedback" : `Showing ${from}–${to} of ${total}`}
-          </span>
-          <span className="pager">
-            <button disabled={page === 0} onClick={() => setPage(page - 1)}>
-              Newer
-            </button>
-            <button disabled={to >= total} onClick={() => setPage(page + 1)}>
-              Older
-            </button>
-          </span>
-        </div>
+        <Pager
+          page={page}
+          setPage={setPage}
+          total={total}
+          from={from}
+          to={to}
+          emptyLabel="No feedback"
+        />
       </div>
       {data !== null && rows.length === 0 && (
         <p className="empty">

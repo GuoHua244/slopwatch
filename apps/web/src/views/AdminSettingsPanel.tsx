@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { AdminApi } from "../api";
+import { useFormFeedback } from "../hooks/useFormFeedback";
 import { usePolled, type PollError } from "../hooks/usePolled";
-import { ErrorBanner, useAsyncAction } from "./admin-shared";
+import { ErrorBanner } from "./admin-shared";
 import { Select } from "./Select";
 
 type Props = {
@@ -43,12 +44,8 @@ const RetroAnglesCard = ({
     }
   })();
   const [drafts, setDrafts] = useState<AngleDraft[] | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const run = useAsyncAction((message) => {
-    setFormError(message);
-    if (message === null) setNotice(null);
-  }, refresh);
+  const { formError, setFormError, notice, setNotice, run } =
+    useFormFeedback(refresh);
 
   if (parsed === null)
     return (
@@ -161,14 +158,8 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
   const [formatDraft, setFormatDraft] = useState<string | null>(null);
   const [enabledDraft, setEnabledDraft] = useState<string | null>(null);
   const [ttlDraft, setTtlDraft] = useState<string | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  // The shared action shape; starting an attempt also clears the last notice.
-  const run = useAsyncAction((message) => {
-    setFormError(message);
-    if (message === null) setNotice(null);
-  }, refresh);
+  const { formError, setFormError, notice, setNotice, run } =
+    useFormFeedback(refresh);
 
   const current = settings ?? {};
   const url = urlDraft ?? current.webhook_url ?? "";

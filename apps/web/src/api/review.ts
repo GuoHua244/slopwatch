@@ -1,5 +1,5 @@
 import {
-  bearerAuth,
+  authedClient,
   defaultFetch,
   getJson,
   unwrapJson,
@@ -33,13 +33,7 @@ export const createReviewApi = (
   userToken: () => string | null,
   doFetch: FetchLike = defaultFetch,
 ): ReviewApi => {
-  const auth = bearerAuth(userToken);
-  const authedJson = (method: string, body: unknown): RequestInit =>
-    auth({
-      method,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+  const { auth, authedJson } = authedClient(userToken);
   return {
     me: async () =>
       unwrapJson<MeInfo>(doFetch, "/me", auth({ method: "GET" }), "GET"),

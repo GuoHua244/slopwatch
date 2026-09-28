@@ -1,5 +1,5 @@
 import {
-  bearerAuth,
+  authedClient,
   defaultFetch,
   getJson,
   unwrapJson,
@@ -36,13 +36,7 @@ export const createRetroApi = (
   userToken: () => string | null,
   doFetch: FetchLike = defaultFetch,
 ): RetroApi => {
-  const auth = bearerAuth(userToken);
-  const authedJson = (method: string, body: unknown): RequestInit =>
-    auth({
-      method,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+  const { auth, authedJson } = authedClient(userToken);
   return {
     angles: async () =>
       (

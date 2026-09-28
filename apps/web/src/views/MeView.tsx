@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { MeInfo, ModelRollupRow } from "../api";
 import { createRetroApi, createReviewApi } from "../api";
 import { storedToken } from "../auth";
+import { useFormFeedback } from "../hooks/useFormFeedback";
 import {
   errorMessage,
   fmtCost,
@@ -11,7 +12,7 @@ import {
 } from "../lib/format";
 import { pricedCost } from "../lib/leaderboard";
 import { priceFor } from "../lib/pricing";
-import { ConfirmButton, useAsyncAction } from "./admin-shared";
+import { ConfirmButton } from "./admin-shared";
 
 const sumTokens = (rows: ModelRollupRow[]): number =>
   rows.reduce(
@@ -34,12 +35,8 @@ const LlmCard = ({ me, onChanged }: { me: MeInfo; onChanged: () => void }) => {
   const [endpoint, setEndpoint] = useState(me.llm?.endpoint ?? "");
   const [model, setModel] = useState(me.llm?.model ?? "");
   const [apiKey, setApiKey] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const run = useAsyncAction((message) => {
-    setFormError(message);
-    if (message === null) setNotice(null);
-  }, onChanged);
+  const { formError, setFormError, notice, setNotice, run } =
+    useFormFeedback(onChanged);
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,7 +58,7 @@ const LlmCard = ({ me, onChanged }: { me: MeInfo; onChanged: () => void }) => {
   return (
     <div className="panel-card">
       <div className="card-head">
-        <h3 className="card-title">LLM for retrospectives</h3>
+        <h3 className="card-title">LLM for retrospectives &amp; summaries</h3>
         <span
           className={`settings-status ${me.llm ? "live" : "off"}`}
           title={me.llm ? `key ${me.llm.api_key_hint}` : "not configured"}
@@ -72,10 +69,12 @@ const LlmCard = ({ me, onChanged }: { me: MeInfo; onChanged: () => void }) => {
         </span>
       </div>
       <p className="card-lede">
-        Session retrospectives run on this server with <em>your own</em>{" "}
-        OpenAI-compatible LLM credentials — the tokens a retrospective spends
-        are billed to your key, never to anyone else's. The key is stored
-        server-side and never shown again.
+        Session retrospectives and rolling session summaries run with{" "}
+        <em>your own</em> OpenAI-compatible LLM credentials — the tokens they
+        spend are billed to your key, never to anyone else's. GLM Coding Plan
+        keys must use the coding endpoint (
+        {"https://open.bigmodel.cn/api/coding/paas/v4"}), not the standard
+        pay-as-you-go one. The key is stored server-side and never shown again.
       </p>
       <form className="settings-form llm-form" onSubmit={save}>
         <label className="field wide">
@@ -91,7 +90,7 @@ const LlmCard = ({ me, onChanged }: { me: MeInfo; onChanged: () => void }) => {
           <input
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder="glm-4.6"
+            placeholder="glm-5.3-flash"
           />
         </label>
         <label className="field">

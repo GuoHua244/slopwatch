@@ -1,6 +1,6 @@
 import {
   ApiError,
-  bearerAuth,
+  authedClient,
   defaultFetch,
   errorDetail,
   type FetchLike,
@@ -67,18 +67,27 @@ export type AdminApi = {
   setUserTeam(name: string, teamId: string | null): Promise<void>;
 };
 
+/** Query string for the admin list routes; absent fields drop out. */
+const listQuery = (params: {
+  limit?: number;
+  offset?: number;
+  kind?: string;
+  actor?: string;
+}): string => {
+  const search = new URLSearchParams();
+  if (params.limit !== undefined) search.set("limit", String(params.limit));
+  if (params.offset !== undefined) search.set("offset", String(params.offset));
+  if (params.kind !== undefined) search.set("kind", params.kind);
+  if (params.actor !== undefined) search.set("actor", params.actor);
+  return search.toString();
+};
+
 /** Admin plane client (decision 13); every call carries the admin bearer. */
 export const createAdminApi = (
   adminToken: () => string,
   doFetch: FetchLike = defaultFetch,
 ): AdminApi => {
-  const auth = bearerAuth(adminToken);
-  const authedJson = (method: string, body: unknown): RequestInit =>
-    auth({
-      method,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+  const { auth, authedJson } = authedClient(adminToken);
   const unwrap = async <T>(path: string, init: RequestInit): Promise<T> => {
     const res = await doFetch(path, init);
     if (!res.ok)
@@ -163,25 +172,14 @@ export const createAdminApi = (
         )
       ).rows,
     audit: async (params = {}) => {
-      const search = new URLSearchParams();
-      if (params.limit !== undefined) search.set("limit", String(params.limit));
-      if (params.offset !== undefined)
-        search.set("offset", String(params.offset));
-      if (params.kind !== undefined) search.set("kind", params.kind);
-      if (params.actor !== undefined) search.set("actor", params.actor);
-      const query = search.toString();
+      const query = listQuery(params);
       return unwrap<{ rows: AuditRow[]; total: number }>(
         `/admin/audit${query ? `?${query}` : ""}`,
         auth({ method: "GET" }),
       );
     },
     feedback: async (params = {}) => {
-      const search = new URLSearchParams();
-      if (params.limit !== undefined) search.set("limit", String(params.limit));
-      if (params.offset !== undefined)
-        search.set("offset", String(params.offset));
-      if (params.kind !== undefined) search.set("kind", params.kind);
-      const query = search.toString();
+      const query = listQuery(params);
       return unwrap<{ rows: FeedbackRow[]; total: number }>(
         `/admin/feedback${query ? `?${query}` : ""}`,
         auth({ method: "GET" }),

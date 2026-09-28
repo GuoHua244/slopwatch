@@ -293,6 +293,70 @@ const ToolImages = ({
   </span>
 );
 
+/** One model-request line: model and duration, plus token usage in-turn. */
+const RequestRow = ({
+  request,
+  withUsage = false,
+}: {
+  request: ModelRequestEvent;
+  withUsage?: boolean;
+}) => (
+  <div className="row">
+    <span className="kind">request</span>
+    <span className="detail" title={`${request.provider}/${request.model}`}>
+      {request.model} · {fmtDuration(request.duration_ms)}
+      {withUsage && request.usage
+        ? ` · ${usage(request.usage.input_tokens, request.usage.output_tokens)}`
+        : ""}
+    </span>
+    <span className="meta">{clock(request.occurred_at)}</span>
+  </div>
+);
+
+/** One tool-activity line: the call summary, and in-turn the result status
+ * (failed/ok/no result captured/running) with any captured result images. */
+const ToolRow = ({
+  tool,
+  index,
+  sessionId,
+  onOpen,
+  sessionEnded = false,
+  withResult = false,
+}: {
+  tool: ToolActivity;
+  index: number;
+  sessionId: string;
+  onOpen: (src: string, title: string) => void;
+  sessionEnded?: boolean;
+  withResult?: boolean;
+}) => (
+  <div className="row">
+    <span className="kind">tool</span>
+    <span className="detail">
+      {tool.call
+        ? `${tool.call.tool} · ${summarizeArgs(tool.call.args)}`
+        : "(result without call)"}
+      {withResult &&
+        (tool.result
+          ? tool.result.ok === false
+            ? ` · failed${tool.result.error ? `: ${tool.result.error}` : ""}`
+            : ` · ok${tool.result.duration_ms !== undefined ? ` · ${fmtDuration(tool.result.duration_ms)}` : ""}`
+          : sessionEnded
+            ? " · no result captured"
+            : " · running…")}
+    </span>
+    {withResult &&
+      tool.result?.images !== undefined &&
+      tool.result.images.length > 0 && (
+        <ToolImages
+          sessionId={sessionId}
+          shas={tool.result.images}
+          onOpen={onOpen}
+        />
+      )}
+  </div>
+);
+
 type NoteInputProps = {
   placeholder: string;
   onComment: (body: string) => void;
@@ -474,44 +538,18 @@ export const TurnsView = ({
             onDelete={onDeleteComment}
           />
           {turn.modelRequests.map((request) => (
-            <div key={requestKey(request)} className="row">
-              <span className="kind">request</span>
-              <span
-                className="detail"
-                title={`${request.provider}/${request.model}`}
-              >
-                {request.model} · {fmtDuration(request.duration_ms)}
-                {request.usage
-                  ? ` · ${usage(request.usage.input_tokens, request.usage.output_tokens)}`
-                  : ""}
-              </span>
-              <span className="meta">{clock(request.occurred_at)}</span>
-            </div>
+            <RequestRow key={requestKey(request)} request={request} withUsage />
           ))}
           {turn.tools.map((tool, i) => (
-            <div key={toolKey(tool, i)} className="row">
-              <span className="kind">tool</span>
-              <span className="detail">
-                {tool.call
-                  ? `${tool.call.tool} · ${summarizeArgs(tool.call.args)}`
-                  : "(result without call)"}
-                {tool.result
-                  ? tool.result.ok === false
-                    ? ` · failed${tool.result.error ? `: ${tool.result.error}` : ""}`
-                    : ` · ok${tool.result.duration_ms !== undefined ? ` · ${fmtDuration(tool.result.duration_ms)}` : ""}`
-                  : sessionEnded
-                    ? " · no result captured"
-                    : " · running…"}
-              </span>
-              {tool.result?.images !== undefined &&
-                tool.result.images.length > 0 && (
-                  <ToolImages
-                    sessionId={sessionId}
-                    shas={tool.result.images}
-                    onOpen={openImage}
-                  />
-                )}
-            </div>
+            <ToolRow
+              key={toolKey(tool, i)}
+              tool={tool}
+              index={i}
+              sessionId={sessionId}
+              onOpen={openImage}
+              sessionEnded={sessionEnded}
+              withResult
+            />
           ))}
           {turn.assistantMessage && (
             <blockquote className="assistant-msg">
@@ -529,26 +567,16 @@ export const TurnsView = ({
             </span>
           </header>
           {orphans.requests.map((request) => (
-            <div key={requestKey(request)} className="row">
-              <span className="kind">request</span>
-              <span
-                className="detail"
-                title={`${request.provider}/${request.model}`}
-              >
-                {request.model} · {fmtDuration(request.duration_ms)}
-              </span>
-              <span className="meta">{clock(request.occurred_at)}</span>
-            </div>
+            <RequestRow key={requestKey(request)} request={request} />
           ))}
           {orphans.tools.map((tool, i) => (
-            <div key={toolKey(tool, i)} className="row">
-              <span className="kind">tool</span>
-              <span className="detail">
-                {tool.call
-                  ? `${tool.call.tool} · ${summarizeArgs(tool.call.args)}`
-                  : "(result without call)"}
-              </span>
-            </div>
+            <ToolRow
+              key={toolKey(tool, i)}
+              tool={tool}
+              index={i}
+              sessionId={sessionId}
+              onOpen={openImage}
+            />
           ))}
         </article>
       )}

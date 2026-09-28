@@ -1,29 +1,55 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { errorMessage } from "../lib/format";
 
-/**
- * The one shape every admin mutation takes: clear the form error, run the
- * action, refresh the polled panels on success, surface the failure
- * otherwise. `onError` is the panel's error-message setter (pass a callback
- * that also clears sibling notices); `refresh` bumps the shared refreshKey.
- */
-export const useAsyncAction = (
-  onError: (message: string | null) => void,
-  refresh?: () => void,
-): ((fn: () => Promise<void>) => Promise<void>) => {
-  const run = async (fn: () => Promise<void>) => {
-    onError(null);
-    try {
-      await fn();
-      refresh?.();
-    } catch (e) {
-      onError(errorMessage(e));
-    }
-  };
-  return run;
+// The action-runner hook serves non-admin views too (MeView, session
+// detail); it lives with the other hooks and is re-exported here so every
+// panel's existing import keeps working.
+export { useAsyncAction } from "../hooks/useAsyncAction";
+
+/** The 1-based showing window for the current page, clamped to the total. */
+export const pageWindow = (
+  total: number,
+  page: number,
+  pageSize: number,
+): { from: number; to: number } => ({
+  from: total === 0 ? 0 : page * pageSize + 1,
+  to: Math.min((page + 1) * pageSize, total),
+});
+
+type PagerProps = {
+  page: number;
+  setPage: (next: number) => void;
+  total: number;
+  from: number;
+  to: number;
+  /** The zero-rows label — "No entries", "No feedback", … */
+  emptyLabel: string;
 };
+
+/** The standard list pagination: a showing range over Newer/Older pagers. */
+export const Pager = ({
+  page,
+  setPage,
+  total,
+  from,
+  to,
+  emptyLabel,
+}: PagerProps) => (
+  <div className="pagination">
+    <span className="dim">
+      {total === 0 ? emptyLabel : `Showing ${from}–${to} of ${total}`}
+    </span>
+    <span className="pager">
+      <button disabled={page === 0} onClick={() => setPage(page - 1)}>
+        Newer
+      </button>
+      <button disabled={to >= total} onClick={() => setPage(page + 1)}>
+        Older
+      </button>
+    </span>
+  </div>
+);
 
 /** The standard red banner; null renders nothing. */
 export const ErrorBanner = ({ message }: { message: string | null }) =>

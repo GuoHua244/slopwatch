@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { AdminApi, AuditRow } from "../api";
 import { usePolled, type PollError } from "../hooks/usePolled";
 import { fmtDate, shortId } from "../lib/format";
-import { ErrorBanner } from "./admin-shared";
+import { ErrorBanner, Pager, pageWindow } from "./admin-shared";
 import { Select } from "./Select";
 
 type Props = {
@@ -173,8 +173,7 @@ export const AdminAuditPanel = ({ api, refreshKey }: Props) => {
 
   const rows = data?.rows ?? [];
   const total = data?.total ?? 0;
-  const from = total === 0 ? 0 : page * PAGE_SIZE + 1;
-  const to = Math.min((page + 1) * PAGE_SIZE, total);
+  const { from, to } = pageWindow(total, page, PAGE_SIZE);
 
   return (
     <>
@@ -259,19 +258,14 @@ export const AdminAuditPanel = ({ api, refreshKey }: Props) => {
             </tbody>
           </table>
         </div>
-        <div className="pagination">
-          <span className="dim">
-            {total === 0 ? "No entries" : `Showing ${from}–${to} of ${total}`}
-          </span>
-          <span className="pager">
-            <button disabled={page === 0} onClick={() => setPage(page - 1)}>
-              Newer
-            </button>
-            <button disabled={to >= total} onClick={() => setPage(page + 1)}>
-              Older
-            </button>
-          </span>
-        </div>
+        <Pager
+          page={page}
+          setPage={setPage}
+          total={total}
+          from={from}
+          to={to}
+          emptyLabel="No entries"
+        />
       </div>
       {data !== null && rows.length === 0 && (
         <p className="empty">

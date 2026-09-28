@@ -1,7 +1,7 @@
 /**
  * The shared HTTP plumbing for every client plane: the minimal fetch
  * surface, the ApiError carrier, the body-unwrap helpers, and the one
- * bearer-auth factory all three planes previously duplicated.
+ * bearer-auth factory all three planes share.
  */
 
 /**
@@ -95,3 +95,18 @@ export const bearerAuth =
       },
     };
   };
+
+/**
+ * The auth prologue every token-carrying plane (review, retro, admin) opens
+ * with: the bearer builder plus a JSON-body builder over it.
+ */
+export const authedClient = (getToken: () => string | null) => {
+  const auth = bearerAuth(getToken);
+  const authedJson = (method: string, body: unknown): RequestInit =>
+    auth({
+      method,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  return { auth, authedJson };
+};
