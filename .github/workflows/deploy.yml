@@ -2,8 +2,9 @@
 # self-hosted runner on the same machine Docker Desktop runs on, gated on a
 # green CI run — red code never deploys. Setup notes live in docs/deploy.md.
 #
-# shell is powershell on purpose: bare `bash` resolves to the WSL stub in
-# System32 (no WSL distro is installed on this box), which exits 1 instantly.
+# shell is cmd on purpose: bare `bash` resolves to the WSL stub in System32
+# (no distro installed), and the host PowerShell runs with the default
+# Restricted execution policy, which blocks the runner's step scripts.
 name: Deploy
 
 on:
@@ -18,7 +19,7 @@ concurrency:
 
 defaults:
   run:
-    shell: powershell
+    shell: cmd
 
 jobs:
   deploy:
@@ -31,17 +32,12 @@ jobs:
       # untracked by design; compose's :? interpolation fails fast without
       # it. The canonical checkout stays its only home.
       - name: Bring the untracked .env from the canonical checkout
-        run: Copy-Item D:\studySpace\slopwatch\.env .env
+        run: copy /Y D:\studySpace\slopwatch\.env .env
       - name: Rebuild and restart the server container
         run: |
           docker compose build server
           docker compose up -d
+      # Fixed 2s retries for ~1 minute: the recreate window and a slow boot
+      # both fit. curl's nonzero exit fails the step.
       - name: Smoke check /healthz
-        run: |
-          foreach ($i in 1..30) {
-            curl.exe -sf http://localhost:8787/healthz
-            if ($LASTEXITCODE -eq 0) { exit 0 }
-            Start-Sleep -Seconds 2
-          }
-          Write-Error "server did not answer /healthz within 60s"
-          exit 1
+        run: curl -sf --retry 30 --retry-delay 2 --retry-all-errors http://localhost:8787/healthz
