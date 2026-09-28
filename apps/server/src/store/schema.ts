@@ -197,6 +197,13 @@ CREATE TABLE IF NOT EXISTS retrospectives (
   finished_at     TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS retrospectives_session ON retrospectives (session_id);
+-- Streaming progress on a running row: the phase, the cumulative output
+-- size, and the last write as the heartbeat the dashboard reads for hang
+-- detection. Terminal writes clear all three.
+ALTER TABLE retrospectives ADD COLUMN IF NOT EXISTS phase TEXT;
+ALTER TABLE retrospectives ADD COLUMN IF NOT EXISTS output_chars BIGINT;
+ALTER TABLE retrospectives ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+ALTER TABLE retrospectives ADD COLUMN IF NOT EXISTS output_tail TEXT;
 -- The per-user single-flight check reads only open rows.
 CREATE INDEX IF NOT EXISTS retrospectives_user_open
   ON retrospectives (user_id) WHERE status IN ('pending', 'running');

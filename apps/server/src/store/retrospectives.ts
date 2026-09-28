@@ -10,11 +10,11 @@ import type {
 } from "./types";
 
 const RETRO_COLUMNS =
-  "id, session_id, user_id, angle, supplement, system_snapshot, prompt_snapshot, status, result, model, input_tokens, output_tokens, cache_read_tokens, reasoning_tokens, error, created_at, started_at, finished_at";
+  "id, session_id, user_id, angle, supplement, system_snapshot, prompt_snapshot, status, phase, output_chars, output_tail, heartbeat_at, result, model, input_tokens, output_tokens, cache_read_tokens, reasoning_tokens, error, created_at, started_at, finished_at";
 
 /** List responses drop the two snapshot columns — they are prompt-sized. */
 const RETRO_LIST_COLUMNS =
-  "id, session_id, user_id, angle, supplement, status, result, model, input_tokens, output_tokens, cache_read_tokens, reasoning_tokens, error, created_at, started_at, finished_at";
+  "id, session_id, user_id, angle, supplement, status, phase, output_chars, output_tail, heartbeat_at, result, model, input_tokens, output_tokens, cache_read_tokens, reasoning_tokens, error, created_at, started_at, finished_at";
 
 const pgRetroRow = (r: Record<string, unknown>): RetroRow => ({
   id: Number(r.id),
@@ -30,6 +30,16 @@ const pgRetroRow = (r: Record<string, unknown>): RetroRow => ({
       ? s
       : "pending";
   })(),
+  phase: ((): RetroRow["phase"] => {
+    const p = r.phase;
+    return p === "waiting_first_byte" || p === "streaming" ? p : null;
+  })(),
+  output_chars:
+    r.output_chars === null || r.output_chars === undefined
+      ? null
+      : Number(r.output_chars),
+  output_tail: (r.output_tail as string | null) ?? null,
+  heartbeat_at: r.heartbeat_at ? iso(r.heartbeat_at) : null,
   result: (r.result as string | null) ?? null,
   model: (r.model as string | null) ?? null,
   input_tokens:
@@ -62,6 +72,7 @@ export const retrospectiveMethods = (
   | "getRetro"
   | "listRetros"
   | "setRetroRunning"
+  | "setRetroProgress"
   | "setRetroCompleted"
   | "setRetroFailed"
   | "failStaleRetros"
@@ -119,11 +130,23 @@ export const retrospectiveMethods = (
       );
     },
 
+    async setRetroProgress(id, phase, outputChars, tail) {
+      // The status guard makes progress writes idempotent against a run
+      // that finished while a throttled callback was still in flight —
+      // a late write can never resurrect a terminal row's progress line.
+      await pool.query(
+        `UPDATE retrospectives SET phase = $2, output_chars = $3, output_tail = $4, heartbeat_at = now()
+         WHERE id = $1 AND status = 'running'`,
+        [id, phase, outputChars, tail],
+      );
+    },
+
     async setRetroCompleted(id, patch) {
       const u = patch.usage ?? {};
       await pool.query(
         `UPDATE retrospectives SET status = 'completed', result = $2, model = $3,
            input_tokens = $4, output_tokens = $5, cache_read_tokens = $6, reasoning_tokens = $7,
+           phase = NULL, output_chars = NULL, output_tail = NULL, heartbeat_at = NULL,
            finished_at = now()
          WHERE id = $1`,
         [
@@ -140,7 +163,10 @@ export const retrospectiveMethods = (
 
     async setRetroFailed(id, error) {
       await pool.query(
-        "UPDATE retrospectives SET status = 'failed', error = $2, finished_at = now() WHERE id = $1",
+        `UPDATE retrospectives SET status = 'failed', error = $2,
+           phase = NULL, output_chars = NULL, output_tail = NULL, heartbeat_at = NULL,
+           finished_at = now()
+         WHERE id = $1`,
         [id, error.slice(0, 2000)],
       );
     },
@@ -149,6 +175,7 @@ export const retrospectiveMethods = (
       const { rowCount } = await pool.query(
         `UPDATE retrospectives SET status = 'failed',
            error = 'the server restarted before this run finished',
+           phase = NULL, output_chars = NULL, output_tail = NULL, heartbeat_at = NULL,
            finished_at = now()
          WHERE status IN ('pending', 'running')`,
       );

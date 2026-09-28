@@ -365,7 +365,11 @@ button.link:hover:not(:disabled) {
   color: var(--text);
 }
 
-input {
+/* The shared control face: text inputs and the themed dropdown trigger
+   (views/Select.tsx) read as one control — the portalled listbox carries the
+   theme the native popup never could. */
+input,
+.select-trigger {
   background: var(--panel);
   border: 1px solid var(--line);
   color: var(--text);
@@ -376,22 +380,10 @@ input {
     border-color 0.12s,
     box-shadow 0.12s;
 }
-
-/* --- the themed dropdown (views/Select.tsx): trigger reads like an input,
-   the portalled listbox carries the theme the native popup never could --- */
 .select-trigger {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  color: var(--text);
-  font: 400 13px/1.4 var(--font-ui);
-  padding: 7px 12px;
-  border-radius: var(--radius);
-  transition:
-    border-color 0.12s,
-    box-shadow 0.12s;
 }
 .select-trigger > span {
   flex: 1;
@@ -684,6 +676,11 @@ ul.sessions li.selected {
 }
 .chip.chip-live::before {
   background: var(--accent);
+}
+/* an in-flight run's chip: the live dot breathes, like the header pulse */
+.chip.chip-running::before {
+  background: var(--accent);
+  animation: pulse 2.6s ease-out infinite;
 }
 .chip.chip-down {
   color: var(--down);
@@ -2115,6 +2112,75 @@ ul.sessions li.selected {
 .retro-run-error .banner-error {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+/* the in-flight run: indeterminate progress line under the head, spinner
+   in the body — the run must read as working, not parked */
+.retro-run-progress {
+  height: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.retro-run-progress::after {
+  content: "";
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: var(--accent);
+  animation: retro-sweep 1.4s ease-in-out infinite;
+}
+@keyframes retro-sweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(280%);
+  }
+}
+.retro-run-progress-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+/* The streaming tail as a two-line terminal viewport: content is
+   bottom-anchored, so wrapped/new lines push the old one up and out while
+   fresh chars keep arriving at the bottom-right edge. */
+.retro-run-tail {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  height: 3.2em;
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.retro-run-tail > span {
+  flex: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.spin {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chip.chip-running::before,
+  .retro-run-progress::after,
+  .spin {
+    animation: none;
+  }
 }
 
 /* the report itself — markdown rendered inside the dark panel */

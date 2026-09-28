@@ -244,6 +244,14 @@ export type RetroRow = {
   system_snapshot: string;
   prompt_snapshot: string;
   status: "pending" | "running" | "completed" | "failed";
+  /** Streaming progress while running; null on pending and terminal rows. */
+  phase: "waiting_first_byte" | "streaming" | null;
+  /** Cumulative streamed output (content + reasoning chars). */
+  output_chars: number | null;
+  /** Rolling preview of the generated text while streaming; null otherwise. */
+  output_tail: string | null;
+  /** Server clock at the last progress write — the hang-detection signal. */
+  heartbeat_at: string | null;
   result: string | null;
   model: string | null;
   input_tokens: number | null;
@@ -511,6 +519,16 @@ export type Store = {
   /** A session's runs, newest first; the bulky snapshots stay out. */
   listRetros(sessionId: string): Promise<RetroRow[]>;
   setRetroRunning(id: number): Promise<void>;
+  /**
+   * One live progress write on a running row. The `status = 'running'`
+   * guard keeps a late callback from resurrecting a terminal row.
+   */
+  setRetroProgress(
+    id: number,
+    phase: "waiting_first_byte" | "streaming",
+    outputChars: number,
+    tail: string | null,
+  ): Promise<void>;
   setRetroCompleted(
     id: number,
     patch: {

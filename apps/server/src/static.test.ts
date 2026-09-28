@@ -139,6 +139,7 @@ const refusingStore = (): Store => ({
   getRetro: async () => null,
   listRetros: async () => [],
   setRetroRunning: async () => {},
+  setRetroProgress: async () => {},
   setRetroCompleted: async () => {},
   setRetroFailed: async () => {},
   failStaleRetros: async () => 0,

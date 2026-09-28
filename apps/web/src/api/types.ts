@@ -77,6 +77,14 @@ export type RetroRow = {
   angle: string;
   supplement: string | null;
   status: "pending" | "running" | "completed" | "failed";
+  /** Streaming progress while running; null on pending and terminal rows. */
+  phase: "waiting_first_byte" | "streaming" | null;
+  /** Cumulative streamed output (content + reasoning chars). */
+  output_chars: number | null;
+  /** Rolling preview of the generated text while streaming; null otherwise. */
+  output_tail: string | null;
+  /** Server clock at the last progress write — the hang-detection signal. */
+  heartbeat_at: string | null;
   result: string | null;
   model: string | null;
   input_tokens: number | null;

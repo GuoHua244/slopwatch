@@ -11,13 +11,19 @@ import type { Store } from "../store";
 export const RETRO_CONCURRENCY = 2;
 /** Report budget: the retried-on-length pattern the summary fold proved. */
 export const RETRO_MAX_OUTPUT_TOKENS = 16_384;
-/** One run's LLM call may think for five minutes before being cut off. */
-export const RETRO_TIMEOUT_MS = 300_000;
+/** First byte may legitimately take five minutes — a large prompt prefills slowly. */
+export const RETRO_FIRST_BYTE_MS = 300_000;
+/** A stream that keeps flowing is never cut; ten silent minutes kill it. */
+export const RETRO_STREAM_IDLE_MS = 600_000;
+/** Progress writes are throttled to one per this interval per run. */
+export const RETRO_PROGRESS_INTERVAL_MS = 1_000;
 
 export type RetroQueueOptions = {
   concurrency?: number;
   maxOutputTokens?: number;
-  timeoutMs?: number;
+  firstByteMs?: number;
+  streamIdleMs?: number;
+  progressIntervalMs?: number;
   fetchImpl?: FetchLike;
   log?: (message: string, error?: unknown) => void;
 };
@@ -34,7 +40,9 @@ export const createRetroQueue = (
   {
     concurrency = RETRO_CONCURRENCY,
     maxOutputTokens = RETRO_MAX_OUTPUT_TOKENS,
-    timeoutMs = RETRO_TIMEOUT_MS,
+    firstByteMs = RETRO_FIRST_BYTE_MS,
+    streamIdleMs = RETRO_STREAM_IDLE_MS,
+    progressIntervalMs = RETRO_PROGRESS_INTERVAL_MS,
     fetchImpl,
     log = (message, error) =>
       error === undefined
@@ -63,6 +71,20 @@ export const createRetroQueue = (
         await fail("the session was deleted before this run started");
         return;
       }
+      // Live progress for the dashboard: waiting for the first byte, then
+      // the streaming counter. Every write is fire-and-forget — a slow or
+      // failing UPDATE must never delay or fail the run itself.
+      const progress = (
+        phase: "waiting_first_byte" | "streaming",
+        outputChars: number,
+        tail: string | null = null,
+      ) => {
+        void store
+          .setRetroProgress(id, phase, outputChars, tail)
+          .catch(() => {});
+      };
+      progress("waiting_first_byte", 0);
+      let lastProgressAt = Date.now();
       const result = await chatCompletionDetailed({
         endpoint: config.endpoint,
         model: config.model,
@@ -70,8 +92,21 @@ export const createRetroQueue = (
         system: row.system_snapshot,
         user: row.prompt_snapshot,
         maxTokens: maxOutputTokens,
-        timeoutMs,
+        firstByteTimeoutMs: firstByteMs,
+        timeoutMs: streamIdleMs,
         fetchImpl,
+        onProgress: (p) => {
+          if (p.phase === "first-byte") {
+            lastProgressAt = Date.now();
+            progress("streaming", 0);
+            return;
+          }
+          // Frames arrive every few chars — persist at most one write per
+          // interval, so the DB sees a heartbeat, not the raw stream.
+          if (Date.now() - lastProgressAt < progressIntervalMs) return;
+          lastProgressAt = Date.now();
+          progress("streaming", p.outputChars, p.tail ?? null);
+        },
       });
       if (result.text !== null) {
         const u = result.usage ?? {};
