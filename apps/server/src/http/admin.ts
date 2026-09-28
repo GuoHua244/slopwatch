@@ -18,7 +18,7 @@ import {
 } from "../retrospective/presets";
 import { bearerToken, timingSafeTokenEq, type Auth } from "./auth";
 import type { Audit } from "./audit";
-import { HttpError, json } from "./respond";
+import { attachmentResponse, HttpError, json } from "./respond";
 import {
   RETENTION_ERROR,
   UUID_RE,
@@ -26,6 +26,7 @@ import {
   isRetention,
   readJson,
   readJsonOr400,
+  requireSessionId,
   trimField,
   windowParam,
 } from "./validate";
@@ -33,9 +34,8 @@ import {
 export type AdminContext = {
   store: Store;
   /**
-   * Operator bypass bearer (decision 13). Optional and no longer the only way
-   * in: a signed-in user with the admin role passes the same gate. Unset
-   * simply removes the bypass.
+   * Operator bypass bearer (decision 13). Optional: a signed-in user with
+   * the admin role also passes the same gate. Unset simply removes the bypass.
    */
   adminToken?: string;
   /**
@@ -51,6 +51,23 @@ export type AdminContext = {
   defaultRawTtlDays: number;
   audit: Audit;
   requireReader: Auth["requireReader"];
+};
+
+/**
+ * The limit/offset window for the admin list routes: a bounded `limit` plus
+ * an `offset` clamped so astronomic values cannot overflow the Postgres
+ * bigint parameter.
+ */
+const listWindow = (params: URLSearchParams, defaultLimit: number) => {
+  const limit = windowParam(params.get("limit"), defaultLimit, 50);
+  const offsetRaw = Number(params.get("offset") ?? 0);
+  return {
+    limit,
+    offset:
+      Number.isFinite(offsetRaw) && offsetRaw > 0
+        ? Math.min(Math.floor(offsetRaw), 1_000_000_000)
+        : 0,
+  };
 };
 
 /** Per-field before/after for an audit diff; unchanged fields drop out. */
@@ -128,17 +145,12 @@ export const handleAdmin = async (
   // ADR 0007: the audit trail read — newest first, filterable by action
   // category prefix and acting user, paginated with a filtered total.
   if (url.pathname === "/admin/audit" && req.method === "GET") {
-    const limit = windowParam(url.searchParams.get("limit"), 200, 50);
-    const offsetRaw = Number(url.searchParams.get("offset") ?? 0);
+    const { limit, offset } = listWindow(url.searchParams, 200);
     return json(
       200,
       await store.listAudit({
         limit,
-        offset:
-          Number.isFinite(offsetRaw) && offsetRaw > 0
-            ? // clamp: astronomic offsets overflow the bigint parameter
-              Math.min(Math.floor(offsetRaw), 1_000_000_000)
-            : 0,
+        offset,
         kind:
           url.searchParams.get("kind")?.trim().replace(/\.+$/, "") || undefined,
         actor: url.searchParams.get("actor")?.trim() || undefined,
@@ -156,16 +168,12 @@ export const handleAdmin = async (
   // paginated with a filtered total. Stateless by design: nothing to
   // mutate, only read and delete.
   if (url.pathname === "/admin/feedback" && req.method === "GET") {
-    const limit = windowParam(url.searchParams.get("limit"), 200, 50);
-    const offsetRaw = Number(url.searchParams.get("offset") ?? 0);
+    const { limit, offset } = listWindow(url.searchParams, 200);
     return json(
       200,
       await store.listFeedback({
         limit,
-        offset:
-          Number.isFinite(offsetRaw) && offsetRaw > 0
-            ? Math.min(Math.floor(offsetRaw), 1_000_000_000)
-            : 0,
+        offset,
         kind: url.searchParams.get("kind")?.trim() || undefined,
       }),
     );
@@ -195,16 +203,9 @@ export const handleAdmin = async (
       feedbackAttachmentMatch[2]!,
     );
     if (attachment === null) return json(404, { error: "no such attachment" });
-    return new Response(
-      new Blob([new Uint8Array(attachment.data)], { type: attachment.mime }),
-      {
-        headers: {
-          "content-type": attachment.mime,
-          "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`,
-          "cache-control": "private, max-age=31536000, immutable",
-        },
-      },
-    );
+    return attachmentResponse(attachment, {
+      "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`,
+    });
   }
 
   // v2 decision 21: fetch an archived raw payload back by key — the
@@ -592,8 +593,7 @@ export const handleAdmin = async (
 
   const sessionMatch = url.pathname.match(/^\/admin\/sessions\/([^/]+)$/);
   if (sessionMatch && req.method === "DELETE") {
-    const sessionId = decodeParam(sessionMatch[1]!);
-    if (sessionId === null) return json(400, { error: "malformed session id" });
+    const sessionId = requireSessionId(sessionMatch[1]!);
     // ADR 0007: the session and its events vanish — snapshot them into
     // the entry so the trail outlives what it describes.
     const snap = await store.getSession(sessionId);

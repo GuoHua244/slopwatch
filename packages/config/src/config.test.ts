@@ -29,11 +29,6 @@ const writeRawConfig = (home: string, body: string): void => {
 const example = (): SlopwatchConfig => ({
   serverUrl: "http://localhost:8787",
   token: "sw_token_abcdef",
-  summary: {
-    endpoint: "https://llm-gateway.internal/v1",
-    model: "glm-4",
-    apiKey: "sk-secret",
-  },
 });
 
 describe("configFilePath", () => {
@@ -45,7 +40,7 @@ describe("configFilePath", () => {
 });
 
 describe("loadConfig/saveConfig", () => {
-  test("round-trips a saved config including the summary block", () => {
+  test("round-trips a saved config", () => {
     const home = tempHome();
     saveConfig(example(), home);
     expect(loadConfig(home)).toEqual(example());
@@ -94,11 +89,15 @@ describe("loadConfig/saveConfig", () => {
     expect(loadConfig(home)).toBeNull();
   });
 
-  test("drops a partial summary block instead of failing", () => {
+  test("ignores unknown keys such as the removed summary block", () => {
     const home = tempHome();
     writeRawConfig(
       home,
-      JSON.stringify({ serverUrl: "u", token: "t", summary: { model: "m" } }),
+      JSON.stringify({
+        serverUrl: "u",
+        token: "t",
+        summary: { endpoint: "e", model: "m", apiKey: "k" },
+      }),
     );
     expect(loadConfig(home)).toEqual({ serverUrl: "u", token: "t" });
   });
@@ -169,18 +168,11 @@ describe("resolveShipConfig", () => {
 });
 
 describe("redactConfig", () => {
-  test("masks the token and summary api key, keeps the rest", () => {
-    const redacted = redactConfig(example());
-    expect(redacted.token).toBe("sw_t…");
-    expect(redacted.summary?.apiKey).toBe("sk-s…");
-    expect(redacted.serverUrl).toBe("http://localhost:8787");
-    expect(redacted.summary?.model).toBe("glm-4");
-    expect(redacted.summary?.endpoint).toBe("https://llm-gateway.internal/v1");
-  });
-
-  test("handles a config without a summary block", () => {
-    const redacted = redactConfig({ serverUrl: "u", token: "t" });
-    expect(redacted).toEqual({ serverUrl: "u", token: "…" });
+  test("masks the token, keeps the rest", () => {
+    expect(redactConfig(example())).toEqual({
+      serverUrl: "http://localhost:8787",
+      token: "sw_t…",
+    });
   });
 });
 

@@ -144,21 +144,4 @@ describe("runInstall", () => {
     expect(result.ok).toBe(false);
     expect(readFileSync(settings, "utf8")).toBe("{corrupt");
   });
-
-  test("--summary-* lands in the stored config for the listeners", async () => {
-    const home = tempHome();
-    const result = await runInstall({
-      token: "tok-1",
-      serverUrl,
-      homeDir: home,
-      summary: { endpoint: "https://gw/v1", model: "m1", apiKey: "k1" },
-    });
-    expect(result.ok).toBe(true);
-    const config = loadConfig(home);
-    expect(config?.summary).toEqual({
-      endpoint: "https://gw/v1",
-      model: "m1",
-      apiKey: "k1",
-    });
-  });
 });

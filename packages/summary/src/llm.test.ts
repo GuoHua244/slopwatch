@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { chatCompletion } from "./llm";
+import { chatCompletionDetailed } from "./llm";
 
-describe("chatCompletion", () => {
+describe("chatCompletionDetailed", () => {
   test("returns the assistant text from an OpenAI-compatible response", async () => {
     const server = Bun.serve({
       port: 0,
@@ -11,7 +11,7 @@ describe("chatCompletion", () => {
         }),
     });
     try {
-      const { text } = await chatCompletion({
+      const { text } = await chatCompletionDetailed({
         endpoint: `http://127.0.0.1:${server.port}/v1`,
         model: "glm-4",
         apiKey: "sk-test",
@@ -48,7 +48,7 @@ describe("chatCompletion", () => {
       },
     });
     try {
-      const { text } = await chatCompletion({
+      const { text } = await chatCompletionDetailed({
         endpoint: `http://127.0.0.1:${server.port}/v1/`,
         model: "glm-4",
         apiKey: "sk-test",
@@ -75,7 +75,7 @@ describe("chatCompletion", () => {
       fetch: () => Response.json({}, { status: 401 }),
     });
     try {
-      const { text } = await chatCompletion({
+      const { text } = await chatCompletionDetailed({
         endpoint: `http://127.0.0.1:${server.port}`,
         model: "m",
         apiKey: "bad",
@@ -89,7 +89,7 @@ describe("chatCompletion", () => {
   });
 
   test("an unreachable endpoint yields null instead of throwing", async () => {
-    const { text } = await chatCompletion({
+    const { text } = await chatCompletionDetailed({
       endpoint: "http://127.0.0.1:1",
       model: "m",
       apiKey: "k",
@@ -105,7 +105,7 @@ describe("chatCompletion", () => {
       fetch: () => Response.json({ surprise: true }),
     });
     try {
-      const { text } = await chatCompletion({
+      const { text } = await chatCompletionDetailed({
         endpoint: `http://127.0.0.1:${server.port}`,
         model: "m",
         apiKey: "k",
@@ -137,7 +137,7 @@ describe("chatCompletion", () => {
       },
     });
     try {
-      const { text } = await chatCompletion({
+      const { text } = await chatCompletionDetailed({
         endpoint: `http://127.0.0.1:${server.port}`,
         model: "m",
         apiKey: "k",
@@ -163,7 +163,7 @@ describe("chatCompletion", () => {
       },
     });
     try {
-      const { text } = await chatCompletion({
+      const { text } = await chatCompletionDetailed({
         endpoint: `http://127.0.0.1:${server.port}`,
         model: "m",
         apiKey: "k",
@@ -189,7 +189,7 @@ describe("chatCompletion", () => {
       },
     });
     try {
-      const { text } = await chatCompletion({
+      const { text } = await chatCompletionDetailed({
         endpoint: `http://127.0.0.1:${server.port}`,
         model: "m",
         apiKey: "k",
@@ -219,7 +219,7 @@ describe("chatCompletion", () => {
         }),
     });
     try {
-      const { text, usage } = await chatCompletion({
+      const { text, usage } = await chatCompletionDetailed({
         endpoint: `http://127.0.0.1:${server.port}`,
         model: "m",
         apiKey: "k",
@@ -248,7 +248,7 @@ describe("chatCompletion", () => {
         }),
     });
     try {
-      const result = await chatCompletion({
+      const result = await chatCompletionDetailed({
         endpoint: `http://127.0.0.1:${bare.port}`,
         model: "m",
         apiKey: "k",
@@ -264,7 +264,7 @@ describe("chatCompletion", () => {
       fetch: () => Response.json({ choices: [{ message: { content: "a" } }] }),
     });
     try {
-      const result = await chatCompletion({
+      const result = await chatCompletionDetailed({
         endpoint: `http://127.0.0.1:${none.port}`,
         model: "m",
         apiKey: "k",
@@ -306,7 +306,7 @@ describe("chatCompletion", () => {
       },
     });
     try {
-      const { text, usage } = await chatCompletion({
+      const { text, usage } = await chatCompletionDetailed({
         endpoint: `http://127.0.0.1:${server.port}`,
         model: "m",
         apiKey: "k",
@@ -320,6 +320,262 @@ describe("chatCompletion", () => {
         output_tokens: 100,
         cache_read_tokens: 80,
       });
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+describe("chatCompletionDetailed streaming", () => {
+  type Delta = { content?: string; reasoning_content?: string };
+  const frame = (delta: Delta, extra: Record<string, unknown> = {}): string =>
+    `data: ${JSON.stringify({ choices: [{ delta }], ...extra })}\n\n`;
+
+  /** An SSE response body from the given frames; `hang` keeps it open. */
+  const sse = (frames: string[], opts: { hang?: boolean } = {}): Response => {
+    const enc = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const f of frames) controller.enqueue(enc.encode(f));
+        if (opts.hang) return; // never closes — the stall case
+        controller.close();
+      },
+    });
+    return new Response(body, {
+      headers: { "content-type": "text/event-stream" },
+    });
+  };
+
+  test("assembles SSE deltas, maps the final usage frame, reports progress", async () => {
+    const progress: { phase: string; outputChars: number; tail?: string }[] =
+      [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        sse([
+          frame({ reasoning_content: "thinking" }),
+          frame({ content: "Hel" }),
+          frame({ content: "lo" }),
+          frame({}, { usage: { prompt_tokens: 5, completion_tokens: 7 } }),
+          "data: [DONE]\n\n",
+        ]),
+    });
+    try {
+      const { text, usage } = await chatCompletionDetailed({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+        onProgress: (p) => progress.push({ ...p }),
+      });
+      expect(text).toBe("Hello");
+      expect(usage).toEqual({ input_tokens: 5, output_tokens: 7 });
+      // reasoning deltas count toward live progress but not the report text
+      expect(progress[0]).toEqual({ phase: "first-byte", outputChars: 0 });
+      expect(progress.at(-1)).toEqual({
+        phase: "chunk",
+        outputChars: "thinking".length + "Hello".length,
+        tail: "thinkingHello",
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("progress carries a rolling tail capped at the last 200 chars", async () => {
+    const progress: { tail?: string }[] = [];
+    const long = "x".repeat(320) + "结论在尾部";
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => sse([frame({ content: long }), "data: [DONE]\n\n"]),
+    });
+    try {
+      await chatCompletionDetailed({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+        onProgress: (p) => progress.push({ ...p }),
+      });
+      const last = progress.at(-1)!;
+      expect(last.tail).toHaveLength(200);
+      expect(last.tail!.endsWith("结论在尾部")).toBe(true);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a stalled stream aborts with a visible error and is not retried", async () => {
+    let calls = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        calls += 1;
+        return sse([frame({ content: "pa" })], { hang: true });
+      },
+    });
+    try {
+      const { text, error } = await chatCompletionDetailed({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+        timeoutMs: 200,
+      });
+      expect(text).toBeNull();
+      expect(calls).toBe(1);
+      expect(error).toContain("no stream activity for 200ms");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a silent endpoint fails without a non-streaming retry", async () => {
+    let calls = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        calls += 1;
+        return new Promise(() => undefined) as unknown as Response;
+      },
+    });
+    try {
+      const { text, error } = await chatCompletionDetailed({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+        firstByteTimeoutMs: 150,
+      });
+      expect(text).toBeNull();
+      expect(calls).toBe(1);
+      expect(error).toContain("no first byte within 150ms");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a provider without SSE (400 on stream) falls back to classic", async () => {
+    let calls = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        calls += 1;
+        if (calls === 1)
+          return new Response("stream unsupported", { status: 400 });
+        return Response.json({
+          choices: [{ message: { content: "classic" } }],
+        });
+      },
+    });
+    try {
+      const { text } = await chatCompletionDetailed({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+      });
+      expect(text).toBe("classic");
+      expect(calls).toBe(2);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("an auth wall is answered once — no non-streaming retry", async () => {
+    let calls = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        calls += 1;
+        return Response.json({}, { status: 401 });
+      },
+    });
+    try {
+      const { text, error } = await chatCompletionDetailed({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "bad",
+        system: "s",
+        user: "u",
+      });
+      expect(text).toBeNull();
+      expect(calls).toBe(1);
+      expect(error).toContain("401");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a stream that breaks mid-flight fails without retrying", async () => {
+    let calls = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        calls += 1;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            // error asynchronously so the first frame actually flushes —
+            // a synchronous error kills the socket before any byte, which
+            // Bun surfaces as a plain connection failure instead
+            async start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(frame({ content: "abc" })),
+              );
+              await new Promise((r) => setTimeout(r, 30));
+              controller.error(new Error("socket reset"));
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    });
+    try {
+      const { text, error } = await chatCompletionDetailed({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+      });
+      expect(text).toBeNull();
+      expect(calls).toBe(1);
+      expect(error).toContain("the stream broke after 3 chars");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a streaming budget blowout retries once at four times the cap", async () => {
+    const caps: number[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (req) => {
+        const body = (await req.json()) as { max_tokens: number };
+        caps.push(body.max_tokens);
+        if (caps.length === 1)
+          return sse([
+            `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "length" }] })}\n\n`,
+            "data: [DONE]\n\n",
+          ]);
+        return sse([frame({ content: "Recovered." }), "data: [DONE]\n\n"]);
+      },
+    });
+    try {
+      const { text } = await chatCompletionDetailed({
+        endpoint: `http://127.0.0.1:${server.port}`,
+        model: "m",
+        apiKey: "k",
+        system: "s",
+        user: "u",
+      });
+      expect(text).toBe("Recovered.");
+      expect(caps).toEqual([4096, 16384]);
     } finally {
       server.stop(true);
     }

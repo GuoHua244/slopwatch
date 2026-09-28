@@ -20,7 +20,7 @@ type FetchLike = (input?: unknown, init?: unknown) => Promise<Response>;
 const asFetch = (fn: FetchLike): typeof fetch => fn as unknown as typeof fetch;
 
 describe("login", () => {
-  test("verifies and stores the token, preserving a summary block", async () => {
+  test("verifies and stores the token, preserving other stored fields", async () => {
     const server = meServer(200);
     const home = tempHome();
     try {
@@ -37,14 +37,10 @@ describe("login", () => {
       });
       expect(loadConfig(home)?.token).toBe("tok-1");
 
-      // re-login keeps the summary block and swaps the token
+      // re-login keeps the other stored fields and swaps the token
       const { saveConfig } = await import("@slopwatch/config");
       saveConfig(
-        {
-          serverUrl: "http://old:1",
-          token: "old",
-          summary: { endpoint: "https://e/v1", model: "m", apiKey: "k" },
-        },
+        { serverUrl: "http://old:1", token: "old", disabled: true },
         home,
       );
       const second = await login({
@@ -55,7 +51,8 @@ describe("login", () => {
       expect(second.ok).toBe(true);
       const config = loadConfig(home);
       expect(config?.token).toBe("tok-2");
-      expect(config?.summary?.model).toBe("m");
+      expect(config?.serverUrl).toBe(`http://127.0.0.1:${server.port}`);
+      expect(config?.disabled).toBe(true);
     } finally {
       server.stop(true);
     }

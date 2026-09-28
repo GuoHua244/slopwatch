@@ -14,6 +14,11 @@ const received: NormalEvent[][] = [];
 const server = Bun.serve({
   port: 0,
   fetch: async (req) => {
+    const path = new URL(req.url).pathname;
+    if (path === "/healthz") return new Response("ok");
+    // the fold gate probes credential status on every end — these fixtures
+    // exercise the unconfigured path
+    if (path === "/summary/llm") return Response.json({ configured: false });
     const body = (await req.json()) as { events: NormalEvent[] };
     received.push(body.events);
     return Response.json({ accepted: body.events.length });

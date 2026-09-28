@@ -11,17 +11,30 @@ import { saveConfig } from "@slopwatch/config";
 import type { NormalEvent } from "@slopwatch/events";
 import { mainTurnRecord } from "./fixtures/rollout-record";
 
-// The rolling-summary end path (open question 15): each listener generation
-// folds the turns added since the last end into the previous summary with
-// one LLM call, ships session/summary before session:end, and skips the
-// LLM entirely on ends with no new turns.
+// The rolling-summary end path (open question 15, decision 28): each listener
+// generation folds the turns added since the last end by shipping the fold
+// prompt to the server's /summary/fold (which executes it on the user's own
+// profile credentials), ships session/summary before session:end, and skips
+// the LLM entirely on ends with no new turns.
 
 const received: NormalEvent[][] = [];
 const server = Bun.serve({
   port: 0,
   fetch: async (req) => {
-    if (new URL(req.url).pathname === "/healthz") {
-      return new Response("ok");
+    const path = new URL(req.url).pathname;
+    // the liveness probe is anonymous by design — it runs before any auth
+    if (path === "/healthz") return new Response("ok");
+    if (req.headers.get("authorization") !== "Bearer config-token") {
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    }
+    if (path === "/summary/llm") return Response.json({ configured: true });
+    if (path === "/summary/fold") {
+      const body = (await req.json()) as { system: string; user: string };
+      foldCalls.push(body.user);
+      return Response.json({
+        text: `summary #${foldCalls.length}`,
+        model: "test-model",
+      });
     }
     const body = (await req.json()) as { events: NormalEvent[] };
     received.push(body.events);
@@ -29,20 +42,8 @@ const server = Bun.serve({
   },
 });
 
-// a fake OpenAI-compatible provider: remembers the prompts it was given
-const llmCalls: string[] = [];
-const llm = Bun.serve({
-  port: 0,
-  fetch: async (req) => {
-    const body = (await req.json()) as {
-      messages: { role: string; content: string }[];
-    };
-    llmCalls.push(body.messages.find((m) => m.role === "user")?.content ?? "");
-    return Response.json({
-      choices: [{ message: { content: `summary #${llmCalls.length}` } }],
-    });
-  },
-});
+// remembers the fold prompts the server received from the listener
+const foldCalls: string[] = [];
 
 const home = mkdtempSync(join(tmpdir(), "slopwatch-zcode-live-sum-"));
 const rollout = join(home, "rollout.jsonl");
@@ -50,11 +51,6 @@ saveConfig(
   {
     serverUrl: `http://127.0.0.1:${server.port}`,
     token: "config-token",
-    summary: {
-      endpoint: `http://127.0.0.1:${llm.port}/v1`,
-      model: "test-model",
-      apiKey: "llm-key",
-    },
   },
   home,
 );
@@ -122,7 +118,7 @@ describe("zcode live.ts rolling summaries", () => {
     await spawnLive();
     const s = summaries();
     expect(s).toEqual([{ body: "summary #1", model: "test-model" }]);
-    expect(llmCalls[0]).toContain('turn 1: "fix the login bug"');
+    expect(foldCalls[0]).toContain('turn 1: "fix the login bug"');
     // summary arrives in the same batch as (before) the end event
     const lastBatch = received[received.length - 1];
     expect(lastBatch[0].kind).toBe("session");
@@ -137,16 +133,16 @@ describe("zcode live.ts rolling summaries", () => {
     expect(s).toHaveLength(2);
     expect(s[1].body).toBe("summary #2");
     // the second call saw the prior summary and only the new turn
-    expect(llmCalls[1]).toContain("PRIOR SUMMARY:\nsummary #1");
-    expect(llmCalls[1]).toContain('turn 2: "add tests for it"');
-    expect(llmCalls[1]).not.toContain("turn 1:");
+    expect(foldCalls[1]).toContain("PRIOR SUMMARY:\nsummary #1");
+    expect(foldCalls[1]).toContain('turn 2: "add tests for it"');
+    expect(foldCalls[1]).not.toContain("turn 1:");
   }, 30000);
 
   test("an end with no new turns skips the LLM entirely", async () => {
-    const callsBefore = llmCalls.length;
+    const callsBefore = foldCalls.length;
     await spawnLive(); // no appends — cursor already at EOF
     expect(summaries()).toHaveLength(2);
-    expect(llmCalls.length).toBe(callsBefore);
+    expect(foldCalls.length).toBe(callsBefore);
   }, 30000);
 
   test("an unreachable server skips the fold — no tokens burned for a lost summary", async () => {
@@ -174,16 +170,11 @@ describe("zcode live.ts rolling summaries", () => {
       {
         serverUrl: `http://127.0.0.1:${dying.port}`,
         token: "config-token",
-        summary: {
-          endpoint: `http://127.0.0.1:${llm.port}/v1`,
-          model: "test-model",
-          apiKey: "llm-key",
-        },
       },
       downHome,
     );
     writeFileSync(downRollout, `${turn("turn_down", "doomed to drop")}\n`);
-    const callsBefore = llmCalls.length;
+    const callsBefore = foldCalls.length;
     const proc = Bun.spawn({
       cmd: [
         process.execPath,
@@ -216,7 +207,7 @@ describe("zcode live.ts rolling summaries", () => {
     expect(code).toBe(0); // v2 decision 21: the end POST failing queues the batch — graceful exit
     expect(stderr).toContain("summary fold skipped");
     expect(stderr).toContain("batch queued to disk");
-    expect(llmCalls.length).toBe(callsBefore);
+    expect(foldCalls.length).toBe(callsBefore);
     // the queued data outlives the rollout file — that is the whole point
     const queueFile = join(
       downHome,
@@ -229,6 +220,5 @@ describe("zcode live.ts rolling summaries", () => {
 
   test("cleanup", () => {
     server.stop(true);
-    llm.stop(true);
   });
 });

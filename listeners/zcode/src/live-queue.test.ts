@@ -91,6 +91,12 @@ describe("zcode disk-buffer end-to-end (decision 21)", () => {
     const server = Bun.serve({
       port: 0,
       fetch: async (req) => {
+        const path = new URL(req.url).pathname;
+        if (path === "/healthz") return new Response("ok");
+        // the fold gate probes credential status on every end — these fixtures
+        // exercise the unconfigured path
+        if (path === "/summary/llm")
+          return Response.json({ configured: false });
         received.push(((await req.json()) as { events: NormalEvent[] }).events);
         return Response.json({ accepted: 1 });
       },

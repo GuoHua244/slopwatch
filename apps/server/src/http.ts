@@ -5,13 +5,13 @@ import {
 } from "@slopwatch/events";
 import { handleAdmin } from "./http/admin";
 import { createAudit, type Audit } from "./http/audit";
-import { createAuth, type Auth } from "./http/auth";
+import { createAuth, type Auth, type Reader } from "./http/auth";
 import { parseFeedbackForm } from "./http/feedback";
-import { HttpError, json, text } from "./http/respond";
+import { attachmentResponse, HttpError, json, text } from "./http/respond";
 import { staticFile, staticResponse } from "./http/static";
 import {
-  decodeParam,
   readJsonOr400,
+  requireSessionId,
   trimField,
   windowParam,
 } from "./http/validate";
@@ -24,6 +24,7 @@ import {
 } from "./retrospective/presets";
 import type { RetroQueue } from "./retrospective/queue";
 import { buildTranscript, failureRawSeqs } from "./retrospective/transcript";
+import type { SummaryFold } from "./summary-fold";
 import type { Store } from "./store";
 import { pushSessionEnds } from "./webhook";
 import type { OidcVerifier } from "./oidc";
@@ -31,7 +32,7 @@ import type { OidcVerifier } from "./oidc";
 export type App = { fetch: (req: Request) => Promise<Response> };
 
 export type AppOptions = {
-  /** bearer token → user name (v0: from env; later: admin-minted, decision 6). */
+  /** bearer token → user name (bootstrap from env; admin-minted, decision 6). */
   tokens: Map<string, string>;
   store: Store;
   /**
@@ -40,9 +41,9 @@ export type AppOptions = {
    */
   staticRoot?: string;
   /**
-   * Operator bypass bearer for the admin plane (decision 13). Optional and
-   * no longer the only way in: a signed-in user with the admin role passes
-   * the same gate. Unset simply removes the bypass.
+   * Operator bypass bearer for the admin plane (decision 13). Optional: a
+   * signed-in user with the admin role also passes the same gate. Unset
+   * simply removes the bypass.
    */
   adminToken?: string;
   /**
@@ -68,6 +69,13 @@ export type AppOptions = {
    * triggers answer 503.
    */
   retrospectives?: RetroQueue;
+  /**
+   * Decision 28: the summary-fold runner executing LLM calls on the
+   * caller's own profile credentials. Present, GET /summary/llm reports
+   * credential status and POST /summary/fold runs one fold; absent
+   * (tests), both answer 503.
+   */
+  summaryFold?: SummaryFold;
 };
 
 /** Everything a route handler needs beyond the request itself. */
@@ -80,10 +88,28 @@ type RouteContext = {
   auth: Auth;
   audit: Audit;
   retrospectives?: RetroQueue;
+  summaryFold?: SummaryFold;
 };
 
 /** Masked form of a stored LLM api key — the only shape any read returns. */
 export const maskKey = (key: string): string => `••••${key.slice(-4)}`;
+
+/**
+ * Session read scope (ADR 0006): a member may only read sessions they own; an
+ * admin passes any id. A foreign or unknown id answers 404 — not 403 — so
+ * existence never leaks across users.
+ */
+const assertReadableSession = async (
+  sessionId: string,
+  reader: Reader,
+  store: Store,
+): Promise<void> => {
+  if (reader.role !== "admin") {
+    const owner = await store.sessionOwner(sessionId);
+    if (owner !== reader.user)
+      throw new HttpError(json(404, { error: "no such session" }));
+  }
+};
 
 /**
  * Route one request. Auth/400 guards throw prebuilt HttpError responses; the
@@ -101,6 +127,7 @@ const route = async (
     auth,
     audit,
     retrospectives,
+    summaryFold,
   }: RouteContext,
 ): Promise<Response> => {
   if (url.pathname === "/healthz") return json(200, { ok: true });
@@ -164,14 +191,10 @@ const route = async (
   const eventsMatch = url.pathname.match(/^\/sessions\/([^/]+)\/events$/);
   if (eventsMatch && req.method === "GET") {
     const reader = await auth.requireReader(req);
-    const sessionId = decodeParam(eventsMatch[1]!);
-    if (sessionId === null) return json(400, { error: "malformed session id" });
+    const sessionId = requireSessionId(eventsMatch[1]!);
     // Members may only read their own sessions' payloads; a foreign or
     // unknown id answers 404 so existence never leaks across users.
-    if (reader.role !== "admin") {
-      const owner = await store.sessionOwner(sessionId);
-      if (owner !== reader.user) return json(404, { error: "no such session" });
-    }
+    await assertReadableSession(sessionId, reader, store);
     const sinceSeq = Number(url.searchParams.get("since_seq") ?? 0);
     const events = await store.eventsSince(
       sessionId,
@@ -191,28 +214,14 @@ const route = async (
   );
   if (attachmentMatch && req.method === "GET") {
     const reader = await auth.requireReader(req);
-    const sessionId = decodeParam(attachmentMatch[1]!);
-    if (sessionId === null) return json(400, { error: "malformed session id" });
-    if (reader.role !== "admin") {
-      const owner = await store.sessionOwner(sessionId);
-      if (owner !== reader.user) return json(404, { error: "no such session" });
-    }
+    const sessionId = requireSessionId(attachmentMatch[1]!);
+    await assertReadableSession(sessionId, reader, store);
     const attachment = await store.getAttachment(
       sessionId,
       attachmentMatch[2]!,
     );
     if (attachment === null) return json(404, { error: "no such attachment" });
-    return new Response(
-      // copy into a plain ArrayBuffer-backed view: pg's Buffer keeps
-      // ArrayBufferLike, which BlobPart rejects
-      new Blob([new Uint8Array(attachment.data)], { type: attachment.mime }),
-      {
-        headers: {
-          "content-type": attachment.mime,
-          "cache-control": "private, max-age=31536000, immutable",
-        },
-      },
-    );
+    return attachmentResponse(attachment);
   }
 
   // --- Retrospectives (ADR 0008): visibility follows the session read
@@ -237,15 +246,11 @@ const route = async (
     /^\/sessions\/([^/]+)\/retrospectives$/,
   );
   if (retrosMatch) {
-    const sessionId = decodeParam(retrosMatch[1]!);
-    if (sessionId === null) return json(400, { error: "malformed session id" });
+    const sessionId = requireSessionId(retrosMatch[1]!);
     if (req.method === "GET") {
       const reader = await auth.requireReader(req);
-      if (reader.role !== "admin") {
-        const owner = await store.sessionOwner(sessionId);
-        if (owner !== reader.user)
-          return json(404, { error: "no such session" });
-      } else if ((await store.getSession(sessionId)) === null) {
+      await assertReadableSession(sessionId, reader, store);
+      if ((await store.getSession(sessionId)) === null) {
         return json(404, { error: "no such session" });
       }
       return json(200, {
@@ -254,11 +259,7 @@ const route = async (
     }
     if (req.method === "POST") {
       const reader = await auth.requireReader(req);
-      if (reader.role !== "admin") {
-        const owner = await store.sessionOwner(sessionId);
-        if (owner !== reader.user)
-          return json(404, { error: "no such session" });
-      }
+      await assertReadableSession(sessionId, reader, store);
       const session = await store.getSession(sessionId);
       if (session === null) return json(404, { error: "no such session" });
       const body = await readJsonOr400(req);
@@ -352,6 +353,54 @@ const route = async (
         },
       });
     }
+  }
+
+  // --- Summary folds on the caller's own credentials (decision 28): the
+  // listener ships the fold prompt, the server executes the LLM call with
+  // the profile config, and the key never leaves the process — ADR 0008's
+  // write-only rule holds. An unconfigured user answers 409; the listener
+  // reads that as "no summary" and stays silent. ---
+  if (url.pathname === "/summary/llm" && req.method === "GET") {
+    const reader = await auth.requireReader(req);
+    if (summaryFold === undefined)
+      return json(503, { error: "the summary fold runner is unavailable" });
+    return json(200, {
+      configured: await summaryFold.configured(reader.user),
+    });
+  }
+  if (url.pathname === "/summary/fold" && req.method === "POST") {
+    const reader = await auth.requireReader(req);
+    if (summaryFold === undefined)
+      return json(503, { error: "the summary fold runner is unavailable" });
+    if (!(await summaryFold.configured(reader.user)))
+      return json(409, {
+        error:
+          "summaries run on your own LLM credentials — configure endpoint, model, and API key on your profile page first",
+      });
+    const body = await readJsonOr400(req);
+    const system = trimField(body.system, 4000);
+    const prompt = trimField(body.user, 40_000);
+    if (system === null || prompt === null)
+      return json(400, {
+        error: "system and user must be non-empty strings",
+      });
+    const maxTokens =
+      typeof body.max_tokens === "number" &&
+      Number.isSafeInteger(body.max_tokens) &&
+      body.max_tokens > 0
+        ? body.max_tokens
+        : 4096;
+    const result = await summaryFold.run(reader.user, {
+      system,
+      user: prompt,
+      maxTokens,
+    });
+    if (!result.ok) return json(502, { error: result.error });
+    return json(200, {
+      text: result.text,
+      model: result.model,
+      ...(result.usage ? { usage: result.usage } : {}),
+    });
   }
 
   if (url.pathname === "/sessions" && req.method === "GET") {
@@ -510,8 +559,7 @@ const route = async (
   // DRI-exclusive. ---
   const reviewMatch = url.pathname.match(/^\/sessions\/([^/]+)\/review$/);
   if (reviewMatch) {
-    const sessionId = decodeParam(reviewMatch[1]!);
-    if (sessionId === null) return json(400, { error: "malformed session id" });
+    const sessionId = requireSessionId(reviewMatch[1]!);
     if (req.method === "GET") {
       const user = await auth.requireUser(req);
       return json(200, { review: await store.reviewFor(sessionId) });
@@ -538,8 +586,7 @@ const route = async (
 
   const commentsMatch = url.pathname.match(/^\/sessions\/([^/]+)\/comments$/);
   if (commentsMatch) {
-    const sessionId = decodeParam(commentsMatch[1]!);
-    if (sessionId === null) return json(400, { error: "malformed session id" });
+    const sessionId = requireSessionId(commentsMatch[1]!);
     if (req.method === "GET") {
       const user = await auth.requireUser(req);
       return json(200, { comments: await store.listComments(sessionId) });
@@ -569,8 +616,7 @@ const route = async (
   );
   if (commentMatch && req.method === "DELETE") {
     const user = await auth.requireUser(req);
-    const sessionId = decodeParam(commentMatch[1]!);
-    if (sessionId === null) return json(400, { error: "malformed session id" });
+    const sessionId = requireSessionId(commentMatch[1]!);
     const commentId = Number(commentMatch[2]);
     // ADR 0007: the retracted note vanishes — capture a preview first so
     // the trail says what was removed, not just that something was.
@@ -630,14 +676,10 @@ const route = async (
   );
   if (sessionFeedbackMatch && req.method === "POST") {
     const reader = await auth.requireReader(req);
-    const sessionId = decodeParam(sessionFeedbackMatch[1]!);
-    if (sessionId === null) return json(400, { error: "malformed session id" });
+    const sessionId = requireSessionId(sessionFeedbackMatch[1]!);
     // Ownership before body parsing: never churn through an upload for a
     // session the filer cannot see. Unknown ids answer 404, not 403.
-    if (reader.role !== "admin") {
-      const owner = await store.sessionOwner(sessionId);
-      if (owner !== reader.user) return json(404, { error: "no such session" });
-    }
+    await assertReadableSession(sessionId, reader, store);
     const parsed = await parseFeedbackForm(req);
     const feedback = await store.addFeedback({
       filerId: reader.user,
@@ -696,6 +738,7 @@ export const createApp = ({
   archive,
   oidc,
   retrospectives,
+  summaryFold,
 }: AppOptions): App => ({
   async fetch(req) {
     const url = new URL(req.url);
@@ -711,6 +754,7 @@ export const createApp = ({
         auth,
         audit,
         retrospectives,
+        summaryFold,
       });
     } catch (e) {
       // Guards throw prebuilt responses for the auth/400 prologues; anything

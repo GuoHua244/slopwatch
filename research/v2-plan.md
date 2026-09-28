@@ -57,6 +57,10 @@ The deliverable is a compose file — Server, Postgres, MinIO — plus a deploym
 
 Storage and rollup buckets stay UTC (v1 decision 18 stands). Daily aggregates render in the browser's local timezone. For a single-timezone team this is a correctness fix, not polish: in UTC+8, UTC day boundaries put 08:00 into "yesterday," so every "daily" number is quietly mislabeled. Sort/filter controls ship with the team-column work rather than as a separate pass.
 
+### 28. Summary folds execute on the server, on the caller's own profile credentials
+
+The rolling Summary's LLM call moves off the observed machine (ADR 0010): the listener ships the fold prompt to `POST /summary/fold`, and the Server executes it with the caller's own profile LLM credentials — the same config Retrospectives run on, so one place stores endpoint, model, key, and any plan-specific endpoint semantics. A user without credentials gets no summary at all (silent skip, digests kept). The per-machine `summary` config block and the install `--summary-*` flags are removed; ADR 0008's write-only key rule holds because the key never leaves the server.
+
 ---
 
 ## Out of scope for v2

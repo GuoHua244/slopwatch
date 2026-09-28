@@ -6,35 +6,37 @@ import { saveConfig } from "@slopwatch/config";
 import type { NormalEvent } from "@slopwatch/events";
 import { assistantRecord, promptRecord } from "./fixtures/transcript-record";
 
-// The rolling-summary end path (open question 15): each listener generation
-// folds the turns added since the last end into the previous summary with
-// one LLM call, ships session/summary before session:end, and skips the
-// LLM entirely on ends with no new turns.
+// The rolling-summary end path (open question 15, decision 28): each listener
+// generation folds the turns added since the last end by shipping the fold
+// prompt to the server's /summary/fold (which executes it on the user's own
+// profile credentials), ships session/summary before session:end, and skips
+// the LLM entirely on ends with no new turns.
 
 const received: NormalEvent[][] = [];
 const server = Bun.serve({
   port: 0,
   fetch: async (req) => {
+    const path = new URL(req.url).pathname;
+    if (req.headers.get("authorization") !== "Bearer config-token") {
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    }
+    if (path === "/summary/llm") return Response.json({ configured: true });
+    if (path === "/summary/fold") {
+      const body = (await req.json()) as { system: string; user: string };
+      foldCalls.push(body.user);
+      return Response.json({
+        text: `summary #${foldCalls.length}`,
+        model: "test-model",
+      });
+    }
     const body = (await req.json()) as { events: NormalEvent[] };
     received.push(body.events);
     return Response.json({ accepted: body.events.length });
   },
 });
 
-// a fake OpenAI-compatible provider: remembers the prompts it was given
-const llmCalls: string[] = [];
-const llm = Bun.serve({
-  port: 0,
-  fetch: async (req) => {
-    const body = (await req.json()) as {
-      messages: { role: string; content: string }[];
-    };
-    llmCalls.push(body.messages.find((m) => m.role === "user")?.content ?? "");
-    return Response.json({
-      choices: [{ message: { content: `summary #${llmCalls.length}` } }],
-    });
-  },
-});
+// remembers the fold prompts the server received from the listener
+const foldCalls: string[] = [];
 
 const home = mkdtempSync(join(tmpdir(), "slopwatch-claude-live-sum-"));
 const transcript = join(home, "transcript.jsonl");
@@ -42,11 +44,6 @@ saveConfig(
   {
     serverUrl: `http://127.0.0.1:${server.port}`,
     token: "config-token",
-    summary: {
-      endpoint: `http://127.0.0.1:${llm.port}/v1`,
-      model: "test-model",
-      apiKey: "llm-key",
-    },
   },
   home,
 );
@@ -119,7 +116,7 @@ describe("claude-code live.ts rolling summaries", () => {
     );
     await spawnLive();
     expect(summaries()).toEqual([{ body: "summary #1", model: "test-model" }]);
-    expect(llmCalls[0]).toContain('turn 1: "帮我看看这个仓库的结构"');
+    expect(foldCalls[0]).toContain('turn 1: "帮我看看这个仓库的结构"');
     const lastBatch = received[received.length - 1];
     expect((lastBatch[0] as { event: string }).event).toBe("summary");
     expect((lastBatch[1] as { event: string }).event).toBe("end");
@@ -137,20 +134,19 @@ describe("claude-code live.ts rolling summaries", () => {
     const s = summaries();
     expect(s).toHaveLength(2);
     expect(s[1].body).toBe("summary #2");
-    expect(llmCalls[1]).toContain("PRIOR SUMMARY:\nsummary #1");
-    expect(llmCalls[1]).toContain('turn 2: "修掉刚才发现的 bug"');
-    expect(llmCalls[1]).not.toContain("turn 1:");
+    expect(foldCalls[1]).toContain("PRIOR SUMMARY:\nsummary #1");
+    expect(foldCalls[1]).toContain('turn 2: "修掉刚才发现的 bug"');
+    expect(foldCalls[1]).not.toContain("turn 1:");
   }, 30000);
 
   test("an end with no new turns skips the LLM entirely", async () => {
-    const callsBefore = llmCalls.length;
+    const callsBefore = foldCalls.length;
     await spawnLive(); // no appends — cursor already at EOF
     expect(summaries()).toHaveLength(2);
-    expect(llmCalls.length).toBe(callsBefore);
+    expect(foldCalls.length).toBe(callsBefore);
   }, 30000);
 
   test("cleanup", () => {
     server.stop(true);
-    llm.stop(true);
   });
 });

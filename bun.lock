@@ -97,7 +97,6 @@
       "version": "0.0.0",
       "dependencies": {
         "@slopwatch/buffer": "workspace:*",
-        "@slopwatch/config": "workspace:*",
         "@slopwatch/events": "workspace:*",
         "@slopwatch/summary": "workspace:*",
       },

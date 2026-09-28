@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { HOOK_EVENTS } from "./install";
-import { HEARTBEAT_TTL_MS } from "./liveness";
+import { HEARTBEAT_TTL_MS } from "@slopwatch/listener-shared";
 
 // Regression pins for the v1 decision 19 post-mortem: the hooks never miss a
 // user message — capture died after the listener's idle exit, because nothing

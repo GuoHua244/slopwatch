@@ -6,12 +6,7 @@
  * ~/.slopwatch/config.json at fire time. Everything is idempotent:
  * re-running replaces our entries and refreshes the stored config.
  */
-import {
-  configFilePath,
-  loadConfig,
-  saveConfig,
-  type SummaryConfig,
-} from "@slopwatch/config";
+import { configFilePath, loadConfig, saveConfig } from "@slopwatch/config";
 import {
   defaultHookScriptPath,
   mergeHookConfig as mergeClaudeHooks,
@@ -39,8 +34,6 @@ export type InstallOptions = {
   /** Admin-minted bearer token; verified and stored before any wiring. */
   token?: string;
   serverUrl?: string;
-  /** Optional LLM summary block for the session-summary feature. */
-  summary?: SummaryConfig;
   /** Subset of AGENTS to wire; default: every detected agent. */
   agents?: string[];
   /** Wire project scope under this directory instead of user scope. */
@@ -121,10 +114,6 @@ export const runInstall = async (
   }
   config = config!;
   let dirty = false;
-  if (opts.summary) {
-    config = { ...config, summary: opts.summary };
-    dirty = true;
-  }
   if (opts.serverUrl && !opts.token) {
     // with a token, login already stored the server URL
     config = { ...config, serverUrl: opts.serverUrl };
@@ -144,14 +133,6 @@ export const runInstall = async (
       lines: [...lines, e instanceof Error ? e.message : String(e)],
     };
   }
-
-  // 3. summary note
-  const summary = loadConfig(opts.homeDir)?.summary;
-  lines.push(
-    summary
-      ? `llm summaries: on (${summary.model} @ ${summary.endpoint})`
-      : "llm summaries: off (optional) — pass --summary-endpoint/--summary-model/--summary-key to enable",
-  );
 
   return { ok: true, lines };
 };

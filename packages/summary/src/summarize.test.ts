@@ -5,33 +5,29 @@ import { join } from "node:path";
 import {
   MAX_FOLD_DIGEST_BYTES,
   buildUserPrompt,
+  FOLD_MAX_TOKENS,
   foldSummary,
   SYSTEM_PROMPT,
+  type FoldLlm,
 } from "./summarize";
 import { summaryStore } from "./store";
 
 const tempBase = (): string =>
   join(mkdtempSync(join(tmpdir(), "slopwatch-fold-")), "sess_1");
 
-const llm = { endpoint: "http://llm.test/v1", model: "glm-4", apiKey: "k" };
-
-type FetchLike = (url?: unknown, init?: unknown) => Promise<Response>;
-const asFetch = (fn: FetchLike): typeof fetch => fn as unknown as typeof fetch;
-const okFetch =
-  (text: string): FetchLike =>
-  async () =>
-    new Response(JSON.stringify({ choices: [{ message: { content: text } }] }));
-
-const captureUser = (seen: { user?: string }) =>
-  asFetch(async (_url, init) => {
-    const body = JSON.parse(String((init as { body?: unknown })?.body)) as {
-      messages: { role: string; content: string }[];
-    };
-    seen.user = body.messages.find((m) => m.role === "user")?.content;
-    return new Response(
-      JSON.stringify({ choices: [{ message: { content: "ok" } }] }),
-    );
-  });
+const okLlm =
+  (
+    text: string,
+    seen?: { system?: string; user?: string; maxTokens?: number },
+  ): FoldLlm =>
+  async (req) => {
+    if (seen) {
+      seen.system = req.system;
+      seen.user = req.user;
+      seen.maxTokens = req.maxTokens;
+    }
+    return { text, model: "glm-4" };
+  };
 
 describe("buildUserPrompt", () => {
   test("first fold says so; later folds embed the prior summary", () => {
@@ -49,11 +45,10 @@ describe("foldSummary", () => {
       stateBase: tempBase(),
       agent: "zcode",
       sessionId: "s1",
-      llm,
-      fetchImpl: asFetch(async () => {
+      llm: async () => {
         called += 1;
-        return okFetch("x")();
-      }),
+        return { text: "x", model: "glm-4" };
+      },
     });
     expect(event).toBeNull();
     expect(called).toBe(0);
@@ -63,27 +58,17 @@ describe("foldSummary", () => {
     const base = tempBase();
     const store = summaryStore(base);
     store.appendDigest("turn 1: fix the bug (2 requests, 12k in)");
+    const seen: { system?: string; user?: string; maxTokens?: number } = {};
     const event = await foldSummary({
       stateBase: base,
       agent: "zcode",
       sessionId: "s1",
-      llm,
-      fetchImpl: asFetch(async (_url, init) => {
-        const body = JSON.parse(String((init as { body?: unknown })?.body)) as {
-          messages: { role: string; content: string }[];
-        };
-        const user = body.messages.find((m) => m.role === "user")?.content;
-        const system = body.messages.find((m) => m.role === "system")?.content;
-        expect(system).toBe(SYSTEM_PROMPT);
-        expect(user).toContain("turn 1: fix the bug");
-        expect(user).toContain("(none");
-        return new Response(
-          JSON.stringify({
-            choices: [{ message: { content: "Fixed the bug; tests green." } }],
-          }),
-        );
-      }),
+      llm: okLlm("Fixed the bug; tests green.", seen),
     });
+    expect(seen.system).toBe(SYSTEM_PROMPT);
+    expect(seen.user).toContain("turn 1: fix the bug");
+    expect(seen.user).toContain("(none");
+    expect(seen.maxTokens).toBe(FOLD_MAX_TOKENS);
     expect(event).toMatchObject({
       schema_version: 1,
       agent: "zcode",
@@ -110,21 +95,16 @@ describe("foldSummary", () => {
       stateBase: base,
       agent: "zcode",
       sessionId: "s1",
-      llm,
-      fetchImpl: asFetch(
-        async () =>
-          new Response(
-            JSON.stringify({
-              choices: [{ message: { content: "Folded." } }],
-              usage: {
-                prompt_tokens: 500,
-                completion_tokens: 120,
-                prompt_tokens_details: { cached_tokens: 300 },
-                completion_tokens_details: { reasoning_tokens: 90 },
-              },
-            }),
-          ),
-      ),
+      llm: async () => ({
+        text: "Folded.",
+        model: "glm-4",
+        usage: {
+          input_tokens: 500,
+          output_tokens: 120,
+          cache_read_tokens: 300,
+          reasoning_tokens: 90,
+        },
+      }),
     });
     expect(event?.usage).toEqual({
       input_tokens: 500,
@@ -142,8 +122,7 @@ describe("foldSummary", () => {
       stateBase: base,
       agent: "zcode",
       sessionId: "s1",
-      llm,
-      fetchImpl: asFetch(okFetch("Summary v1.")),
+      llm: okLlm("Summary v1."),
     });
     store.appendDigest("turn 2");
     store.appendDigest("turn 3");
@@ -152,8 +131,7 @@ describe("foldSummary", () => {
       stateBase: base,
       agent: "zcode",
       sessionId: "s1",
-      llm,
-      fetchImpl: captureUser(seen),
+      llm: okLlm("Summary v2.", seen),
     });
     void event;
     expect(seen.user).toContain("PRIOR SUMMARY:\nSummary v1.");
@@ -175,8 +153,7 @@ describe("foldSummary", () => {
       stateBase: base,
       agent: "zcode",
       sessionId: "s1",
-      llm,
-      fetchImpl: asFetch(async () => new Response("nope", { status: 500 })),
+      llm: async () => ({ text: null, model: "" }),
     });
     expect(event).toBeNull();
     expect(store.pendingDigests()).toEqual(["turn 1"]);
@@ -188,35 +165,27 @@ describe("foldSummary", () => {
     const store = summaryStore(base);
     store.appendDigest("turn 1: snapshot digest");
 
-    let resolveFetch!: (response: Response) => void;
-    const gated = new Promise<Response>((resolve) => {
-      resolveFetch = resolve;
+    let resolveLlm!: (result: { text: string; model: string }) => void;
+    const gated = new Promise<{ text: string; model: string }>((resolve) => {
+      resolveLlm = resolve;
     });
     const seen: { user?: string } = {};
-    // the fetch blocks on a deferred promise; the prompt capture happens
-    // synchronously when foldSummary initiates the call
+    // the completion blocks on a deferred promise; the prompt capture
+    // happens synchronously when foldSummary initiates the call
     const inFlight = foldSummary({
       stateBase: base,
       agent: "zcode",
       sessionId: "s1",
-      llm,
-      fetchImpl: asFetch(async (_url, init) => {
-        const body = JSON.parse(String((init as { body?: unknown })?.body)) as {
-          messages: { role: string; content: string }[];
-        };
-        seen.user = body.messages.find((m) => m.role === "user")?.content;
+      llm: async (req) => {
+        seen.user = req.user;
         return gated;
-      }),
+      },
     });
 
-    // the fold has its snapshot now (the fetch was entered above) — a new
-    // digest lands while the LLM call is still in flight
+    // the fold has its snapshot now (the LLM was entered above) — a new
+    // digest lands while the call is still in flight
     store.appendDigest("turn 2: appended mid-fold");
-    resolveFetch(
-      new Response(
-        JSON.stringify({ choices: [{ message: { content: "Folded." } }] }),
-      ),
-    );
+    resolveLlm({ text: "Folded.", model: "glm-4" });
     const event = await inFlight;
 
     expect(event?.body).toBe("Folded.");
@@ -246,8 +215,7 @@ describe("foldSummary", () => {
         stateBase: base,
         agent: "zcode",
         sessionId: "s1",
-        llm,
-        fetchImpl: captureUser(seen),
+        llm: okLlm("Folded.", seen),
       });
     } finally {
       console.error = originalError;

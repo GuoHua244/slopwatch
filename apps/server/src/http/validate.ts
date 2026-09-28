@@ -64,5 +64,16 @@ export const decodeParam = (raw: string): string | null => {
   }
 };
 
+/**
+ * decodeParam plus the shared session-route 400: every session-scoped route
+ * rejects a malformed id before touching the store.
+ */
+export const requireSessionId = (raw: string): string => {
+  const sessionId = decodeParam(raw);
+  if (sessionId === null)
+    throw new HttpError(json(400, { error: "malformed session id" }));
+  return sessionId;
+};
+
 export const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

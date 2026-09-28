@@ -13,6 +13,28 @@ export const text = (status: number, body: string): Response =>
   });
 
 /**
+ * One stored attachment's bytes as an immutable response — sha256-addressed
+ * rows are safe to cache forever, and `private` keeps them out of shared
+ * proxy caches. Extra headers (e.g. content-disposition) merge over the base.
+ */
+export const attachmentResponse = (
+  attachment: { data: Uint8Array; mime: string },
+  headers: Record<string, string> = {},
+): Response =>
+  new Response(
+    // copy into a plain ArrayBuffer-backed view: pg's Buffer keeps
+    // ArrayBufferLike, which BlobPart rejects
+    new Blob([new Uint8Array(attachment.data)], { type: attachment.mime }),
+    {
+      headers: {
+        "content-type": attachment.mime,
+        "cache-control": "private, max-age=31536000, immutable",
+        ...headers,
+      },
+    },
+  );
+
+/**
  * A prebuilt response thrown by the guards (requireUser/requireReader/
  * readJsonOr400 and the admin gate) as a control-flow sentinel; the single
  * catch at the top of fetch returns it. The thrown-for-returned equivalent

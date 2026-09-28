@@ -33,9 +33,6 @@ install options:
   --server-url <url>        backend base URL (default http://localhost:8787)
   --agent <name,...>        restrict wiring: zcode,claude-code (default: all detected)
   --dir <path>              wire project scope under this directory instead of user scope
-  --summary-endpoint <url>  OpenAI-compatible endpoint for session summaries
-  --summary-model <id>      model used for session summaries
-  --summary-key <key>       provider key for session summaries
 
 flags accept "--flag value" or "--flag=value". credentials live in
 ~/.slopwatch/config.json (0600) — hook commands carry no secrets and pick
@@ -143,18 +140,6 @@ const promptToken = async (): Promise<string | undefined> => {
   }
 };
 
-const summaryFromArgs = ():
-  | { endpoint: string; model: string; apiKey: string }
-  | undefined
-  | "partial" => {
-  const endpoint = arg("summary-endpoint");
-  const model = arg("summary-model");
-  const apiKey = arg("summary-key");
-  if (!endpoint && !model && !apiKey) return undefined;
-  if (!endpoint || !model || !apiKey) return "partial";
-  return { endpoint, model, apiKey };
-};
-
 const printLines = (lines: string[]): void => {
   for (const line of lines) console.log(line);
 };
@@ -173,18 +158,10 @@ const main = async (): Promise<number> => {
 
   switch (command) {
     case "install": {
-      const summary = summaryFromArgs();
-      if (summary === "partial") {
-        console.error(
-          "install: --summary-endpoint, --summary-model and --summary-key go together",
-        );
-        return 1;
-      }
       const token = arg("token") ?? (await promptToken());
       const result = await runInstall({
         token,
         serverUrl: arg("server-url"),
-        summary: summary || undefined,
         agents: list("agent"),
         dir: arg("dir"),
       });

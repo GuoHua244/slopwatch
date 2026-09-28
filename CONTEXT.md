@@ -57,7 +57,7 @@ Whoever minted a bearer token: the **Server** (admin-minted, stored hashed in `t
 _Avoid_: SSO, identity provider without naming which Issuer.
 
 **Summary**:
-A rolling digest of a **Session**'s progress so far, generated on the observed machine with the developer's own LLM key and shipped as an **Event** — a reading aid for someone joining mid-run, never evidence of what happened.
+A rolling digest of a **Session**'s progress so far, folded by the **Listener** at each session end and shipped as an **Event** — the LLM call itself executes on the **Server** with the **User**'s own LLM credentials, the same per-user config a **Retrospective** runs on (decision 28), so a User who has not configured credentials gets no Summary at all. A reading aid for someone joining mid-run, never evidence of what happened.
 _Avoid_: recap, digest, abstract. (Not a **Retrospective**.)
 
 **Retrospective**:
@@ -95,8 +95,8 @@ _Avoid_: bug report (it also carries feature suggestions), issue (implies a trac
 
 - "turn" was used early to mean "one API call to the model" — resolved: that's a **Model request**. A **Turn** is the user-visible cycle and can contain many **Model requests**.
 - "session" in Pi has branches; these are **not** separate **Sessions** but nodes in a single **Session**'s DAG.
-- Resumes (Codex `codex resume`, Pi resume, Claude Code compaction-continue) are unresolved — defer until v1 is running.
-- "listener" collides with in-agent event-listener terminology (Pi `pi.on(...)`, OpenCode plugin events). Accepted for now; revisit if docs get confusing.
-- "user" vs "developer" — resolved: the entity is **User**; "developer" is a role (the subset of **Users** who run coding agents observed by Slopwatch). The prototype leaderboard column labelled "Developer" is a role-filtered view of **Users**, not a separate entity.
-- "wire" vs "events" — resolved: the Listener↔Server channel is described in terms of **Events**, not "wire." `packages/wire` has been renamed `packages/events` (package name `@slopwatch/events`). The TypeScript type stays `NormalEvent` to avoid colliding with the global DOM `Event` type.
+- Resumes (Codex `codex resume`, Pi resume, Claude Code compaction-continue) are unresolved — deferred.
+- "listener" collides with in-agent event-listener terminology (Pi `pi.on(...)`, OpenCode plugin events). Accepted; revisit if docs get confusing.
+- "user" vs "developer" — resolved: the entity is **User**; "developer" is a role (the subset of **Users** who run coding agents observed by Slopwatch). The leaderboard's "Developer" column is a role-filtered view of **Users**, not a separate entity.
+- "wire" vs "events" — resolved: the Listener↔Server channel is described in terms of **Events**, not "wire." The package is `packages/events` (package name `@slopwatch/events`). The TypeScript type stays `NormalEvent` to avoid colliding with the global DOM `Event` type.
 - "which team does a session belong to" — resolved: the **Team** its **User** belonged to at session creation (usage counts where it happened); a live join against the current org chart is explicitly rejected. **DRI** stays org-wide when **Teams** land.

@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, watch, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "@slopwatch/config";
 import {
   envelope,
   type NormalEvent,
   type SessionStartEvent,
+  type TokenUsage,
 } from "@slopwatch/events";
-import { foldSummary, summaryStore } from "@slopwatch/summary";
+import { foldSummary, summaryStore, type FoldLlm } from "@slopwatch/summary";
 import { spawnDrainSweep } from "./sweep";
 import { createShipPipeline } from "./ship";
 import { createTailLoop, type RecordAdapter } from "./tail";
@@ -64,9 +64,15 @@ export const createLiveListener = async (
     onQueued: sweep,
   });
 
-  // Rolling summaries (open question 15): only while shipping, only with a
-  // configured summary block — no key means silent skip, capture unaffected.
-  const summaryLlm = opts.serverUrl ? loadConfig()?.summary : undefined;
+  // Rolling summaries (open question 15): only while shipping. Decision 28:
+  // the fold's LLM call executes server-side on the caller's own profile
+  // credentials, so the listener holds no key — and a user without
+  // credentials gets no summary at all, silently, exactly like an install
+  // before the feature existed.
+  const summaryServer =
+    opts.serverUrl && opts.token
+      ? { base: opts.serverUrl.replace(/\/+$/, ""), token: opts.token }
+      : undefined;
 
   const serverReachable = async (url: string): Promise<boolean> => {
     try {
@@ -78,6 +84,79 @@ export const createLiveListener = async (
       return false;
     }
   };
+
+  const summaryConfigured = async (): Promise<boolean> => {
+    if (!summaryServer) return false;
+    try {
+      const res = await fetch(`${summaryServer.base}/summary/llm`, {
+        headers: { authorization: `Bearer ${summaryServer.token}` },
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) return false;
+      const body = (await res.json().catch(() => null)) as {
+        configured?: unknown;
+      } | null;
+      return body?.configured === true;
+    } catch {
+      return false;
+    }
+  };
+
+  const cleanUsage = (raw: unknown): TokenUsage | undefined => {
+    if (typeof raw !== "object" || raw === null) return undefined;
+    const usage: TokenUsage = {};
+    for (const key of [
+      "input_tokens",
+      "output_tokens",
+      "cache_read_tokens",
+      "cache_write_tokens",
+      "reasoning_tokens",
+    ] as const) {
+      const value = (raw as Record<string, unknown>)[key];
+      if (
+        typeof value === "number" &&
+        Number.isSafeInteger(value) &&
+        value >= 0
+      )
+        usage[key] = value;
+    }
+    return Object.keys(usage).length > 0 ? usage : undefined;
+  };
+
+  // One fold completion = one server round trip. The server owns the
+  // per-attempt LLM timeout and the ×4 budget-raising retry, so the client
+  // budget only has to cover both attempts plus the hop.
+  const foldLlm: FoldLlm | null = summaryServer
+    ? async ({ system, user, maxTokens }) => {
+        try {
+          const res = await fetch(`${summaryServer.base}/summary/fold`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${summaryServer.token}`,
+            },
+            body: JSON.stringify({ system, user, max_tokens: maxTokens }),
+            signal: AbortSignal.timeout(150_000),
+          });
+          if (!res.ok) return { text: null, model: "" };
+          const body = (await res.json().catch(() => null)) as {
+            text?: unknown;
+            model?: unknown;
+            usage?: unknown;
+          } | null;
+          return {
+            text:
+              typeof body?.text === "string" && body.text.trim().length > 0
+                ? body.text.trim()
+                : null,
+            model: typeof body?.model === "string" ? body.model : "",
+            usage: cleanUsage(body?.usage),
+          };
+        } catch {
+          return { text: null, model: "" };
+        }
+      }
+    : null;
 
   // Liveness heartbeat for the spawner's respawn decision: Windows reuses
   // PIDs, so signal-0 alone can mistake a dead listener for a live one — the
@@ -123,22 +202,22 @@ export const createLiveListener = async (
     // a fold computed offline is lost with the failed POST and re-burned on
     // the next end.
     let shipable = true;
-    if (summaryLlm && opts.probeBeforeFold) {
+    if (foldLlm && opts.probeBeforeFold) {
       shipable = opts.serverUrl ? await serverReachable(opts.serverUrl) : false;
     }
-    if (summaryLlm && !shipable) {
+    if (foldLlm && !shipable) {
       console.error(
         "live: server unreachable — summary fold skipped, digests kept for retry",
       );
     }
     const batch: NormalEvent[] = [];
-    if (summaryLlm && shipable) {
+    if (foldLlm && shipable && (await summaryConfigured())) {
       try {
         const summaryEvent = await foldSummary({
           stateBase,
           agent: opts.agent,
           sessionId: opts.sessionId,
-          llm: summaryLlm,
+          llm: foldLlm,
         });
         if (summaryEvent) batch.push(summaryEvent);
         else if (summaries.pendingDigests().length > 0) {

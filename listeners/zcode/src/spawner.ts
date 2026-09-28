@@ -18,8 +18,8 @@ import {
   removePidFiles,
   spawnDetachedListener,
   spawnDrainSweep,
+  isListenerAlive,
 } from "@slopwatch/listener-shared";
-import { isListenerAlive } from "./liveness";
 
 const args = process.argv.slice(2);
 const { arg } = argvHelpers(args);

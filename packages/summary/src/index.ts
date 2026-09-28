@@ -4,10 +4,12 @@
  * emit a session/summary event. Never throws into the capture path.
  */
 export { summaryStore, type SummaryCache, type SummaryStore } from "./store";
-export { chatCompletion, chatCompletionDetailed, type FetchLike } from "./llm";
+export { chatCompletionDetailed, type FetchLike } from "./llm";
 export {
   buildUserPrompt,
+  FOLD_MAX_TOKENS,
   foldSummary,
   SYSTEM_PROMPT,
+  type FoldLlm,
   type FoldOptions,
 } from "./summarize";

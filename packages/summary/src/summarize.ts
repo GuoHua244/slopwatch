@@ -8,8 +8,11 @@
  * Every meaningful end leaves the summary current and the last one wins —
  * no need to identify "the real end".
  */
-import { envelope, type SessionSummaryEvent } from "@slopwatch/events";
-import { chatCompletion } from "./llm";
+import {
+  envelope,
+  type SessionSummaryEvent,
+  type TokenUsage,
+} from "@slopwatch/events";
 import { summaryStore } from "./store";
 
 export const SYSTEM_PROMPT =
@@ -26,25 +29,29 @@ export const SYSTEM_PROMPT =
  */
 export const MAX_FOLD_DIGEST_BYTES = 32_000;
 
-const digestLineBytes = (digest: string): number =>
-  Buffer.byteLength(`- ${digest}\n`, "utf8");
+/** Token budget for one fold completion (decision 28). */
+export const FOLD_MAX_TOKENS = 4096;
 
-export const buildUserPrompt = (
-  prior: string | null,
-  digests: string[],
-): string =>
-  `PRIOR SUMMARY:\n${prior ?? "(none — this is the first fold)"}\n\nNEW ACTIVITY:\n${digests
-    .map((d) => `- ${d}`)
-    .join("\n")}`;
+/**
+ * One LLM completion for a fold, injected by the caller. Decision 28: the
+ * listener's implementation POSTs the prompt to the server, which executes
+ * it on the caller's own profile credentials — including the ×4
+ * budget-raising retry when reasoning consumes the whole cap. Failure
+ * contract: text null, never a throw for the fold to catch; `model` is the
+ * model that produced the text (empty on failure).
+ */
+export type FoldLlm = (req: {
+  system: string;
+  user: string;
+  maxTokens: number;
+}) => Promise<{ text: string | null; model: string; usage?: TokenUsage }>;
 
 export type FoldOptions = {
   /** Per-session state file base (same base as the listener's cursor). */
   stateBase: string;
   agent: string;
   sessionId: string;
-  llm: { endpoint: string; model: string; apiKey: string };
-  timeoutMs?: number;
-  fetchImpl?: typeof fetch;
+  llm: FoldLlm;
   now?: () => string;
 };
 
@@ -79,17 +86,14 @@ export const foldSummary = async (
   }
 
   const cache = store.loadCache();
-  const { text, usage } = await chatCompletion({
-    ...opts.llm,
+  const { text, usage, model } = await opts.llm({
     system: SYSTEM_PROMPT,
     user: buildUserPrompt(cache?.body ?? null, folded),
-    timeoutMs: opts.timeoutMs,
-    fetchImpl: opts.fetchImpl,
+    maxTokens: FOLD_MAX_TOKENS,
   });
   if (text === null) return null;
 
   const updatedAt = (opts.now ?? (() => new Date().toISOString()))();
-  const model = opts.llm.model;
   store.saveCache({
     body: text,
     model,
@@ -108,3 +112,14 @@ export const foldSummary = async (
     ...(usage ? { usage } : {}),
   };
 };
+
+const digestLineBytes = (digest: string): number =>
+  Buffer.byteLength(`- ${digest}\n`, "utf8");
+
+export const buildUserPrompt = (
+  prior: string | null,
+  digests: string[],
+): string =>
+  `PRIOR SUMMARY:\n${prior ?? "(none — this is the first fold)"}\n\nNEW ACTIVITY:\n${digests
+    .map((d) => `- ${d}`)
+    .join("\n")}`;

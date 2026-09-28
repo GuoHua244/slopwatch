@@ -10,8 +10,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { sendEvents } from "@slopwatch/events";
 import { resolveShipConfig } from "@slopwatch/config";
-import { argvHelpers, runAgentDrain } from "@slopwatch/listener-shared";
-import { isListenerAlive } from "./liveness";
+import {
+  argvHelpers,
+  isListenerAlive,
+  runAgentDrain,
+} from "@slopwatch/listener-shared";
 
 const { arg } = argvHelpers(process.argv.slice(2));
 

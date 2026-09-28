@@ -24,8 +24,8 @@ import {
   removePidFiles,
   spawnDetachedListener,
   spawnDrainSweep,
+  isListenerAlive,
 } from "@slopwatch/listener-shared";
-import { isListenerAlive } from "./liveness";
 
 /** The per-session disk queue (v2 decision 21), beside the pid/log files. */
 const queueFile = (sessionId: string): string =>
