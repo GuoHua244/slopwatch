@@ -6,7 +6,7 @@ export type Role = "admin" | "member";
 
 /**
  * Sign-in gate (v2 decision 22 / ADR 0003): the dashboard renders nothing
- * until a user token verifies against GET /me — reads are no longer anonymous.
+ * until a user token verifies against GET /me — every read needs a token.
  * The verify answer also carries the role, so the whole shell knows what the
  * signed-in user may see.
  */

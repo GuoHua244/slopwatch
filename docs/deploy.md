@@ -4,7 +4,10 @@ The v2 deployment shape (decision 26) is one always-on intranet host running
 three containers: the **Server** (API + dashboard), **Postgres**, and a
 **MinIO** object store for the raw-payload cold archive (decision 24). The
 compose file is the deliverable — a reinstall or host migration is one
-command, not a procedure.
+command, not a procedure. Decision ordinals below cite the architecture
+ledgers: 1–19 in
+[`research/v1-architecture-decisions.md`](../research/v1-architecture-decisions.md),
+20–27 in [`research/v2-plan.md`](../research/v2-plan.md).
 
 ## Prerequisites
 

@@ -6,7 +6,7 @@ export const argvHelpers = (args: string[]) => {
   const arg = (name: string): string | undefined => {
     const i = args.indexOf(`--${name}`);
     if (i >= 0) return args[i + 1];
-    // also accept the --flag=value form — previously its value was lost
+    // also accept the --flag=value form — otherwise its value is lost
     const prefix = `--${name}=`;
     const withValue = args.find((a) => a.startsWith(prefix));
     return withValue ? withValue.slice(prefix.length) : undefined;

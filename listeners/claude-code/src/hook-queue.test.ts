@@ -5,8 +5,8 @@ import { join } from "node:path";
 import type { NormalEvent } from "@slopwatch/events";
 
 // v2 decision 21 on the claude-code hook: the hook is the ONLY sender of
-// session:end, so a failed POST must queue the event to disk (the old code
-// logged and dropped it) — the sweep spawned by the next hook fire ships it.
+// session:end, so a failed POST must queue the event to disk — the sweep
+// spawned by the next hook fire ships it.
 
 const dir = mkdtempSync(join(tmpdir(), "slopwatch-hook-queue-"));
 const home = join(dir, "home");

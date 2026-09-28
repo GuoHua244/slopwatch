@@ -1,7 +1,6 @@
 /**
- * The shared flush path for both listeners (v2 decision 21).
- * Replaces the old "POST fails → exit(1), cursor stays" contract: a failed
- * send now queues the batch on disk, so the caller can advance its cursor
+ * The shared flush path for both listeners (v2 decision 21). A failed
+ * send queues the batch on disk, so the caller can advance its cursor
  * (the data lives in the queue, not in the rollout file ZCode may delete).
  * Ordering is preserved: the queue replays oldest-first before any new batch
  * — on every flush, including empty ones, so idle polls keep draining a

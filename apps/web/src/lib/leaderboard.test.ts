@@ -267,7 +267,6 @@ describe("aggregateLeaderboard", () => {
     expect(row.userId).toBe("(unknown)");
     expect(row.sessions).toBe(1);
     expect(row.turns).toBe(0);
-    // Zero requests cost zero — the old estimator's rule, kept.
     expect(row.costUsd).toBe(0);
   });
 });

@@ -1,6 +1,6 @@
 # Developer Leaderboard: Design Decisions
 
-Design decisions extracted from the prototype's user-facing table — the **Leaderboard** (`prototype/src/widgets.jsx` → `LeaderboardTable`, backed by `prototype/src/data.jsx` → `USERS` / `LEADERBOARD`). This is the dashboard's top-level "who is doing what, and at what cost" surface.
+Design decisions extracted from the pre-v1 prototype's user-facing table — the **Leaderboard**. This is the dashboard's top-level "who is doing what, and at what cost" surface.
 
 Companion to [`v1-architecture-decisions.md`](./v1-architecture-decisions.md) (backend/data model) and [`coding-agent-ingestion.md`](./coding-agent-ingestion.md) (capture surfaces).
 

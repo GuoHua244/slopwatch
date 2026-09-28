@@ -5,7 +5,7 @@ export type ShipPipeline = {
   /**
    * Send a batch (v2 decision 21). In server mode a failed POST queues the
    * batch to a disk file beside the cursor and the caller advances the cursor:
-   * the data now lives in the queue, so capture no longer depends on the
+   * the data lives in the queue, so capture does not depend on the
    * capture file surviving the outage. Queued batches replay oldest-first on
    * the next flush; hook fires also sweep all queue files. Only a failed
    * queue write itself falls back to exit-without-advancing.
@@ -60,8 +60,8 @@ export const createShipPipeline = (opts: {
         try {
           result = await shipFlush.flush(batch);
         } catch (e) {
-          // the queue write itself failed (disk full?) — the old contract: exit
-          // so a re-spawn replays everything from the un-advanced cursor
+          // the queue write itself failed (disk full?) — exit so a re-spawn
+          // replays everything from the un-advanced cursor
           console.error(
             `live: could not queue batch (${e instanceof Error ? e.message : String(e)}) — exiting; re-spawn resumes from cursor`,
           );

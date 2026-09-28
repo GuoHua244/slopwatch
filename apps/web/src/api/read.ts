@@ -11,7 +11,7 @@ export type Api = {
   /**
    * The session list. `teamId` scopes to one team (or the "unassigned"
    * bucket); `userId` scopes to one developer's own sessions
-   * (server-side — the developer drill-down no longer pulls the whole org).
+   * (server-side — the drill-down never pulls the whole org).
    */
   listSessions(teamId?: string, userId?: string): Promise<SessionSummary[]>;
   /** Decision 8: incremental page of a session's events after sinceSeq. */

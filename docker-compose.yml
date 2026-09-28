@@ -62,8 +62,8 @@ services:
     # Release-pinned. MinIO went source-only in Oct 2025 and stopped
     # publishing official images (RELEASE.2025-10-15 was never pushed to
     # Docker Hub); quay.io keeps the release tags. This is exactly the image
-    # the stack already runs (same digest as the previous minio/minio:latest
-    # pull), so the next `docker compose up` reuses it byte-for-byte.
+    # the stack already runs, so the next `docker compose up` reuses it
+    # byte-for-byte.
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     restart: unless-stopped
     command: server /data --console-address ":9001"

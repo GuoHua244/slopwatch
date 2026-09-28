@@ -28,3 +28,6 @@ skip cleanly when it is absent.
 - Ubiquitous language lives in `CONTEXT.md` (authoritative). Architecture
   decisions: `docs/adr/` and `research/v1-architecture-decisions.md`;
   the milestone plan is `research/tracer-bullet-plan.md`.
+- Decision ordinals `(decision N)` in comments and docs cite the ledgers:
+  1–19 in `research/v1-architecture-decisions.md`, 20–27 in
+  `research/v2-plan.md` (which continues the v1 numbering).

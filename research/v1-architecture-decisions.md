@@ -162,7 +162,7 @@ A post-mortem over the local census (2026-09-12: 446 ZCode sessions on the machi
 
 Roughly in priority order for continuing the design. Resolved since: 1/3/7/11/13 (2026-09-09 decisions), 8/9 (ADR 0001), 5 (resolved for v0 by the M1 code — see the note there), 10 (2026-09-10 — decision 16), 15 (2026-09-10 — decision 17), and 2 (2026-09-12 — real payload-size data, see the note there). Still open: 12 (deferred 2026-09-10 and reaffirmed by the v2 plan — see the note there). Closed 2026-09-13 by the v2 plan ([`v2-plan.md`](./v2-plan.md)): 6 and the buffering half of 4 — the designs are settled there and the code lands with v2 M0 (numbered past 14 to avoid colliding with decision 14):
 
-1. **DRI shape** (blocks the review schema). Four edges surfaced mid-grill but unresolved:
+1. **DRI shape** (blocks the review schema). Four edges needed settling:
    - **Queryer vs recipient**: DRI pulls from a filterable firehose, or sessions get auto-routed to a DRI's inbox on end?
    - **Scoping**: DRI per team (requires a `Team` entity) or per org?
    - **Attribute vs identity**: can one user be DRI for multiple teams and a reviewed dev on the same team?

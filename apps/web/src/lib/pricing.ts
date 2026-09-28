@@ -32,7 +32,7 @@ export type PricingEntry = {
  * Exact model-name match first, then the first matching family prefix —
  * case-insensitively, because the same model id arrives in varying case
  * across record types ("GLM-5.3" vs the sidecar's "glm-5.3"); a case miss
- * used to poison the whole all-time cost sum as "unpriced".
+ * would poison the whole all-time cost sum as "unpriced".
  */
 export const priceFor = (model: string): PricingEntry | null => {
   const key = model.toLowerCase();

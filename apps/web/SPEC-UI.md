@@ -18,8 +18,8 @@ bottom map 1:1 to that feedback.
 The product watches machines work. The interface splits the voices:
 **the machine's data speaks in mono** (ids, counts, model names, clocks),
 **the human's chrome speaks in sans** (labels, titles, buttons). Keeping each
-voice in its lane is the identity; the previous all-mono chrome read as
-terminal clutter.
+voice in its lane is the identity; an all-mono chrome reads as terminal
+clutter.
 
 Layout follows reading gravity (Gutenberg): lists that get scanned anchor the
 top-left rail; pages that get read center a **stage** column so the eye's
@@ -58,7 +58,7 @@ sessions). Nothing else moves.
 ## Page specs
 
 **Sign in** — full-viewport, single centered card: pulse mark, wordmark, one
-line of copy, token field, primary button. No header. (Was: tiny top-left form.)
+line of copy, token field, primary button. No header.
 
 **Sessions** — rail: compact head with count + team select pill (no caps
 label, fit-content). List items: pulse-dot + title + relative time; user ·
