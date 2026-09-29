@@ -64,7 +64,10 @@ if (!sessionId) {
 }
 
 const metas: SessionMetaEvent[] = [];
-const title = records.map((r) => metaFromRecord(r, sessionId)).find(Boolean);
+// last write wins — a retitle supersedes every earlier title in the file
+const title = records
+  .map((r) => metaFromRecord(r, sessionId))
+  .findLast(Boolean);
 if (title) metas.push(title);
 const previewRecord = records.find((r) => isRealPromptRecord(r));
 if (previewRecord) {

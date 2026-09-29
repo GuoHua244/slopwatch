@@ -31,11 +31,23 @@ import {
   newTailState,
   restoreTailState,
   serializeTailState,
+  titleFromRecord,
   type CaptureSink,
   type TailState,
 } from "./normalizer";
 
 const TAILSTATE_SUFFIX = ".tailstate.json";
+
+/** Sessions with a title meta in the batch — the gate-commit candidates. */
+const titleSessions = (batch: NormalEvent[]): Set<string> => {
+  const sessions = new Set<string>();
+  for (const event of batch) {
+    if (event.kind === "session" && event.event === "meta" && event.title) {
+      sessions.add(event.session_id);
+    }
+  }
+  return sessions;
+};
 
 const tailStateFile = (stateDir: string, sessionId: string): string =>
   join(stateDir, `claude-code-${sessionId}${TAILSTATE_SUFFIX}`);
@@ -58,7 +70,9 @@ export const createClaudeCodeAdapter = (opts: {
   const stateDir = opts.stateDir ?? join(homedir(), ".slopwatch", "listeners");
   const states = new Map<string, TailState>();
   const seenShas = new Set<string>(); // attachment dedup, per listener run
-  const childTitleSent = new Set<string>();
+  // Titles emitted into a batch the flush has not acked yet — suppresses
+  // same-batch duplicates without persisting the gate before delivery
+  const pendingTitle = new Map<string, string>();
 
   const stateOf = (sessionId: string): TailState => {
     const existing = states.get(sessionId);
@@ -99,29 +113,41 @@ export const createClaudeCodeAdapter = (opts: {
       const state = stateOf(sessionId);
       const isPrimary = sessionId === opts.primarySessionId;
       // Claude Code rewrites the (usually unchanged) ai-title record every
-      // few minutes — identical titles are suppressed, real retitles ship
-      const candidate = metaFromRecord(record, sessionId);
-      const meta = candidate?.title === state.titleSent ? null : candidate;
-      // metaFromRecord only produces title metas — the guard narrows the
-      // optional `title` so the persisted gate stays a string
-      if (meta?.title !== undefined) state.titleSent = meta.title;
+      // few minutes — identical titles are suppressed, real retitles ship.
+      // The gate compares full titles and commits only on the flush ack
+      // (see onFlushed); a batch that never shipped must not gate its retry.
+      const rawTitle = titleFromRecord(record);
+      const meta =
+        rawTitle !== null &&
+        (rawTitle === state.titleSent ||
+          rawTitle === pendingTitle.get(sessionId))
+          ? null
+          : metaFromRecord(record, sessionId);
+      if (meta) pendingTitle.set(sessionId, rawTitle!);
       const events = eventsFromRecord(record, sessionId, state, {
         seen: seenShas,
       });
       const all = meta ? [meta, ...events] : events;
 
-      if (!isPrimary && !childTitleSent.has(sessionId)) {
+      if (
+        !isPrimary &&
+        state.titleSent === null &&
+        !pendingTitle.has(sessionId)
+      ) {
         // child sessions get no title record of their own — announce the
-        // subagent's task as the title (↳ marks the row as a subagent)
+        // subagent's task as the title (↳ marks the row as a subagent).
+        // The announced title rides the same pending/acked gate, so it is
+        // respawn-safe: once delivered, the persisted gate suppresses the
+        // re-announce; until then, a failed batch re-announces on retry.
         const childTurnStart = all.find(
           (e): e is TurnStartEvent => e.kind === "turn" && e.event === "start",
         );
         if (childTurnStart) {
-          childTitleSent.add(sessionId);
           const message =
             typeof childTurnStart.user_message === "string"
               ? childTurnStart.user_message
               : "(no user message text)";
+          pendingTitle.set(sessionId, `↳ ${message}`);
           all.push({
             ...envelope("claude-code", sessionId, childTurnStart.occurred_at),
             kind: "session",
@@ -130,10 +156,10 @@ export const createClaudeCodeAdapter = (opts: {
           });
         }
       }
-      // user/assistant records mutate the tail state; title records mutate
-      // the shipped-title gate — both must survive a respawn
+      // user/assistant records mutate the tail state and must survive a
+      // respawn; title gating commits separately on the flush ack
       const type = (record as { type?: unknown } | null)?.type;
-      if (type === "user" || type === "assistant" || meta) {
+      if (type === "user" || type === "assistant") {
         persist(sessionId, state);
       }
       return all;
@@ -146,6 +172,27 @@ export const createClaudeCodeAdapter = (opts: {
         persist(sessionId, state);
       }
       return events;
+    },
+    onFlushed: (batch: NormalEvent[]): void => {
+      // the delivery ack — the only place the title gate commits. Sessions
+      // with a title meta in the shipped batch get their pending (full)
+      // title persisted; the last meta in the batch wins, matching the
+      // server's last-write-wins title upsert
+      for (const sessionId of titleSessions(batch)) {
+        const state = states.get(sessionId);
+        const title = pendingTitle.get(sessionId);
+        if (!state || title === undefined) continue;
+        state.titleSent = title;
+        pendingTitle.delete(sessionId);
+        persist(sessionId, state);
+      }
+    },
+    onFlushFailed: (batch: NormalEvent[]): void => {
+      // the batch died before delivery — release the pending gates so the
+      // cursor-rewound retry re-emits these titles instead of losing them
+      for (const sessionId of titleSessions(batch)) {
+        pendingTitle.delete(sessionId);
+      }
     },
   };
 
@@ -162,6 +209,7 @@ export const createClaudeCodeAdapter = (opts: {
     primaryTurnId: () => stateOf(opts.primarySessionId).turnId,
     forgetSession: (sessionId: string): void => {
       states.delete(sessionId);
+      pendingTitle.delete(sessionId);
       // best effort — a lingering sidecar for a dead child is harmless
       try {
         rmSync(tailStateFile(stateDir, sessionId), { force: true });

@@ -72,9 +72,12 @@ export type TailState = {
   /** Turn opened by the latest real user prompt. */
   turnId: string | null;
   /**
-   * The last session title shipped — Claude Code rewrites the (usually
-   * unchanged) ai-title record periodically, so identical titles are
-   * suppressed and only real retitles ship.
+   * The last session title delivered (full, untruncated — the gate compares
+   * whole strings so a retitle past the event's 200-char cap still ships).
+   * Claude Code rewrites the (usually unchanged) ai-title record
+   * periodically, so identical titles are suppressed and only real retitles
+   * ship. Committed by the flush ack, never at normalization time — a batch
+   * that never shipped must not gate its own retry.
    */
   titleSent: string | null;
   /**
@@ -302,6 +305,22 @@ export const isRealPromptRecord = (record: unknown): boolean => {
 };
 
 /**
+ * The raw (untruncated) title a session title record carries, or null. The
+ * title gate compares these full strings — a retitle that only differs past
+ * the event's 200-char cap must still count as a retitle.
+ */
+export const titleFromRecord = (record: unknown): string | null => {
+  if (!isObject(record)) return null;
+  if (record.type === "summary" && isNonEmptyString(record.summary)) {
+    return record.summary;
+  }
+  if (record.type === "ai-title" && isNonEmptyString(record.aiTitle)) {
+    return record.aiTitle;
+  }
+  return null;
+};
+
+/**
  * A session title record. Two shapes across builds: the legacy client
  * summary (`{"type":"summary","summary":"…"}`) and the modern
  * `{"type":"ai-title","aiTitle":"…"}` — neither carries a timestamp.
@@ -310,13 +329,7 @@ export const metaFromRecord = (
   record: unknown,
   sessionId: string,
 ): SessionMetaEvent | null => {
-  if (!isObject(record)) return null;
-  let title: string | null = null;
-  if (record.type === "summary" && isNonEmptyString(record.summary)) {
-    title = record.summary;
-  } else if (record.type === "ai-title" && isNonEmptyString(record.aiTitle)) {
-    title = record.aiTitle;
-  }
+  const title = titleFromRecord(record);
   if (title === null) return null;
   return {
     ...envelope("claude-code", sessionId, new Date().toISOString()),

@@ -161,7 +161,7 @@ describe("title gating", () => {
       titleRecord("first"),
       "sess_main",
     );
-    // the periodic unchanged rewrite — suppressed
+    // the periodic unchanged rewrite — suppressed by the pending title
     const repeat = api.adapter.eventsFromRecord(
       titleRecord("first"),
       "sess_main",
@@ -196,9 +196,47 @@ describe("title gating", () => {
     ).toEqual(["redone"]);
   });
 
-  test("a respawned adapter does not re-ship the persisted title", () => {
+  test("a title whose batch never shipped is re-emitted on retry", () => {
+    const { api } = makeAdapter();
+    const first = api.adapter.eventsFromRecord(
+      titleRecord("lost"),
+      "sess_main",
+    );
+    expect(titlesFrom(first)).toEqual(["lost"]);
+    // the flush failed — the tail loop rewinds the cursor and re-drains
+    api.adapter.onFlushFailed!(first);
+    const retry = api.adapter.eventsFromRecord(
+      titleRecord("lost"),
+      "sess_main",
+    );
+    expect(titlesFrom(retry)).toEqual(["lost"]); // not gated by its own loss
+  });
+
+  test("a retitle past the 200-char event cap still ships", () => {
+    const { api } = makeAdapter();
+    const base = "t".repeat(200);
+    const first = api.adapter.eventsFromRecord(
+      titleRecord(`${base}A`),
+      "sess_main",
+    );
+    api.adapter.onFlushed!(first);
+    // the event titles are identical after the 200-char slice, but the full
+    // titles differ — the gate compares the whole strings
+    const second = api.adapter.eventsFromRecord(
+      titleRecord(`${base}B`),
+      "sess_main",
+    );
+    expect(titlesFrom(first)[0]).toBe(titlesFrom(second)[0]);
+    expect(second.find((e) => e.kind === "session")).toBeDefined();
+  });
+
+  test("a respawned adapter does not re-ship the delivered title", () => {
     const { api, stateDir } = makeAdapter();
-    api.adapter.eventsFromRecord(titleRecord("kept"), "sess_main");
+    const first = api.adapter.eventsFromRecord(
+      titleRecord("kept"),
+      "sess_main",
+    );
+    api.adapter.onFlushed!(first);
     // persist swallows write errors — pin the sidecar before the respawn so a
     // persistence failure cannot masquerade as a suppression-gate success
     expect(
@@ -208,12 +246,55 @@ describe("title gating", () => {
       primarySessionId: "sess_main",
       stateDir,
     });
-    // a cursor replay resurfaces an already-shipped title record — suppressed
+    // a cursor replay resurfaces an already-delivered title record — suppressed
     const events = reborn.adapter.eventsFromRecord(
       titleRecord("kept"),
       "sess_main",
     );
     expect(events.find((e) => e.kind === "session")).toBeUndefined();
+  });
+
+  test("an undelivered title does not gate a respawned adapter", () => {
+    const { api, stateDir } = makeAdapter();
+    // emitted but never acked (crash before the flush) — the sidecar gate
+    // stays open, so the respawn re-ships instead of losing the title
+    api.adapter.eventsFromRecord(titleRecord("unacked"), "sess_main");
+    const reborn = createClaudeCodeAdapter({
+      primarySessionId: "sess_main",
+      stateDir,
+    });
+    const events = reborn.adapter.eventsFromRecord(
+      titleRecord("unacked"),
+      "sess_main",
+    );
+    expect(titlesFrom(events)).toEqual(["unacked"]);
+  });
+
+  test("the ↳ child title survives a respawn and re-announces on retry", () => {
+    const { api, stateDir } = makeAdapter();
+    // delivered once → persisted gate → a respawn must not re-announce
+    const first = api.adapter.eventsFromRecord(subagentPromptRecord, "agent-1");
+    api.adapter.onFlushed!(first);
+    const reborn = createClaudeCodeAdapter({
+      primarySessionId: "sess_main",
+      stateDir,
+    });
+    expect(
+      titlesFrom(
+        reborn.adapter.eventsFromRecord(subagentPromptRecord, "agent-1"),
+      ),
+    ).toEqual([]);
+    // but a batch that never shipped re-announces on the cursor-rewound retry
+    const again = reborn.adapter.eventsFromRecord(
+      subagentPromptRecord,
+      "agent-9",
+    );
+    reborn.adapter.onFlushFailed!(again);
+    expect(
+      titlesFrom(
+        reborn.adapter.eventsFromRecord(subagentPromptRecord, "agent-9"),
+      ).length,
+    ).toBe(1);
   });
 });
 
