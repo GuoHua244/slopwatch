@@ -20,6 +20,8 @@ import {
   assistantThinkingRecord,
   assistantToolUseRecord,
   commandEchoRecord,
+  compactedRecord,
+  compactedUnflaggedRecord,
   erroredToolResultRecord,
   imagePromptRecord,
   interleavedToolResultRecord,
@@ -49,6 +51,9 @@ describe("real-prompt detection", () => {
     expect(isRealPromptRecord(taskNotificationRecord)).toBe(false);
     expect(isRealPromptRecord(metaPromptRecord)).toBe(false);
     expect(isRealPromptRecord(interleavedToolResultRecord)).toBe(false);
+    // a compaction continuation is never a human prompt
+    expect(isRealPromptRecord(compactedRecord)).toBe(false);
+    expect(isRealPromptRecord(compactedUnflaggedRecord)).toBe(false);
   });
 
   test("legacy builds (no origin field) decide by text alone", () => {
@@ -61,6 +66,48 @@ describe("real-prompt detection", () => {
       },
     };
     expect(isRealPromptRecord(echo)).toBe(false);
+  });
+});
+
+describe("compaction continuation (same session, visibly marked)", () => {
+  test("the continuation opens a `[compacted]`-marked turn on the same session", () => {
+    for (const record of [compactedRecord, compactedUnflaggedRecord]) {
+      const state = newTailState();
+      eventsFromRecord(promptRecord, sessionId, state); // turn u-0001
+      eventsFromRecord(assistantThinkingRecord, sessionId, state); // open msg
+      const events = eventsFromRecord(record, sessionId, state);
+      const kinds = kindsOf(events);
+      // held-back request flushes, then the marked turn opens
+      expect(kinds.indexOf("model_request:*")).toBeLessThan(
+        kinds.indexOf("turn:start"),
+      );
+      const start = events.find((e) => e.kind === "turn");
+      if (start!.kind === "turn" && start!.event === "start") {
+        expect(start!.turn_id).toBe(record.uuid);
+        expect(start!.user_message!.startsWith("[compacted] ")).toBe(true);
+        expect(start!.user_message).toContain("summarized below");
+      }
+      expect(state.turnId).toBe(record.uuid);
+      // no task preview from a compaction — previews belong to human prompts
+      expect(
+        events.find((e) => e.kind === "session" && e.event === "meta"),
+      ).toBeUndefined();
+      // the next message's request attributes to the compaction turn
+      eventsFromRecord(nextMessageRecord, sessionId, state); // opens msg_02ABC
+      const closer = eventsFromRecord(
+        {
+          ...nextMessageRecord,
+          uuid: "a-close",
+          message: { ...nextMessageRecord.message, id: "msg_03DEF" },
+        },
+        sessionId,
+        state,
+      );
+      const mr = closer.find((e) => e.kind === "model_request");
+      if (mr!.kind === "model_request") {
+        expect(mr!.turn_id).toBe(record.uuid);
+      }
+    }
   });
 });
 

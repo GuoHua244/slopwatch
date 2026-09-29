@@ -248,14 +248,35 @@ const resultText = (content: unknown): string => {
 const COMMAND_TAG = /^<(command-name|local-command-)/;
 
 /**
+ * The continuation prompt Claude Code writes when a session is compacted:
+ * the model's next context is a summary of everything so far. The session
+ * and its transcript file continue unchanged — resolved decision: the
+ * compacted continuation is the SAME session, filed as a visibly marked
+ * turn (user_message prefixed `[compacted] `), never a new session.
+ */
+const COMPACTION_TEXT =
+  /^This session is being continued from a previous conversation/;
+
+export const isCompactionRecord = (record: unknown): boolean => {
+  if (!isObject(record) || record.type !== "user") return false;
+  if (record.isCompactSummary === true) return true;
+  return COMPACTION_TEXT.test(promptTextFromRecord(record));
+};
+
+/** The user_message marker that makes a compaction turn unmistakable. */
+export const COMPACTION_MARKER = "[compacted] ";
+
+/**
  * A real user prompt opens a turn. Build noise does not: system-injected
  * records (`isMeta`), tool results, command echoes (`<command-name>`,
- * `<local-command-`), and — on builds that label input origin — anything not
- * typed by a human (`origin.kind !== "human"`, e.g. task notifications).
+ * `<local-command-`), compaction continuations, and — on builds that label
+ * input origin — anything not typed by a human (`origin.kind !== "human"`,
+ * e.g. task notifications).
  */
 export const isRealPromptRecord = (record: unknown): boolean => {
   if (!isObject(record) || record.type !== "user") return false;
   if (record.isMeta === true) return false;
+  if (isCompactionRecord(record)) return false;
   const message = isObject(record.message) ? record.message : null;
   const content = message?.content;
   if (blocksOf(content).some((b) => b.type === "tool_result")) return false;
@@ -472,6 +493,25 @@ export const eventsFromRecord = (
         if (imageShas.length > 0) toolResult.images = imageShas;
         events.push(toolResult);
       }
+    } else if (isCompactionRecord(record)) {
+      // the compacted continuation is the SAME session (resolved decision):
+      // close the pre-compaction turn and open a visibly marked one — the
+      // model's context is now the summary, so everything after this record
+      // belongs to the new turn
+      const flushed = flushOpenMessage(state, sessionId);
+      if (flushed) events.push(flushed);
+      const text = promptText(content);
+      const turnId = isNonEmptyString(record.uuid)
+        ? record.uuid
+        : `${sessionId}-${timestampMs ?? Date.now()}`;
+      state.turnId = turnId;
+      events.push({
+        ...envelope("claude-code", sessionId, occurredAt),
+        kind: "turn",
+        event: "start",
+        turn_id: turnId,
+        user_message: `${COMPACTION_MARKER}${text.slice(0, 2000 - COMPACTION_MARKER.length)}`,
+      });
     } else if (isRealPromptRecord(record)) {
       // the prompt proves the previous message is complete
       const flushed = flushOpenMessage(state, sessionId);

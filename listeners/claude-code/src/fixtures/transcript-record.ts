@@ -235,6 +235,36 @@ export const summaryRecord = {
   leafUuid: "a-0001",
 };
 
+/**
+ * The compaction continuation prompt — same session, same transcript file;
+ * the model's next context is the summary of everything so far. New builds
+ * flag the record (`isCompactSummary`), and the text always starts the same
+ * way; the detector accepts either signal.
+ */
+export const compactedRecord = {
+  parentUuid: "a-0004",
+  uuid: "u-0010",
+  timestamp: "2026-09-29T09:05:00.000Z",
+  type: "user",
+  isCompactSummary: true,
+  message: {
+    role: "user",
+    content:
+      "This session is being continued from a previous conversation that ran out of context. The conversation is summarized below: the user asked to review the repo structure and then to fix a bug.",
+  },
+  ...baseFields,
+};
+
+/** The same continuation text on a build that does not flag the record. */
+export const compactedUnflaggedRecord = {
+  parentUuid: "a-0004",
+  uuid: "u-0011",
+  timestamp: "2026-09-29T09:06:00.000Z",
+  type: "user",
+  message: compactedRecord.message,
+  ...baseFields,
+};
+
 /** Modern title record — carries no timestamp. */
 export const aiTitleRecord = {
   type: "ai-title",

@@ -95,7 +95,7 @@ _Avoid_: bug report (it also carries feature suggestions), issue (implies a trac
 
 - "turn" was used early to mean "one API call to the model" — resolved: that's a **Model request**. A **Turn** is the user-visible cycle and can contain many **Model requests**.
 - "session" in Pi has branches; these are **not** separate **Sessions** but nodes in a single **Session**'s DAG.
-- Resumes (Codex `codex resume`, Pi resume, Claude Code compaction-continue) are unresolved — deferred.
+- Claude Code compaction-continue — resolved: the compacted continuation is the SAME session; the listener files the summary under a visibly marked turn (`[compacted] ` user_message prefix). Codex/Pi resumes remain unresolved — deferred.
 - "listener" collides with in-agent event-listener terminology (Pi `pi.on(...)`, OpenCode plugin events). Accepted; revisit if docs get confusing.
 - "user" vs "developer" — resolved: the entity is **User**; "developer" is a role (the subset of **Users** who run coding agents observed by Slopwatch). The leaderboard's "Developer" column is a role-filtered view of **Users**, not a separate entity.
 - "wire" vs "events" — resolved: the Listener↔Server channel is described in terms of **Events**, not "wire." The package is `packages/events` (package name `@slopwatch/events`). The TypeScript type stays `NormalEvent` to avoid colliding with the global DOM `Event` type.

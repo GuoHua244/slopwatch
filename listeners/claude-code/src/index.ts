@@ -10,10 +10,12 @@
  * event, kills the listener). Hooks pass their payload as JSON on stdin.
  */
 export {
+  COMPACTION_MARKER,
   driftFromRecord,
   eventsFromRecord,
   flushOpenMessage,
   IGNORED_RECORD_TYPES,
+  isCompactionRecord,
   isRealPromptRecord,
   metaFromRecord,
   newTailState,
