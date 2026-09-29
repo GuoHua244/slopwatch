@@ -180,13 +180,12 @@ const captureUserMessageFiles = (
 };
 
 /**
- * A session_title record's response.text carries the client-generated title —
- * as a JSON string (`{"title":"…"}`) or plain text. Emits a session:meta event.
+ * The raw (untruncated) title a session_title record's response.text carries
+ * — as a JSON string (`{"title":"…"}`) or plain text — or null. The title
+ * gate compares these full strings so a retitle that only differs past the
+ * event's 200-char cap still counts as a retitle.
  */
-export const metaFromRecord = (
-  record: unknown,
-  sessionId: string,
-): SessionMetaEvent | null => {
+export const titleTextFromRecord = (record: unknown): string | null => {
   if (!isObject(record) || record.querySource !== "session_title") return null;
   const text =
     isObject(record.response) && isNonEmptyString(record.response.text)
@@ -202,7 +201,21 @@ export const metaFromRecord = (
   } catch {
     // plain text title
   }
-  if (!title) return null;
+  return title || null;
+};
+
+/**
+ * A session_title record's response.text carries the client-generated title —
+ * as a JSON string (`{"title":"…"}`) or plain text. Emits a session:meta event.
+ */
+export const metaFromRecord = (
+  record: unknown,
+  sessionId: string,
+): SessionMetaEvent | null => {
+  // re-narrow for recordTime — the title extraction did its own narrowing
+  if (!isObject(record)) return null;
+  const title = titleTextFromRecord(record);
+  if (title === null) return null;
   return {
     ...envelope("zcode", sessionId, recordTime(record)),
     kind: "session",

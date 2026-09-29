@@ -20,7 +20,13 @@
  *        [--server-url http://host:port --token <bearer>] [--cwd <dir>]
  */
 import { execSync } from "node:child_process";
-import { closeSync, openSync, readSync, readdirSync } from "node:fs";
+import {
+  closeSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+} from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,6 +43,7 @@ import {
 import { resolveShipConfig } from "@slopwatch/config";
 import {
   argvHelpers,
+  atomicWriteJson,
   createLiveListener,
   type ChildTail,
   type RecordAdapter,
@@ -47,6 +54,7 @@ import {
   metaFromRecord,
   sessionIdFromFilename,
   taskPreviewFromRecord,
+  titleTextFromRecord,
   toolResultsFromRecord,
   turnStartFromRecord,
 } from "./normalizer";
@@ -110,7 +118,52 @@ const primarySessionId = sessionId;
 let parentTraceId: string | null = null;
 let spawnedByTurnId: string | undefined;
 const claimedFiles = new Set<string>();
-const childMetaSent = new Set<string>();
+
+// --- Title gate ---------------------------------------------------------------
+// ZCode rewrites the (usually unchanged) session_title record on every turn;
+// a title ships only when it differs from the last one DELIVERED. State is
+// one sidecar per listener (primary plus child sessions) so a respawn stays
+// gated, and the gate commits on the flush ack (listener-shared's tail.ts
+// calls onFlushed/onFlushFailed) — a batch that never shipped must not gate
+// its own retry.
+const stateDir = join(homedir(), ".slopwatch", "listeners");
+const titlesFile = join(stateDir, `zcode-${sessionId}.titles.json`);
+const titleSent = new Map<string, string>(); // delivered, per session
+const pendingTitle = new Map<string, string>(); // emitted, not yet acked
+try {
+  const snapshot: unknown = JSON.parse(readFileSync(titlesFile, "utf8"));
+  if (
+    isObject(snapshot) &&
+    snapshot.version === 1 &&
+    isObject(snapshot.titles)
+  ) {
+    for (const [sid, title] of Object.entries(snapshot.titles)) {
+      if (isNonEmptyString(title)) titleSent.set(sid, title);
+    }
+  }
+} catch {
+  // missing or corrupt sidecar — start with an empty gate
+}
+const persistTitles = (): void => {
+  try {
+    atomicWriteJson(titlesFile, {
+      version: 1,
+      titles: Object.fromEntries(titleSent),
+    });
+  } catch {
+    // persistence is an optimization — capture proceeds without it
+  }
+};
+/** Sessions with a title meta in the batch — the gate-commit candidates. */
+const titleSessions = (batch: NormalEvent[]): Set<string> => {
+  const sessions = new Set<string>();
+  for (const event of batch) {
+    if (event.kind === "session" && event.event === "meta" && event.title) {
+      sessions.add(event.session_id);
+    }
+  }
+  return sessions;
+};
 
 /**
  * The first record of a rollout file — all the claim decision gets. ZCode
@@ -174,8 +227,19 @@ const adapter: RecordAdapter = {
       }
     }
     const events: NormalEvent[] = [];
-    const meta = metaFromRecord(record, sessionId);
-    if (meta) events.push(meta);
+    // the gate compares full titles (a retitle past the 200-char event cap
+    // still ships); pending titles suppress same-batch duplicates only
+    const rawTitle = titleTextFromRecord(record);
+    const meta =
+      rawTitle !== null &&
+      (rawTitle === titleSent.get(sessionId) ||
+        rawTitle === pendingTitle.get(sessionId))
+        ? null
+        : metaFromRecord(record, sessionId);
+    if (meta) {
+      events.push(meta);
+      pendingTitle.set(sessionId, rawTitle!);
+    }
     if (!taskPreviewSent) {
       const preview = taskPreviewFromRecord(record, sessionId);
       if (preview) {
@@ -210,8 +274,14 @@ const adapter: RecordAdapter = {
     events.push(...toolResults);
     // Child sessions get no session_title record of their own — announce
     // the subagent's task as the title (the ↳ marks the row as a subagent
-    // in the sessions list).
-    if (sessionId !== primarySessionId && !childMetaSent.has(sessionId)) {
+    // in the sessions list). The announced title rides the same pending/
+    // acked gate, so it is respawn-safe: once delivered, the persisted gate
+    // suppresses the re-announce; until then, a failed batch re-announces.
+    if (
+      sessionId !== primarySessionId &&
+      !titleSent.has(sessionId) &&
+      !pendingTitle.has(sessionId)
+    ) {
       const childTurnStart = events.find(
         (e): e is TurnStartEvent & { user_message: string } =>
           e.kind === "turn" &&
@@ -219,7 +289,7 @@ const adapter: RecordAdapter = {
           typeof e.user_message === "string",
       );
       if (childTurnStart) {
-        childMetaSent.add(sessionId);
+        pendingTitle.set(sessionId, `↳ ${childTurnStart.user_message}`);
         events.push({
           ...envelope("zcode", sessionId, childTurnStart.occurred_at),
           kind: "session",
@@ -229,6 +299,23 @@ const adapter: RecordAdapter = {
       }
     }
     return events;
+  },
+  onFlushed: (batch: NormalEvent[]): void => {
+    // the delivery ack — the only place the title gate commits
+    let committed = false;
+    for (const sid of titleSessions(batch)) {
+      const title = pendingTitle.get(sid);
+      if (title === undefined) continue;
+      titleSent.set(sid, title);
+      pendingTitle.delete(sid);
+      committed = true;
+    }
+    if (committed) persistTitles();
+  },
+  onFlushFailed: (batch: NormalEvent[]): void => {
+    // the batch died before delivery — release the pending gates so the
+    // cursor-rewound retry re-emits these titles instead of losing them
+    for (const sid of titleSessions(batch)) pendingTitle.delete(sid);
   },
 };
 
