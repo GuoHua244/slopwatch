@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClaudeCodeAdapter } from "./adapter";
 import {
+  aiTitleRecord,
   interleavedToolResultRecord,
   nextMessageRecord,
   promptRecord,
@@ -141,9 +142,12 @@ describe("child sessions", () => {
 
 describe("title gating", () => {
   const titleRecord = (text: string): Record<string, unknown> => ({
-    type: "ai-title",
+    ...aiTitleRecord,
     aiTitle: text,
-    sessionId: "sess_main",
+  });
+  const summaryRecord = (text: string): Record<string, unknown> => ({
+    type: "summary",
+    summary: text,
   });
   const titlesFrom = (events: { kind: string }[]): string[] =>
     events
@@ -172,9 +176,34 @@ describe("title gating", () => {
     expect(titlesFrom(second)).toEqual(["second"]);
   });
 
+  test("the legacy summary record gates the same way as ai-title", () => {
+    const { api } = makeAdapter();
+    expect(
+      titlesFrom(
+        api.adapter.eventsFromRecord(summaryRecord("legacy"), "sess_main"),
+      ),
+    ).toEqual(["legacy"]);
+    // a resume re-appends the same summary — suppressed
+    expect(
+      titlesFrom(
+        api.adapter.eventsFromRecord(summaryRecord("legacy"), "sess_main"),
+      ),
+    ).toEqual([]);
+    expect(
+      titlesFrom(
+        api.adapter.eventsFromRecord(summaryRecord("redone"), "sess_main"),
+      ),
+    ).toEqual(["redone"]);
+  });
+
   test("a respawned adapter does not re-ship the persisted title", () => {
     const { api, stateDir } = makeAdapter();
     api.adapter.eventsFromRecord(titleRecord("kept"), "sess_main");
+    // persist swallows write errors — pin the sidecar before the respawn so a
+    // persistence failure cannot masquerade as a suppression-gate success
+    expect(
+      existsSync(join(stateDir, "claude-code-sess_main.tailstate.json")),
+    ).toBe(true);
     const reborn = createClaudeCodeAdapter({
       primarySessionId: "sess_main",
       stateDir,

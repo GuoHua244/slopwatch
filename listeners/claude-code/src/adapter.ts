@@ -101,10 +101,9 @@ export const createClaudeCodeAdapter = (opts: {
       // Claude Code rewrites the (usually unchanged) ai-title record every
       // few minutes — identical titles are suppressed, real retitles ship
       const candidate = metaFromRecord(record, sessionId);
-      const meta =
-        candidate?.title !== undefined && candidate.title === state.titleSent
-          ? null
-          : candidate;
+      const meta = candidate?.title === state.titleSent ? null : candidate;
+      // metaFromRecord only produces title metas — the guard narrows the
+      // optional `title` so the persisted gate stays a string
       if (meta?.title !== undefined) state.titleSent = meta.title;
       const events = eventsFromRecord(record, sessionId, state, {
         seen: seenShas,
@@ -134,7 +133,7 @@ export const createClaudeCodeAdapter = (opts: {
       // user/assistant records mutate the tail state; title records mutate
       // the shipped-title gate — both must survive a respawn
       const type = (record as { type?: unknown } | null)?.type;
-      if (type === "user" || type === "assistant" || meta !== null) {
+      if (type === "user" || type === "assistant" || meta) {
         persist(sessionId, state);
       }
       return all;
