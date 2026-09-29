@@ -1566,20 +1566,30 @@ ul.sessions li.selected {
 }
 .bars {
   display: flex;
-  align-items: flex-end;
-  gap: 3px;
   height: 88px;
   max-width: 720px;
   margin: 10px 0 6px;
 }
+/* Each column is the full-height hover target: a near-zero day's 2px bar
+ * takes sniper aim to point at. The visual gap lives inside the column
+ * (the bar's side margins), so hover never hits dead space between bars. */
+.bars .bar-col {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+}
 .bars .bar {
   flex: 1;
+  margin: 0 1.5px;
   min-height: 2px;
   border-radius: 2px 2px 0 0;
   background: var(--accent);
-  position: relative;
 }
-.bars .bar.unpriced {
+.bars .bar-col:hover .bar {
+  filter: brightness(1.25);
+}
+.bars .bar-col.unpriced .bar {
   background: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 /* App-owned hover tooltips — the native title bubble is light-on-dark
@@ -1609,7 +1619,7 @@ ul.sessions li.selected {
   text-align: center;
   z-index: 40;
 }
-.bar:hover .bar-tip {
+.bar-col:hover .bar-tip {
   display: flex;
 }
 .bar-tip-day {
@@ -1620,7 +1630,7 @@ ul.sessions li.selected {
   color: var(--accent);
   font-weight: 600;
 }
-.bar:hover.unpriced .bar-tip-cost {
+.bar-col.unpriced .bar-tip-cost {
   color: var(--dim);
   font-weight: 400;
 }

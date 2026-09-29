@@ -95,11 +95,14 @@ export const DeveloperDetail = ({ userId }: { userId: string }) => {
             {series.map((d, i) => (
               <div
                 key={d.day}
-                className={`bar${d.unpriced ? " unpriced" : ""}`}
-                style={{
-                  height: maxDay > 0 ? `${(d.cost / maxDay) * 100}%` : "0",
-                }}
+                className={`bar-col${d.unpriced ? " unpriced" : ""}`}
               >
+                <div
+                  className="bar"
+                  style={{
+                    height: maxDay > 0 ? `${(d.cost / maxDay) * 100}%` : "0",
+                  }}
+                />
                 <span className="bar-tip" aria-hidden>
                   <span className="bar-tip-day">
                     {i === series.length - 1 ? `${d.day} · so far` : d.day}
