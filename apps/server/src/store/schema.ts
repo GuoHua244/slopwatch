@@ -212,6 +212,19 @@ CREATE INDEX IF NOT EXISTS retrospectives_user_open
 CREATE INDEX IF NOT EXISTS events_child_parent
   ON events ((payload->>'parent_session_id'))
   WHERE payload->>'parent_session_id' IS NOT NULL;
+-- The rail nests subagent rows under their parent, so the link is lifted onto
+-- the session row itself. Backfill once per boot: legacy children carry the
+-- link only in their session:start payload; the WHERE keeps ingested rows off.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS parent_session_id TEXT;
+UPDATE sessions s
+SET parent_session_id = c.pid
+FROM (
+  SELECT DISTINCT ON (session_id) session_id, payload->>'parent_session_id' AS pid
+  FROM events
+  WHERE payload->>'parent_session_id' IS NOT NULL
+  ORDER BY session_id, event_seq
+) c
+WHERE s.session_id = c.session_id AND s.parent_session_id IS NULL;
 -- Feedback (ADR 0009): a stateless signal channel filed from the dashboard.
 -- Feature suggestions carry no session; defect feedback anchors the session
 -- it was noticed on and cascades away with it.

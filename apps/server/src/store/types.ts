@@ -17,6 +17,8 @@ export type SessionRow = {
   total_output_tokens: number;
   total_cache_read_tokens: number;
   total_cache_write_tokens: number;
+  /** Parent session for subagent sessions; null for top-level sessions. */
+  parent_session_id: string | null;
 };
 
 export type StoredEvent = { event_seq: number; event: NormalEvent };

@@ -15,6 +15,8 @@ export type SessionSummary = {
   total_output_tokens: number;
   total_cache_read_tokens: number;
   total_cache_write_tokens: number;
+  /** Parent session for subagent sessions; null for top-level sessions. */
+  parent_session_id: string | null;
 };
 
 /** One entry of GET /sessions/:id/events — a NormalEvent plus its seq. */

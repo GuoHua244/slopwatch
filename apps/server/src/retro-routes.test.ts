@@ -16,6 +16,7 @@ const sessionRow = (): SessionRow => ({
   total_output_tokens: 5_000,
   total_cache_read_tokens: 80_000,
   total_cache_write_tokens: 0,
+  parent_session_id: null,
 });
 
 // ADR 0008 route tests over a scripted store: scope follows the events

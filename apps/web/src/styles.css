@@ -607,6 +607,55 @@ ul.sessions li.selected {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Subagent branch: nested under its parent row, guide line marks the tree. */
+ul.sessions ul.sessions.sub {
+  margin: 4px 0 0;
+  padding: 2px 0 0 12px;
+  border-left: 1px solid var(--line);
+}
+.twistie {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color 0.12s,
+    border-color 0.12s,
+    background-color 0.12s;
+}
+.twistie svg {
+  transition: transform 0.15s;
+}
+.twistie.open svg {
+  transform: rotate(90deg);
+}
+.twistie:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.chip {
+  flex: none;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 9.5px;
+  line-height: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
 
 /* --- cards --- */
 .panel-card {

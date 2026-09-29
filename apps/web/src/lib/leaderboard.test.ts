@@ -42,6 +42,7 @@ const session = (
   total_output_tokens: outputTokens,
   total_cache_read_tokens: 0,
   total_cache_write_tokens: 0,
+  parent_session_id: null,
 });
 
 const modelRow = (

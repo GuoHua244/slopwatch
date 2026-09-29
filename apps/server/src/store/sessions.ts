@@ -121,6 +121,16 @@ export const sessionMethods = (
                 [sessionId, event.title ?? null, event.task_preview ?? null],
               );
             }
+            if (
+              event.kind === "session" &&
+              event.event === "start" &&
+              event.parent_session_id
+            ) {
+              await client.query(
+                "UPDATE sessions SET parent_session_id = $2 WHERE session_id = $1 AND parent_session_id IS NULL",
+                [sessionId, event.parent_session_id],
+              );
+            }
             if (event.kind === "model_request" && event.usage) {
               dIn += event.usage.input_tokens ?? 0;
               dOut += event.usage.output_tokens ?? 0;
