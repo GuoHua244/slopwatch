@@ -18,6 +18,18 @@ export type RecordAdapter = {
    * before the session's end event ships.
    */
   onTeardown?(): NormalEvent[];
+  /**
+   * Delivery acks for a drain's batch: onFlushed after the flush succeeded
+   * AND the cursor committed, onFlushFailed when the drain aborted at any
+   * point after events were normalized (flush rejected, cursor write failed,
+   * a later record threw). Adapters that gate emissions on delivery — the
+   * session-title gate — commit their gate only on the ack: committing at
+   * normalization time would permanently suppress a title whose batch never
+   * shipped. The order (cursor first, ack second) makes the window between
+   * them at-least-once: a crash there re-ships a title, never loses one.
+   */
+  onFlushed?(batch: NormalEvent[]): void;
+  onFlushFailed?(batch: NormalEvent[]): void;
 };
 
 /**
@@ -49,27 +61,27 @@ export const createTailLoop = (opts: {
     if (draining) return; // previous flush still in flight
     draining = true;
     try {
+      let current: number;
       try {
-        let current: number;
-        try {
-          current = statSync(opts.file).size;
-        } catch {
-          return; // file vanished (rotated?) — keep waiting
-        }
-        if (current < size) {
-          size = 0; // file truncated/rotated — start over
-          partial = "";
-        }
-        if (current === size) return;
-        const fd = openSync(opts.file, "r");
-        const buf = Buffer.alloc(current - size);
-        readSync(fd, buf, 0, buf.length, size);
-        closeSync(fd);
-        size = current;
-        partial += buf.toString("utf8");
-        const lines = partial.split("\n");
-        partial = lines.pop() ?? "";
-        const batch: NormalEvent[] = [];
+        current = statSync(opts.file).size;
+      } catch {
+        return; // file vanished (rotated?) — keep waiting
+      }
+      if (current < size) {
+        size = 0; // file truncated/rotated — start over
+        partial = "";
+      }
+      if (current === size) return;
+      const fd = openSync(opts.file, "r");
+      const buf = Buffer.alloc(current - size);
+      readSync(fd, buf, 0, buf.length, size);
+      closeSync(fd);
+      size = current;
+      partial += buf.toString("utf8");
+      const lines = partial.split("\n");
+      partial = lines.pop() ?? "";
+      const batch: NormalEvent[] = [];
+      try {
         for (const line of lines) {
           if (!line.trim()) continue;
           let record: unknown;
@@ -110,7 +122,12 @@ export const createTailLoop = (opts: {
         // last COMPLETE line — a partially-written trailing line is re-read next
         // time so it can be stitched back together
         writeCursor(opts.cursorFile, size - Buffer.byteLength(partial));
+        // the delivery ack lands after the cursor commit (see RecordAdapter)
+        opts.adapter.onFlushed?.(batch);
       } catch (e) {
+        // events already normalized may have gated future emissions —
+        // release those gates so the retry re-emits them
+        if (batch.length > 0) opts.adapter.onFlushFailed?.(batch);
         // A transient I/O failure (an antivirus lock on Windows, a disk
         // hiccup) must not escape as an unhandled rejection — the callers
         // `void drain()` from watch/interval callbacks, so a throw would kill
