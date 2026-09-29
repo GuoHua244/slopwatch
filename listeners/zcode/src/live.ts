@@ -5,6 +5,13 @@
  * SessionEnd hook, so the listener exits after --idle-ms without new records
  * (capped at --max-lifetime-ms).
  *
+ * Subagent sessions are captured from their own rollout files
+ * (`model-io-sess_subagent_agent_<uuid>.jsonl` in the same directory):
+ * discovered on the poll cadence, claimed when the first record's traceId
+ * matches this session's, tailed with their own cursor, and bracketed by
+ * child session:start (with parent_session_id)/session:end markers so the
+ * server's child-session rollups (ADR 0008) see them.
+ *
  * The tail/watch/teardown skeleton lives in listener-shared's
  * createLiveListener; this file is only the ZCode adapter.
  *
@@ -13,14 +20,25 @@
  *        [--server-url http://host:port --token <bearer>] [--cwd <dir>]
  */
 import { execSync } from "node:child_process";
-import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { closeSync, openSync, readSync, readdirSync } from "node:fs";
+import { homedir, hostname } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type AttachmentEvent, type NormalEvent } from "@slopwatch/events";
+import {
+  envelope,
+  isNonEmptyString,
+  isObject,
+  type AttachmentEvent,
+  type NormalEvent,
+  type SessionEndEvent,
+  type SessionStartEvent,
+  type TurnStartEvent,
+} from "@slopwatch/events";
 import { resolveShipConfig } from "@slopwatch/config";
 import {
   argvHelpers,
   createLiveListener,
+  type ChildTail,
   type RecordAdapter,
 } from "@slopwatch/listener-shared";
 import {
@@ -75,6 +93,64 @@ try {
   // optional
 }
 
+// --- Subagent capture -------------------------------------------------------
+// ZCode writes each subagent's model traffic to its own rollout file
+// (`model-io-sess_subagent_agent_<uuid>.jsonl`, querySource "subagent") and
+// deletes it when the session ends — replay can never recover it, live tail
+// is the only path. A subagent record's traceId equals its parent session's
+// (verified session-scoped and constant across turns in the ZCode internal
+// db), so a file is claimed for this listener only when its first record's
+// traceId matches ours — two concurrently open main sessions never
+// cross-adopt each other's subagents.
+
+const ROLLOUT_DIR = dirname(file);
+const SUBAGENT_FILE = /^model-io-(sess_subagent_agent_.+)\.jsonl$/;
+
+const primarySessionId = sessionId;
+let parentTraceId: string | null = null;
+let spawnedByTurnId: string | undefined;
+const claimedFiles = new Set<string>();
+const childMetaSent = new Set<string>();
+
+/**
+ * The first record of a rollout file — all the claim decision gets. ZCode
+ * appends a record only once its request completed, but a file caught
+ * mid-write can end without a newline: null means "not yet decidable" and
+ * the poll simply retries.
+ */
+const firstRecord = (file: string): Record<string, unknown> | null => {
+  let fd: number;
+  try {
+    fd = openSync(file, "r");
+  } catch {
+    return null;
+  }
+  try {
+    let buf = Buffer.alloc(0);
+    const chunk = Buffer.alloc(256 * 1024);
+    for (;;) {
+      const n = readSync(fd, chunk, 0, chunk.length, buf.length);
+      if (n <= 0) return null;
+      buf = Buffer.concat([buf, chunk.subarray(0, n)]);
+      const nl = buf.indexOf(0x0a);
+      if (nl < 0) {
+        if (buf.length > 8 * 1024 * 1024) return null;
+        continue;
+      }
+      try {
+        const parsed: unknown = JSON.parse(
+          buf.subarray(0, nl).toString("utf8"),
+        );
+        return isObject(parsed) ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+  } finally {
+    closeSync(fd);
+  }
+};
+
 // ZCode rollout records carry everything worth capturing: title/task preview,
 // the first record of each turn, the model-request/tool-call stream, and the
 // results of earlier tool calls (echoed in the next request's messages).
@@ -91,6 +167,12 @@ const recordOccurredAt = (record: unknown): string =>
 const adapter: RecordAdapter = {
   driftFromRecord,
   eventsFromRecord: (record, sessionId) => {
+    if (isObject(record)) {
+      if (sessionId === primarySessionId && isNonEmptyString(record.turnId)) {
+        // the parent turn a newly discovered subagent was spawned by
+        spawnedByTurnId = record.turnId;
+      }
+    }
     const events: NormalEvent[] = [];
     const meta = metaFromRecord(record, sessionId);
     if (meta) events.push(meta);
@@ -126,7 +208,97 @@ const adapter: RecordAdapter = {
     );
     events.push(...capture.attachments.splice(0));
     events.push(...toolResults);
+    // Child sessions get no session_title record of their own — announce
+    // the subagent's task as the title (the ↳ marks the row as a subagent
+    // in the sessions list).
+    if (sessionId !== primarySessionId && !childMetaSent.has(sessionId)) {
+      const childTurnStart = events.find(
+        (e): e is TurnStartEvent & { user_message: string } =>
+          e.kind === "turn" &&
+          e.event === "start" &&
+          typeof e.user_message === "string",
+      );
+      if (childTurnStart) {
+        childMetaSent.add(sessionId);
+        events.push({
+          ...envelope("zcode", sessionId, childTurnStart.occurred_at),
+          kind: "session",
+          event: "meta",
+          title: `↳ ${childTurnStart.user_message.slice(0, 119)}`,
+        });
+      }
+    }
     return events;
+  },
+};
+
+const childTails = {
+  discover: (): ChildTail[] => {
+    if (parentTraceId === null) {
+      // The main file's first record carries the session trace even when the
+      // primary tail has nothing new to drain (a respawned listener with an
+      // advanced cursor) — without this, a respawn could never claim the
+      // subagent files written while it was dead.
+      const first = firstRecord(file);
+      if (first && isNonEmptyString(first.traceId)) {
+        parentTraceId = first.traceId;
+      }
+    }
+    if (parentTraceId === null) return []; // main file not written yet
+    let names: string[];
+    try {
+      names = readdirSync(ROLLOUT_DIR);
+    } catch {
+      return [];
+    }
+    const tails: ChildTail[] = [];
+    for (const name of names) {
+      const match = name.match(SUBAGENT_FILE);
+      if (!match || claimedFiles.has(name)) continue;
+      const file = join(ROLLOUT_DIR, name);
+      const childId = match[1]!;
+      const first = firstRecord(file);
+      if (
+        !first ||
+        !isNonEmptyString(first.traceId) ||
+        first.traceId !== parentTraceId
+      ) {
+        continue; // foreign session's subagent, or first line still mid-write
+      }
+      claimedFiles.add(name);
+      const childStartedAt = isNonEmptyString(first.startedAt)
+        ? first.startedAt
+        : new Date().toISOString();
+      tails.push({
+        file,
+        sessionId: childId,
+        onStart: (): NormalEvent[] => [
+          {
+            ...envelope("zcode", childId, childStartedAt),
+            kind: "session",
+            event: "start",
+            cwd: arg("cwd") ?? process.cwd(),
+            hostname: hostname(),
+            ...(gitRemote ? { git_remote: gitRemote } : {}),
+            parent_session_id: primarySessionId,
+            ...(spawnedByTurnId ? { spawned_by_turn_id: spawnedByTurnId } : {}),
+          } satisfies SessionStartEvent,
+        ],
+        onEnd: (reason): NormalEvent[] => [
+          {
+            ...envelope("zcode", childId, new Date().toISOString()),
+            kind: "session",
+            event: "end",
+            reason,
+          } satisfies SessionEndEvent,
+        ],
+        // child turns must not close the parent turn being digested — only
+        // their requests/tools fold into it
+        digestTransform: (events) =>
+          events.filter((e) => !(e.kind === "turn" && e.event === "start")),
+      });
+    }
+    return tails;
   },
 };
 
@@ -141,6 +313,7 @@ await createLiveListener({
   serverUrl: ship?.serverUrl,
   token: ship?.token,
   adapter,
+  childTails,
   heartbeat: true,
   // ZCode's end is usually the idle/max-lifetime exit with the server maybe
   // gone — probe first so tokens are not burned on a summary that cannot ship

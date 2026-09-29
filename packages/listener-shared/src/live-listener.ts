@@ -1,4 +1,11 @@
-import { existsSync, mkdirSync, watch, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  statSync,
+  unlinkSync,
+  watch,
+  writeFileSync,
+} from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import {
@@ -43,6 +50,43 @@ export type LiveListenerOptions = {
   probeBeforeFold: boolean;
   /** This listener package's drain.ts — the target of the detached sweep. */
   drainScript: string;
+  /**
+   * Child capture files discovered while running, polled on the same cadence
+   * as the primary tail. Each discovered file gets its own cursor (resumed
+   * across listener generations, so a re-spawn never re-ships drained
+   * records) and its drains reset the shared idle clock — child activity
+   * keeps the listener alive exactly like primary activity.
+   */
+  childTails?: { discover: () => ChildTail[] };
+};
+
+/**
+ * A secondary capture file tailed alongside the primary one — a child
+ * session's capture (ZCode subagent rollouts). Its events carry the child's
+ * own sessionId and ship through the same pipeline as the parent session's;
+ * the lifecycle markers bracket them so the dashboard's last-write-wins
+ * status shows the child as its own live/ended row.
+ */
+export type ChildTail = {
+  /** Absolute path of the capture file to tail. */
+  file: string;
+  /** The session id the drained events carry (the child session). */
+  sessionId: string;
+  /** Shipped when the tail begins — the child's session:start. */
+  onStart?: () => NormalEvent[];
+  /**
+   * Shipped once when the file is gone, quiet past idleMs, or the listener
+   * tears down. Never called again until a fresh onStart (the quiet end
+   * re-arms itself when the file grows again).
+   */
+  onEnd?: (reason: string) => NormalEvent[];
+  /**
+   * Drained events feed the parent session's rolling digest through this
+   * transform; without it the file is not observed at all. (ZCode filters
+   * child turn:start out so a child's turns do not close the parent turn
+   * being digested.)
+   */
+  digestTransform?: (events: NormalEvent[]) => NormalEvent[];
 };
 
 export const createLiveListener = async (
@@ -55,7 +99,7 @@ export const createLiveListener = async (
   const summaries = summaryStore(stateBase);
 
   const sweep = (): void => spawnDrainSweep(opts.drainScript);
-  const { flush } = createShipPipeline({
+  const { flush: flushBatch } = createShipPipeline({
     agent: opts.agent,
     sessionId: opts.sessionId,
     serverUrl: opts.serverUrl,
@@ -63,6 +107,22 @@ export const createLiveListener = async (
     stateBase,
     onQueued: sweep,
   });
+
+  // Every flush source — the primary tail, child tails, lifecycle markers —
+  // funnels through one promise chain: the flusher replays the disk queue
+  // before each batch, so concurrent callers would interleave replays and
+  // sends out of order.
+  let flushChain: Promise<unknown> = Promise.resolve();
+  const flush = (
+    batch: NormalEvent[],
+  ): Promise<"sent" | "queued" | "stdout"> => {
+    const next = flushChain.then(() => flushBatch(batch));
+    flushChain = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  };
 
   // Rolling summaries (open question 15): only while shipping. Decision 28:
   // the fold's LLM call executes server-side on the caller's own profile
@@ -190,6 +250,85 @@ export const createLiveListener = async (
   });
 
   let finished = false;
+
+  // Child capture files (ZCode subagent rollouts), each with its own tail
+  // loop and cursor. Lifecycle: start marker at registration, end marker on
+  // deletion / quiet past idleMs / listener teardown — a quiet end re-arms
+  // when the file grows again, so the last-write-wins dashboard status stays
+  // truthful without per-child timers.
+  type ActiveChild = {
+    tail: ChildTail;
+    cursorFile: string;
+    drain: () => Promise<void>;
+    ended: boolean;
+    endedAtMtimeMs: number;
+  };
+  const children = new Map<string, ActiveChild>();
+  const shipChildEnd = async (
+    child: ActiveChild,
+    reason: string,
+  ): Promise<void> => {
+    child.ended = true;
+    if (child.tail.onEnd) await flush(child.tail.onEnd(reason));
+  };
+  const pollChildTails = async (): Promise<void> => {
+    if (!opts.childTails || finished) return;
+    for (const tail of opts.childTails.discover()) {
+      if (children.has(tail.file)) continue;
+      const cursorFile = `${stateBase}.sub-${tail.sessionId}.cursor`;
+      const { drain: drainChild } = createTailLoop({
+        file: tail.file,
+        cursorFile,
+        agent: opts.agent,
+        sessionId: tail.sessionId,
+        adapter: opts.adapter,
+        digest: {
+          close: () => {},
+          observe: (events) => {
+            if (tail.digestTransform)
+              digest.observe(tail.digestTransform(events));
+          },
+        },
+        flush,
+        resetIdle,
+      });
+      const child: ActiveChild = {
+        tail,
+        cursorFile,
+        drain: drainChild,
+        ended: false,
+        endedAtMtimeMs: 0,
+      };
+      children.set(tail.file, child);
+      if (tail.onStart) await flush(tail.onStart());
+      void drainChild();
+    }
+    for (const [file, child] of [...children]) {
+      let mtimeMs: number | null = null;
+      try {
+        mtimeMs = statSync(file).mtimeMs;
+      } catch {
+        mtimeMs = null; // deleted — ZCode removes child rollouts at session end
+      }
+      if (mtimeMs === null) {
+        children.delete(file);
+        if (!child.ended) await shipChildEnd(child, "file-gone");
+        try {
+          unlinkSync(child.cursorFile);
+        } catch {
+          // already gone
+        }
+        continue;
+      }
+      if (!child.ended && Date.now() - mtimeMs > opts.idleMs) {
+        child.endedAtMtimeMs = mtimeMs;
+        await shipChildEnd(child, "idle-timeout");
+      } else if (child.ended && mtimeMs > child.endedAtMtimeMs) {
+        child.ended = false;
+        if (child.tail.onStart) await flush(child.tail.onStart());
+      }
+    }
+  };
   const finish = async (reason: string): Promise<void> => {
     if (finished) return;
     finished = true;
@@ -211,6 +350,14 @@ export const createLiveListener = async (
       );
     }
     const batch: NormalEvent[] = [];
+    // child sessions still open at teardown end first, so the parent's end
+    // stays the last write for the group
+    for (const child of children.values()) {
+      if (!child.ended && child.tail.onEnd) {
+        batch.push(...child.tail.onEnd("listener-exit"));
+      }
+      child.ended = true;
+    }
     if (foldLlm && shipable && (await summaryConfigured())) {
       try {
         const summaryEvent = await foldSummary({
@@ -242,10 +389,26 @@ export const createLiveListener = async (
     setTimeout(() => process.exit(0), opts.serverUrl ? 1500 : 50);
   };
 
+  // One tick = primary drain, then the child poll. The order matters once:
+  // a re-spawned listener can only claim surviving child files after the
+  // boot backfill has established its identity (the zcode adapter learns the
+  // parent traceId from the first drained record), so discovery rides the
+  // same async chain instead of racing it.
+  const tick = (): void => {
+    void (async () => {
+      await drain();
+      await pollChildTails();
+    })().catch((e) =>
+      console.error(
+        `live: tick failed (${e instanceof Error ? e.message : String(e)})`,
+      ),
+    );
+  };
+
   const start = (): void => {
-    void drain(); // backfill everything written before we attached
-    watch(opts.file, () => void drain());
-    setInterval(() => void drain(), 2000); // belt-and-braces alongside fs.watch
+    tick();
+    watch(opts.file, tick);
+    setInterval(tick, 2000); // belt-and-braces alongside fs.watch
     setTimeout(() => void finish("max-lifetime"), opts.maxLifetimeMs);
   };
 
