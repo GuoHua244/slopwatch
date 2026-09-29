@@ -37,6 +37,7 @@ import {
   type AttachmentEvent,
   type NormalEvent,
   type SessionEndEvent,
+  type SessionMetaEvent,
   type SessionStartEvent,
   type TurnStartEvent,
 } from "@slopwatch/events";
@@ -130,15 +131,29 @@ const stateDir = join(homedir(), ".slopwatch", "listeners");
 const titlesFile = join(stateDir, `zcode-${sessionId}.titles.json`);
 const titleSent = new Map<string, string>(); // delivered, per session
 const pendingTitle = new Map<string, string>(); // emitted, not yet acked
+// Sessions whose delivered-title value came from a version-1 sidecar, which
+// stored the event's 200-char truncated form. The gate then also suppresses
+// a rewrite whose event form matches — it would re-ship byte-identical
+// bytes — and adopts the full title on the spot, retiring the flag.
+const legacyGate = new Set<string>();
 try {
   const snapshot: unknown = JSON.parse(readFileSync(titlesFile, "utf8"));
-  if (
-    isObject(snapshot) &&
-    snapshot.version === 1 &&
-    isObject(snapshot.titles)
-  ) {
-    for (const [sid, title] of Object.entries(snapshot.titles)) {
-      if (isNonEmptyString(title)) titleSent.set(sid, title);
+  // a version-1 file's plain values may be truncated; a version-2 file's
+  // plain values are full — only entries never re-committed since the
+  // upgrade carry an explicit legacy flag
+  const legacyFile = !(isObject(snapshot) && snapshot.version === 2);
+  if (isObject(snapshot) && isObject(snapshot.titles)) {
+    for (const [sid, entry] of Object.entries(snapshot.titles)) {
+      const title = isNonEmptyString(entry)
+        ? entry
+        : isObject(entry) && isNonEmptyString(entry.title)
+          ? entry.title
+          : null;
+      if (title === null) continue;
+      titleSent.set(sid, title);
+      if (legacyFile || (isObject(entry) && entry.legacy === true)) {
+        legacyGate.add(sid);
+      }
     }
   }
 } catch {
@@ -147,8 +162,13 @@ try {
 const persistTitles = (): void => {
   try {
     atomicWriteJson(titlesFile, {
-      version: 1,
-      titles: Object.fromEntries(titleSent),
+      version: 2,
+      titles: Object.fromEntries(
+        [...titleSent].map(([sid, title]) => [
+          sid,
+          legacyGate.has(sid) ? { title, legacy: true } : title,
+        ]),
+      ),
     });
   } catch {
     // persistence is an optimization — capture proceeds without it
@@ -230,12 +250,25 @@ const adapter: RecordAdapter = {
     // the gate compares full titles (a retitle past the 200-char event cap
     // still ships); pending titles suppress same-batch duplicates only
     const rawTitle = titleTextFromRecord(record);
-    const meta =
+    const sent = titleSent.get(sessionId);
+    let meta: SessionMetaEvent | null = null;
+    if (
       rawTitle !== null &&
-      (rawTitle === titleSent.get(sessionId) ||
-        rawTitle === pendingTitle.get(sessionId))
-        ? null
-        : metaFromRecord(record, sessionId);
+      rawTitle !== sent &&
+      rawTitle !== pendingTitle.get(sessionId)
+    ) {
+      if (legacyGate.has(sessionId) && rawTitle.slice(0, 200) === sent) {
+        // the legacy (version-1) gate holds the event's truncated form — this
+        // rewrite is byte-identical on the wire, so nothing ships, but the
+        // full title is adopted as the gate (persisted on the spot) and the
+        // lossy legacy comparison retires
+        titleSent.set(sessionId, rawTitle);
+        legacyGate.delete(sessionId);
+        persistTitles();
+      } else {
+        meta = metaFromRecord(record, sessionId);
+      }
+    }
     if (meta) {
       events.push(meta);
       pendingTitle.set(sessionId, rawTitle!);
@@ -307,6 +340,7 @@ const adapter: RecordAdapter = {
       const title = pendingTitle.get(sid);
       if (title === undefined) continue;
       titleSent.set(sid, title);
+      legacyGate.delete(sid); // the committed gate is a full title
       pendingTitle.delete(sid);
       committed = true;
     }

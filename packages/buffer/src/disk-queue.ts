@@ -132,9 +132,12 @@ export const createDiskQueue = (opts: {
     return { entries, corruptLines };
   };
 
-  // Atomic rewrite: write a temp file next to the queue, rename over it.
+  // Atomic rewrite: write a temp file next to the queue, rename over it. The
+  // temp name is per-process — the orphan sweep and a respawned listener can
+  // target the same queue file, and a shared temp path would let one rename
+  // publish the other's half-written bytes.
   const rewrite = (entries: QueueEntry[]): void => {
-    const tmp = `${opts.file}.tmp`;
+    const tmp = `${opts.file}.${process.pid}.tmp`;
     mkdirSync(dirname(opts.file), { recursive: true });
     writeFileSync(
       tmp,

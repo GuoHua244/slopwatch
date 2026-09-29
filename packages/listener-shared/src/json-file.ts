@@ -6,6 +6,12 @@ import { dirname } from "node:path";
  * so a crash mid-write cannot truncate the user's previous content. The
  * optional mode (e.g. 0o600) is applied when the temp file is created and
  * survives the rename — secrets never touch the disk world-readable.
+ *
+ * The temp name is per-process: a respawned listener racing its dying
+ * predecessor for the same sidecar would otherwise share one temp path, and
+ * the loser's rename could publish the winner's half-written bytes. Distinct
+ * temps keep every rename a whole snapshot; the last rename wins. Writes in
+ * one process are synchronous, so the pid is enough.
  */
 export const atomicWriteJson = (
   path: string,
@@ -14,7 +20,7 @@ export const atomicWriteJson = (
 ): void => {
   // installing before the host's first run must not crash on a missing dir
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
+  const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { mode });
   renameSync(tmp, path);
 };

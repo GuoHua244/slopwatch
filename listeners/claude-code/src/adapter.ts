@@ -18,6 +18,7 @@ import {
   envelope,
   type NormalEvent,
   type SessionEndEvent,
+  type SessionMetaEvent,
   type SessionStartEvent,
   type TurnStartEvent,
 } from "@slopwatch/events";
@@ -58,8 +59,6 @@ export type ClaudeCodeAdapter = {
   primaryTurnId: () => string | null;
   /** Drop a session's state (memory + sidecar) — child tails call this on end. */
   forgetSession: (sessionId: string) => void;
-  /** Flush the primary session's open message, if any (replay/backfill). */
-  flushPrimary: () => NormalEvent[];
 };
 
 export const createClaudeCodeAdapter = (opts: {
@@ -117,12 +116,25 @@ export const createClaudeCodeAdapter = (opts: {
       // The gate compares full titles and commits only on the flush ack
       // (see onFlushed); a batch that never shipped must not gate its retry.
       const rawTitle = titleFromRecord(record);
-      const meta =
+      const sent = state.titleSent;
+      let meta: SessionMetaEvent | null = null;
+      if (
         rawTitle !== null &&
-        (rawTitle === state.titleSent ||
-          rawTitle === pendingTitle.get(sessionId))
-          ? null
-          : metaFromRecord(record, sessionId);
+        rawTitle !== sent &&
+        rawTitle !== pendingTitle.get(sessionId)
+      ) {
+        if (state.titleSentLegacy && rawTitle.slice(0, 200) === sent) {
+          // a version-1 sidecar stored the event's truncated form — this
+          // rewrite is byte-identical on the wire, so nothing ships, but the
+          // full title is adopted as the gate (persisted on the spot) and
+          // the lossy legacy comparison retires
+          state.titleSent = rawTitle;
+          state.titleSentLegacy = false;
+          persist(sessionId, state);
+        } else {
+          meta = metaFromRecord(record, sessionId);
+        }
+      }
       if (meta) pendingTitle.set(sessionId, rawTitle!);
       const events = eventsFromRecord(record, sessionId, state, {
         seen: seenShas,
@@ -183,6 +195,7 @@ export const createClaudeCodeAdapter = (opts: {
         const title = pendingTitle.get(sessionId);
         if (!state || title === undefined) continue;
         state.titleSent = title;
+        state.titleSentLegacy = false; // the committed gate is a full title
         pendingTitle.delete(sessionId);
         persist(sessionId, state);
       }
@@ -216,11 +229,6 @@ export const createClaudeCodeAdapter = (opts: {
       } catch {
         // already gone
       }
-    },
-    flushPrimary: (): NormalEvent[] => {
-      const state = stateOf(opts.primarySessionId);
-      const flushed = flushOpenMessage(state, opts.primarySessionId);
-      return flushed ? [flushed] : [];
     },
   };
 };

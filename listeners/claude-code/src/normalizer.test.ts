@@ -454,9 +454,26 @@ describe("tail state persistence", () => {
   });
 
   test("a corrupt snapshot restores as null (fresh state)", () => {
-    expect(restoreTailState({ version: 2 })).toBeNull();
+    expect(restoreTailState({ version: 3 })).toBeNull(); // a future version
     expect(restoreTailState("nope")).toBeNull();
     expect(restoreTailState(null)).toBeNull();
+  });
+
+  test("a version-1 snapshot restores with the legacy title gate", () => {
+    const restored = restoreTailState({ version: 1, titleSent: "kept" })!;
+    expect(restored.titleSent).toBe("kept");
+    expect(restored.titleSentLegacy).toBe(true); // may be the truncated form
+    // a v1 snapshot without a title has nothing to gate
+    expect(restoreTailState({ version: 1 })!.titleSentLegacy).toBe(false);
+    // a v2 snapshot's flag is read as written
+    expect(
+      restoreTailState({
+        version: 2,
+        titleSent: "kept",
+        titleSentLegacy: true,
+      })!.titleSentLegacy,
+    ).toBe(true);
+    expect(restoreTailState({ version: 2 })!.titleSentLegacy).toBe(false);
   });
 
   test("promptTextFromRecord reads string and block content", () => {

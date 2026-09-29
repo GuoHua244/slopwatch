@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readCursor, writeCursor } from "./cursor";
@@ -29,6 +29,16 @@ describe("capture cursor", () => {
     expect(readCursor(file)).toBe(0);
     writeCursor(file, Number.NaN);
     expect(readCursor(file)).toBe(0);
+  });
+
+  test("a concurrent writer's in-flight temp file is not consumed", () => {
+    const other = join(dir, "zcode-sess_y.cursor");
+    writeCursor(other, 7);
+    // the old shared temp name, caught mid-write by another process
+    writeFileSync(`${other}.tmp`, "99999");
+    writeCursor(other, 8);
+    expect(readCursor(other)).toBe(8);
+    expect(readFileSync(`${other}.tmp`, "utf8")).toBe("99999"); // untouched
   });
 
   test("cleanup", () => {

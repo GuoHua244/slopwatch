@@ -102,6 +102,31 @@ describe("zcode live.ts title gate", () => {
     expect(titlesShipped()).toEqual([]);
   }, 30000);
 
+  test("a version-1 sidecar gates on the event form; a retitle ships again", async () => {
+    received.length = 0;
+    // a pre-full-title sidecar: the gate holds the event's 200-char form of
+    // the long title, where the full string would not compare equal
+    const long = "r".repeat(200);
+    writeFileSync(
+      join(
+        home,
+        ".slopwatch",
+        "listeners",
+        `zcode-${mainSessionId}.titles.json`,
+      ),
+      JSON.stringify({ version: 1, titles: { [mainSessionId]: long } }),
+    );
+    // the unchanged rewrite of the long title — byte-identical on the wire:
+    // suppressed, where the pre-fix behavior re-shipped it once
+    appendFileSync(mainFile, titleLine(`${long}tail`, "req_v1-1"));
+    await spawnLive();
+    expect(titlesShipped()).toEqual([]);
+    // a real retitle ships, and the adopted full gate retires the legacy form
+    appendFileSync(mainFile, titleLine("after-upgrade", "req_v1-2"));
+    await spawnLive();
+    expect(titlesShipped()).toEqual(["after-upgrade"]);
+  }, 30000);
+
   test("cleanup", () => {
     server.stop(true);
   });

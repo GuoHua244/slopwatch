@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClaudeCodeAdapter } from "./adapter";
@@ -252,6 +252,51 @@ describe("title gating", () => {
       "sess_main",
     );
     expect(events.find((e) => e.kind === "session")).toBeUndefined();
+  });
+
+  test("a version-1 sidecar gates on the event form and adopts the full title", () => {
+    const { stateDir } = makeAdapter();
+    const base = "u".repeat(200);
+    // a pre-full-title sidecar: the gate holds the event's 200-char form
+    writeFileSync(
+      join(stateDir, "claude-code-sess_main.tailstate.json"),
+      JSON.stringify({ version: 1, titleSent: base }),
+    );
+    const reborn = createClaudeCodeAdapter({
+      primarySessionId: "sess_main",
+      stateDir,
+    });
+    // the unchanged rewrite of the long title — its full form differs from
+    // the stored truncated gate, but the bytes on the wire are identical:
+    // suppressed, where the pre-fix behavior re-shipped it once
+    expect(
+      titlesFrom(
+        reborn.adapter.eventsFromRecord(titleRecord(`${base}old`), "sess_main"),
+      ),
+    ).toEqual([]);
+    // the full title was adopted and persisted, retiring the lossy compare
+    const snapshot = JSON.parse(
+      readFileSync(
+        join(stateDir, "claude-code-sess_main.tailstate.json"),
+        "utf8",
+      ),
+    );
+    expect(snapshot.version).toBe(2);
+    expect(snapshot.titleSent).toBe(`${base}old`);
+    expect(snapshot.titleSentLegacy).toBe(false);
+    // a further unchanged rewrite is suppressed by the plain full compare
+    expect(
+      titlesFrom(
+        reborn.adapter.eventsFromRecord(titleRecord(`${base}old`), "sess_main"),
+      ),
+    ).toEqual([]);
+    // a retitle past the cap still ships (the event form is the same 200
+    // chars, but the whole strings differ)
+    expect(
+      titlesFrom(
+        reborn.adapter.eventsFromRecord(titleRecord(`${base}new`), "sess_main"),
+      ),
+    ).toEqual([`${base}new`.slice(0, 200)]);
   });
 
   test("an undelivered title does not gate a respawned adapter", () => {

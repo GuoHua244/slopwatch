@@ -81,6 +81,14 @@ export type TailState = {
    */
   titleSent: string | null;
   /**
+   * True when `titleSent` was restored from a version-1 sidecar, whose gate
+   * value may be the event's truncated form (written before the gate stored
+   * whole titles). The adapter then also suppresses a rewrite whose event
+   * form matches — it would re-ship byte-identical bytes — and adopts the
+   * full title, which retires this flag on the next persist.
+   */
+  titleSentLegacy: boolean;
+  /**
    * Wall-clock (ms) of the most recent record that did NOT belong to the
    * open message — the request-boundary gap the next duration measures.
    */
@@ -98,6 +106,7 @@ export type TailState = {
 export const newTailState = (): TailState => ({
   turnId: null,
   titleSent: null,
+  titleSentLegacy: false,
   outsideTimestampMs: null,
   seenMessageIds: new Set(),
   seenToolUseIds: new Set(),
@@ -113,9 +122,10 @@ const TOOL_NAME_CAP = 500;
 
 /** JSON shape of a persisted TailState (the per-session sidecar file). */
 export type TailStateSnapshot = {
-  version: 1;
+  version: 2;
   turnId: string | null;
   titleSent: string | null;
+  titleSentLegacy: boolean;
   outsideTimestampMs: number | null;
   taskPreviewSent: boolean;
   seenMessageIds: string[];
@@ -139,9 +149,10 @@ const lastValues = <T>(set: Set<T> | Map<T, unknown>, cap: number): T[] => {
 };
 
 export const serializeTailState = (state: TailState): TailStateSnapshot => ({
-  version: 1,
+  version: 2,
   turnId: state.turnId,
   titleSent: state.titleSent,
+  titleSentLegacy: state.titleSentLegacy,
   outsideTimestampMs: state.outsideTimestampMs,
   taskPreviewSent: state.taskPreviewSent,
   seenMessageIds: lastValues(state.seenMessageIds, SEEN_MESSAGE_CAP),
@@ -166,7 +177,8 @@ export const serializeTailState = (state: TailState): TailStateSnapshot => ({
 
 /** Defensive restore: anything unexpected in the JSON yields null (fresh state). */
 export const restoreTailState = (snapshot: unknown): TailState | null => {
-  if (!isObject(snapshot) || snapshot.version !== 1) return null;
+  if (!isObject(snapshot)) return null;
+  if (snapshot.version !== 1 && snapshot.version !== 2) return null;
   const isOpenMessage = (v: unknown): v is OpenMessage => {
     if (!isObject(v) || !isNonEmptyString(v.messageId)) return false;
     if (!Array.isArray(v.texts)) return false;
@@ -175,6 +187,12 @@ export const restoreTailState = (snapshot: unknown): TailState | null => {
   return {
     turnId: isNonEmptyString(snapshot.turnId) ? snapshot.turnId : null,
     titleSent: isNonEmptyString(snapshot.titleSent) ? snapshot.titleSent : null,
+    // a version-1 snapshot predates the full-title gate — its value may be
+    // the event's truncated form, so the adapter gates on the event form too
+    titleSentLegacy:
+      snapshot.version === 1
+        ? isNonEmptyString(snapshot.titleSent)
+        : snapshot.titleSentLegacy === true,
     outsideTimestampMs:
       typeof snapshot.outsideTimestampMs === "number"
         ? snapshot.outsideTimestampMs

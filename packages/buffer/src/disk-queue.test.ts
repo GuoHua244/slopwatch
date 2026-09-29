@@ -74,6 +74,18 @@ describe("disk queue", () => {
     expect(queue.stats().entries).toBe(0);
   });
 
+  test("a rewrite does not consume a concurrent writer's in-flight temp file", () => {
+    const file = tmpFile();
+    const queue = createDiskQueue({ file });
+    queue.enqueue([event("first")]);
+    // the old shared temp name, caught mid-write by another process
+    const foreign = `${file}.tmp`;
+    writeFileSync(foreign, "torn");
+    queue.enqueue([event("second")]);
+    expect(queue.stats().entries).toBe(2);
+    expect(readFileSync(foreign, "utf8")).toBe("torn"); // untouched
+  });
+
   test("corrupt lines are removed and counted as dropped", () => {
     const file = tmpFile();
     const queue = createDiskQueue({ file });
