@@ -139,6 +139,55 @@ describe("child sessions", () => {
   });
 });
 
+describe("title gating", () => {
+  const titleRecord = (text: string): Record<string, unknown> => ({
+    type: "ai-title",
+    aiTitle: text,
+    sessionId: "sess_main",
+  });
+  const titlesFrom = (events: { kind: string }[]): string[] =>
+    events
+      .filter((e) => e.kind === "session")
+      .map((e) => (e as { title?: string }).title)
+      .filter((t): t is string => typeof t === "string");
+
+  test("identical ai-title rewrites ship once; a real retitle ships again", () => {
+    const { api } = makeAdapter();
+    const first = api.adapter.eventsFromRecord(
+      titleRecord("first"),
+      "sess_main",
+    );
+    // the periodic unchanged rewrite — suppressed
+    const repeat = api.adapter.eventsFromRecord(
+      titleRecord("first"),
+      "sess_main",
+    );
+    // a real retitle ships
+    const second = api.adapter.eventsFromRecord(
+      titleRecord("second"),
+      "sess_main",
+    );
+    expect(titlesFrom(first)).toEqual(["first"]);
+    expect(titlesFrom(repeat)).toEqual([]);
+    expect(titlesFrom(second)).toEqual(["second"]);
+  });
+
+  test("a respawned adapter does not re-ship the persisted title", () => {
+    const { api, stateDir } = makeAdapter();
+    api.adapter.eventsFromRecord(titleRecord("kept"), "sess_main");
+    const reborn = createClaudeCodeAdapter({
+      primarySessionId: "sess_main",
+      stateDir,
+    });
+    // a cursor replay resurfaces an already-shipped title record — suppressed
+    const events = reborn.adapter.eventsFromRecord(
+      titleRecord("kept"),
+      "sess_main",
+    );
+    expect(events.find((e) => e.kind === "session")).toBeUndefined();
+  });
+});
+
 describe("request grouping through the adapter", () => {
   test("the primary's open message closes on the next message id", () => {
     const { api } = makeAdapter();

@@ -72,6 +72,12 @@ export type TailState = {
   /** Turn opened by the latest real user prompt. */
   turnId: string | null;
   /**
+   * The last session title shipped — Claude Code rewrites the (usually
+   * unchanged) ai-title record periodically, so identical titles are
+   * suppressed and only real retitles ship.
+   */
+  titleSent: string | null;
+  /**
    * Wall-clock (ms) of the most recent record that did NOT belong to the
    * open message — the request-boundary gap the next duration measures.
    */
@@ -88,6 +94,7 @@ export type TailState = {
 
 export const newTailState = (): TailState => ({
   turnId: null,
+  titleSent: null,
   outsideTimestampMs: null,
   seenMessageIds: new Set(),
   seenToolUseIds: new Set(),
@@ -105,6 +112,7 @@ const TOOL_NAME_CAP = 500;
 export type TailStateSnapshot = {
   version: 1;
   turnId: string | null;
+  titleSent: string | null;
   outsideTimestampMs: number | null;
   taskPreviewSent: boolean;
   seenMessageIds: string[];
@@ -130,6 +138,7 @@ const lastValues = <T>(set: Set<T> | Map<T, unknown>, cap: number): T[] => {
 export const serializeTailState = (state: TailState): TailStateSnapshot => ({
   version: 1,
   turnId: state.turnId,
+  titleSent: state.titleSent,
   outsideTimestampMs: state.outsideTimestampMs,
   taskPreviewSent: state.taskPreviewSent,
   seenMessageIds: lastValues(state.seenMessageIds, SEEN_MESSAGE_CAP),
@@ -162,6 +171,7 @@ export const restoreTailState = (snapshot: unknown): TailState | null => {
   };
   return {
     turnId: isNonEmptyString(snapshot.turnId) ? snapshot.turnId : null,
+    titleSent: isNonEmptyString(snapshot.titleSent) ? snapshot.titleSent : null,
     outsideTimestampMs:
       typeof snapshot.outsideTimestampMs === "number"
         ? snapshot.outsideTimestampMs
