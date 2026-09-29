@@ -4,8 +4,12 @@
  * action, and returns immediately — SessionStart/UserPromptSubmit/PostToolUse
  * spawn the transcript tailer detached (PostToolUse re-spawns mid-turn after
  * an idle exit, mirroring the ZCode decision-19 fix), SessionEnd ships the
- * session:end event and tears the listener down. Prints nothing on stdout:
- * SessionStart stdout would be injected into the conversation as context.
+ * session:end event and requests a graceful listener stop — the detached
+ * listener outlives the hook just long enough to flush its final model
+ * request and the summary fold, which a hard kill would lose (and Windows
+ * cannot deliver SIGTERM to a detached process anyway, ADR 0001). Prints
+ * nothing on stdout: SessionStart stdout would be injected into the
+ * conversation as context.
  *
  * Usage (wired by install.ts): bun hook.ts --server-url U --token T
  *        bun hook.ts --stop --session-id <id>   (manual cleanup)
@@ -16,7 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { envelope, sendEvents, type SessionEndEvent } from "@slopwatch/events";
-import { resolveShipConfig } from "@slopwatch/config";
+import { loadConfig, resolveShipConfig } from "@slopwatch/config";
 import { createDiskQueue } from "@slopwatch/buffer";
 import {
   argvHelpers,
@@ -110,6 +114,9 @@ const pidFile = (sessionId: string): string =>
   join(logDir, `claude-code-${sessionId}.pid`);
 const heartbeatFile = (sessionId: string): string =>
   join(logDir, `claude-code-${sessionId}.heartbeat`);
+/** The graceful-stop marker the live listener consumes on its tick cadence. */
+const stopFile = (sessionId: string): string =>
+  join(logDir, `claude-code-${sessionId}.stop`);
 
 const killStaleListener = (sessionId: string): void => {
   const pid = readPidFile(pidFile(sessionId));
@@ -122,7 +129,30 @@ const killStaleListener = (sessionId: string): void => {
   ) {
     process.kill(pid);
   }
-  removePidFiles(pidFile(sessionId));
+  removePidFiles(pidFile(sessionId), heartbeatFile(sessionId));
+};
+
+/**
+ * End-of-session teardown: request a graceful stop when a listener is alive
+ * and return at once — the listener (detached) flushes its held-back model
+ * request and summary fold into its own end batch, then exits. A hard kill
+ * here would silently lose exactly the end-of-session data the capture
+ * exists for. A dead/stale listener just gets its files cleaned up.
+ */
+const requestGracefulStop = (sessionId: string): void => {
+  const pid = readPidFile(pidFile(sessionId));
+  if (
+    pid !== null &&
+    isListenerAlive({ pid, heartbeatFile: heartbeatFile(sessionId) })
+  ) {
+    try {
+      writeFileSync(stopFile(sessionId), String(Date.now()));
+      return;
+    } catch {
+      // fall through to the hard kill — capture must not linger
+    }
+  }
+  killStaleListener(sessionId);
 };
 
 const main = async (): Promise<void> => {
@@ -133,6 +163,16 @@ const main = async (): Promise<void> => {
       process.exit(1);
     }
     killStaleListener(sessionId);
+    process.exit(0);
+  }
+
+  // capture kill switch (`slopwatch pause`): a paused install costs nothing
+  // but this config read — no spawn, no end event, exactly what the CLI
+  // promises ("hooks stay wired but spawn nothing")
+  if (loadConfig()?.disabled) {
+    console.error(
+      "slopwatch capture is paused — `slopwatch resume` re-enables",
+    );
     process.exit(0);
   }
 
@@ -191,7 +231,7 @@ const main = async (): Promise<void> => {
     } else {
       console.log(JSON.stringify(end));
     }
-    killStaleListener(plan.sessionId);
+    requestGracefulStop(plan.sessionId);
     process.exit(0);
   }
 
@@ -210,6 +250,9 @@ const main = async (): Promise<void> => {
   ) {
     process.exit(0); // already running
   }
+  // a stop marker left behind by a listener that died before consuming it
+  // must not insta-finish the generation we are about to spawn
+  removePidFiles(stopFile(plan.sessionId));
 
   const liveTs = fileURLToPath(new URL("./live.ts", import.meta.url));
   const childArgs = [
@@ -247,6 +290,11 @@ const main = async (): Promise<void> => {
     logDir,
   });
   writeFileSync(pidFile(plan.sessionId), String(pid));
+  // make the newborn visible before its own first heartbeat lands (bun
+  // start can lag seconds under AV scans) — the next hook fire would
+  // otherwise read a dead liveness signal and spawn a second listener on
+  // the same cursor
+  writeFileSync(heartbeatFile(plan.sessionId), String(Date.now()));
   // sweep any queue files stuck since earlier outages (v2 decision 21)
   sweep();
   console.error(

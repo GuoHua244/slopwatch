@@ -35,6 +35,16 @@ The right strategy is **per-agent adapters, each using that agent's most stable 
 
 **Takeaway.** Hooks identify _when_ things happen but can't carry the content — full reconstruction requires reading the JSONL anyway. JSONL tail is mandatory; hooks are useful as triggers (session end → upload) and for OTel-style aggregates.
 
+**Transcript shape (machine-verified 2026-09-29, builds 2.1.227–2.1.284, 46 local transcripts).** The listener normalizer depends on these facts:
+
+- **One model request = one assistant `message.id`**, appended as ONE RECORD PER CONTENT BLOCK — `thinking`, `text`, one record per `tool_use` — with the full-message usage repeated identically on every record. A message can span up to 30+ records; naive first-record dedup loses every later block's tool calls and prose.
+- **`tool_result` user records interleave BETWEEN a message's own records** (tools stream while the message is still being appended) — a result must not close or split the open message group.
+- **Titles ride `{"type":"ai-title","aiTitle":…}` records**; the legacy `{"type":"summary",…}` record no longer appears on modern builds.
+- **Real prompts are marked `origin.kind === "human"`** on new builds; local-command echoes (`<command-name>/model</command-name>`, `<local-command-caveat>`) are plain unmarked user records and must be excluded by text, and `origin.kind === "task-notification"` noise excluded by origin.
+- **Subagent transcripts** live at `<project>/<session-id>/subagents/agent-<id>.jsonl`, every record carrying `isSidechain: true` and `agentId`; inline sidechain records no longer appear in main transcripts on modern builds but the flag is the version-tolerant guard.
+- **Images are inline base64 blocks** (`source.type === "base64"`) in user prompts and tool-result content — no disk cache to race against.
+- Full record-type inventory seen in the wild: `user`, `assistant`, `summary` (legacy), `ai-title`, `attachment`, `last-prompt`, `mode`, `system`, `file-history-snapshot`, `file-history-delta`, `cost-state`, `permission-mode`, `atis-latch`, `queue-operation`; everything beyond `user`/`assistant`/`summary`/`ai-title` is client bookkeeping.
+
 ### OpenAI Codex CLI
 
 | Surface            | Status                                                                                                                                                                                                                             |

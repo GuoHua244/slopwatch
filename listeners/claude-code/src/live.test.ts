@@ -3,7 +3,10 @@ import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NormalEvent } from "@slopwatch/events";
-import { assistantRecord, promptRecord } from "./fixtures/transcript-record";
+import {
+  assistantThinkingRecord,
+  promptRecord,
+} from "./fixtures/transcript-record";
 
 // Runs the real live.ts twice against the same session id. The second spawn
 // resumes from a non-zero cursor — the re-attach path that must re-assert
@@ -75,7 +78,7 @@ describe("claude-code live.ts session:start across re-attach", () => {
 
   test("re-attach after idle-timeout sends a fresh start", async () => {
     received.length = 0;
-    appendFileSync(transcript, `${JSON.stringify(assistantRecord)}\n`);
+    appendFileSync(transcript, `${JSON.stringify(assistantThinkingRecord)}\n`);
     await spawnLive();
     expect(received.length).toBeGreaterThan(0);
     expect(startCount()).toBe(1);

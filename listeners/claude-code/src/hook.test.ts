@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { saveConfig } from "@slopwatch/config";
 import { planHook } from "./hook";
 
 const base = {
@@ -60,4 +64,64 @@ describe("planHook", () => {
     expect(planHook("nope").kind).toBe("none");
     expect(planHook({ hook_event_name: "SessionStart" }).kind).toBe("none");
   });
+});
+
+describe("hook entry — capture kill switch (`slopwatch pause`)", () => {
+  test("a paused install spawns nothing (hooks stay wired but idle)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "slopwatch-cc-pause-"));
+    const home = join(dir, "home");
+    saveConfig(
+      {
+        serverUrl: "http://127.0.0.1:1",
+        token: "unused",
+        disabled: true,
+      },
+      home,
+    );
+    const proc = Bun.spawn({
+      cmd: [
+        process.execPath,
+        join(import.meta.dir, "hook.ts"),
+        "--server-url",
+        "http://127.0.0.1:1",
+        "--token",
+        "unused",
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        SLOPWATCH_HOME: home,
+      },
+    });
+    try {
+      proc.stdin.write(
+        JSON.stringify({ ...base, hook_event_name: "SessionStart" }),
+      );
+      proc.stdin.end();
+    } catch {
+      // the hook exits without reading stdin when paused — a late EPIPE here
+      // is the pause working, not a test failure
+    }
+    const [code, stderr] = await Promise.all([
+      proc.exited,
+      new Response(proc.stderr).text(),
+    ]);
+    expect(code).toBe(0);
+    expect(stderr).toContain("paused");
+    // no listener state appeared for this session
+    expect(
+      existsSync(
+        join(
+          home,
+          ".slopwatch",
+          "listeners",
+          `claude-code-${base.session_id}.pid`,
+        ),
+      ),
+    ).toBe(false);
+  }, 20_000);
 });

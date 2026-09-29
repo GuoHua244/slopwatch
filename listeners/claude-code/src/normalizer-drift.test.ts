@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  assistantRecord,
+  assistantToolUseRecord,
+  aiTitleRecord,
   promptRecord,
   summaryRecord,
 } from "./fixtures/transcript-record";
@@ -9,8 +10,9 @@ import { driftFromRecord } from "./normalizer";
 describe("claude-code driftFromRecord (v2 decision 21)", () => {
   test("handled record types are not drift", () => {
     expect(driftFromRecord(promptRecord)).toBeNull();
-    expect(driftFromRecord(assistantRecord)).toBeNull();
+    expect(driftFromRecord(assistantToolUseRecord)).toBeNull();
     expect(driftFromRecord(summaryRecord)).toBeNull();
+    expect(driftFromRecord(aiTitleRecord)).toBeNull();
   });
 
   test("known-but-ignored client bookkeeping types are not drift", () => {
@@ -25,7 +27,6 @@ describe("claude-code driftFromRecord (v2 decision 21)", () => {
       "system",
       "cost-state",
       "permission-mode",
-      "ai-title",
     ]) {
       expect(driftFromRecord({ type })).toBeNull();
     }

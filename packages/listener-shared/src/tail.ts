@@ -11,6 +11,13 @@ import type { TurnDigest } from "./turn-digest";
 export type RecordAdapter = {
   driftFromRecord(record: unknown): string | null;
   eventsFromRecord(record: unknown, sessionId: string): NormalEvent[];
+  /**
+   * Events the adapter is still holding back at teardown — an aggregator
+   * (Claude Code buffers one model_request across its per-block records)
+   * flushes what would otherwise die with the process. Runs once, just
+   * before the session's end event ships.
+   */
+  onTeardown?(): NormalEvent[];
 };
 
 /**

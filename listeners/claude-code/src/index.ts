@@ -9,6 +9,19 @@
  * UserPromptSubmit (re-spawn after idle), and SessionEnd (ships the end
  * event, kills the listener). Hooks pass their payload as JSON on stdin.
  */
-export { eventsFromRecord, metaFromRecord, newTailState } from "./normalizer";
+export {
+  driftFromRecord,
+  eventsFromRecord,
+  flushOpenMessage,
+  IGNORED_RECORD_TYPES,
+  isRealPromptRecord,
+  metaFromRecord,
+  newTailState,
+  promptTextFromRecord,
+  restoreTailState,
+  serializeTailState,
+} from "./normalizer";
+export { createClaudeCodeAdapter } from "./adapter";
+export { captureInlineImages, inlineImageBlocks } from "./images";
 export { planHook } from "./hook";
 export { HOOK_EVENTS, mergeHookConfig, slopwatchHookCommand } from "./install";

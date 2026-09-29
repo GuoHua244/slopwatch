@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "@slopwatch/config";
 import type { NormalEvent } from "@slopwatch/events";
-import { assistantRecord, promptRecord } from "./fixtures/transcript-record";
+import {
+  assistantTextRecord,
+  promptRecord,
+} from "./fixtures/transcript-record";
 
 // The rolling-summary end path (open question 15, decision 28): each listener
 // generation folds the turns added since the last end by shipping the fold
@@ -58,10 +61,10 @@ const prompt = (uuid: string, text: string): string =>
 
 const assistant = (messageId: string, parent: string): string =>
   JSON.stringify({
-    ...assistantRecord,
+    ...assistantTextRecord,
     uuid: `a-${messageId}`,
     parentUuid: parent,
-    message: { ...assistantRecord.message, id: messageId },
+    message: { ...assistantTextRecord.message, id: messageId },
   });
 
 const spawnLive = async (): Promise<void> => {
@@ -118,8 +121,11 @@ describe("claude-code live.ts rolling summaries", () => {
     expect(summaries()).toEqual([{ body: "summary #1", model: "test-model" }]);
     expect(foldCalls[0]).toContain('turn 1: "帮我看看这个仓库的结构"');
     const lastBatch = received[received.length - 1];
-    expect((lastBatch[0] as { event: string }).event).toBe("summary");
-    expect((lastBatch[1] as { event: string }).event).toBe("end");
+    // the teardown flush lands the turn's model_request (the message never
+    // closed in-stream — one record per block), then the summary, then end
+    expect((lastBatch[0] as { kind: string }).kind).toBe("model_request");
+    expect((lastBatch[1] as { event: string }).event).toBe("summary");
+    expect((lastBatch[2] as { event: string }).event).toBe("end");
   }, 30000);
 
   test("generation 2 rolls on top of the prior summary", async () => {

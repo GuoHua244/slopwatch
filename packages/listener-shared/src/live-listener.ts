@@ -1,6 +1,7 @@
 import {
   existsSync,
   mkdirSync,
+  readFileSync,
   statSync,
   unlinkSync,
   watch,
@@ -97,6 +98,16 @@ export const createLiveListener = async (
   mkdirSync(stateDir, { recursive: true });
   const stateBase = cursorFile.slice(0, -".cursor".length);
   const summaries = summaryStore(stateBase);
+  /**
+   * Graceful-stop handshake (Claude Code's SessionEnd): the hook writes this
+   * file instead of relying on signals — Windows cannot deliver SIGTERM to a
+   * detached process (ADR 0001), and a hard kill would lose the teardown
+   * flush (the adapter's held-back events) and the end batch. Checked on the
+   * tick cadence; the pid file is removed as the listener's last act so the
+   * hook can await a clean exit without signals.
+   */
+  const stopFile = `${stateBase}.stop`;
+  const pidFile = `${stateBase}.pid`;
 
   const sweep = (): void => spawnDrainSweep(opts.drainScript);
   const { flush: flushBatch } = createShipPipeline({
@@ -334,6 +345,23 @@ export const createLiveListener = async (
     finished = true;
     clearTimeout(idleTimer);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
+    // lifecycle files must not outlive the listener: a stale pid file would
+    // make the next hook fire skip a needed respawn (the heartbeat check
+    // covers the gap while this teardown is still flushing)
+    try {
+      unlinkSync(pidFile);
+    } catch {
+      // already gone
+    }
+    try {
+      unlinkSync(stopFile);
+    } catch {
+      // already gone
+    }
+    // the adapter's held-back events (e.g. Claude Code's open message)
+    // fold into the digest and the end batch before the session ends
+    const teardownEvents = opts.adapter.onTeardown?.() ?? [];
+    digest.observe(teardownEvents);
     digest.close();
     // fold the summary first so summary → end ships in one POST; an LLM
     // failure leaves the digests pending and only costs this end's summary.
@@ -358,6 +386,8 @@ export const createLiveListener = async (
       }
       child.ended = true;
     }
+    // the adapter's held-back evidence precedes the digest of that evidence
+    batch.push(...teardownEvents);
     if (foldLlm && shipable && (await summaryConfigured())) {
       try {
         const summaryEvent = await foldSummary({
@@ -396,6 +426,27 @@ export const createLiveListener = async (
   // same async chain instead of racing it.
   const tick = (): void => {
     void (async () => {
+      if (existsSync(stopFile)) {
+        // hook-requested graceful stop (see stopFile). Only fresh markers
+        // count: a marker left unconsumed by a listener that died before its
+        // next tick must not insta-finish a respawn of the same session.
+        let fresh = false;
+        try {
+          const writtenAt = Number(readFileSync(stopFile, "utf8").trim());
+          fresh = Number.isFinite(writtenAt) && Date.now() - writtenAt < 30_000;
+        } catch {
+          fresh = false;
+        }
+        try {
+          unlinkSync(stopFile);
+        } catch {
+          // already gone
+        }
+        if (fresh) {
+          await finish("hook-stop");
+          return;
+        }
+      }
       await drain();
       await pollChildTails();
     })().catch((e) =>
