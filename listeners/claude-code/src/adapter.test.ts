@@ -130,14 +130,10 @@ describe("child sessions", () => {
     expect(snapshot.seenMessageIds).toContain("msg_sub01");
   });
 
-  test("forgetSession drops memory and the sidecar", () => {
-    const { api, stateDir } = makeAdapter();
-    api.adapter.eventsFromRecord(subagentPromptRecord, "agent-1");
-    const sidecar = join(stateDir, "claude-code-agent-1.tailstate.json");
-    expect(existsSync(sidecar)).toBe(true);
-    api.forgetSession("agent-1");
-    expect(existsSync(sidecar)).toBe(false);
-  });
+  // child state deliberately survives the child's session:end — an idle exit
+  // is not final, and the resumed generation restores attribution from the
+  // same sidecar (forgetSession used to drop it and orphan every later
+  // model_request in the review view)
 });
 
 describe("title gating", () => {

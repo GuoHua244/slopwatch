@@ -120,7 +120,11 @@ const childTails = {
         sessionId: childId,
         onStart: (): SessionStartEvent[] => [markers.start],
         onEnd: (reason: string): SessionEndEvent[] => {
-          adapterApi.forgetSession(childId);
+          // the child's tail state (turn attribution, dedup sets, the title
+          // gate) must survive this end: an idle exit is not a final one, and
+          // the resumed generation restores from the same sidecar — dropping
+          // it here left every later model_request unattributed (no turn_id),
+          // which the review view files as orphans
           return [markers.end(reason)];
         },
         // child turns must not close the parent turn being digested — only

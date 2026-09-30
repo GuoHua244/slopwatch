@@ -192,6 +192,36 @@ describe("buildTimeline", () => {
     expect(timeline.orphans.tools).toHaveLength(1);
   });
 
+  test("requests without a turn_id ride the turn already open", () => {
+    // the claude-code subagent respawn scenario: the resumed generation lost
+    // its attribution state, so everything after the session restart carries
+    // no turn_id — it still belongs to the one open turn, answer included
+    const timeline = buildTimeline([
+      ev({
+        kind: "turn",
+        event: "start",
+        turn_id: "turn_1",
+        user_message: "review the diff",
+      }),
+      ev({ kind: "session", event: "end", reason: "idle-timeout" }),
+      ev({ kind: "session", event: "start", cwd: "a", hostname: "H1" }),
+      ev({
+        kind: "model_request",
+        provider: "p",
+        model: "m",
+        duration_ms: 5,
+        response_text: "found two gaps",
+      }),
+      ev({ kind: "tool", event: "call", tool_call_id: "c9", tool: "Read" }),
+    ]);
+    expect(timeline.turns).toHaveLength(1);
+    const turn = timeline.turns[0]!;
+    expect(turn.modelRequests).toHaveLength(1);
+    expect(turn.assistantMessage).toBe("found two gaps");
+    expect(turn.tools).toHaveLength(1);
+    expect(timeline.orphans.requests).toHaveLength(0);
+  });
+
   test("collects every session lifecycle event, not just the first", () => {
     const timeline = buildTimeline([
       ev({ kind: "session", event: "start", cwd: "a", hostname: "H1" }),

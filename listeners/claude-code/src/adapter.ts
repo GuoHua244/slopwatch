@@ -11,7 +11,7 @@
  * session (captured from `subagents/agent-*.jsonl`), never to the parent's
  * turns. Child tails normalize the same records with the guard off.
  */
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -57,8 +57,6 @@ export type ClaudeCodeAdapter = {
   adapter: RecordAdapter;
   /** The primary session's turn id, restored or as advanced by turn starts. */
   primaryTurnId: () => string | null;
-  /** Drop a session's state (memory + sidecar) — child tails call this on end. */
-  forgetSession: (sessionId: string) => void;
 };
 
 export const createClaudeCodeAdapter = (opts: {
@@ -220,16 +218,6 @@ export const createClaudeCodeAdapter = (opts: {
   return {
     adapter,
     primaryTurnId: () => stateOf(opts.primarySessionId).turnId,
-    forgetSession: (sessionId: string): void => {
-      states.delete(sessionId);
-      pendingTitle.delete(sessionId);
-      // best effort — a lingering sidecar for a dead child is harmless
-      try {
-        rmSync(tailStateFile(stateDir, sessionId), { force: true });
-      } catch {
-        // already gone
-      }
-    },
   };
 };
 

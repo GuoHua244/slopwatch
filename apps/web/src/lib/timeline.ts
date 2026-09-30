@@ -118,7 +118,12 @@ export const buildTimeline = (events: StoredEvent[]): SessionTimeline => {
       }
       case "model_request": {
         if (event.turn_id) currentTurnId = event.turn_id;
-        const turn = turnFor(event.turn_id);
+        // A request without its own turn_id rides the turn already open —
+        // the same rule tool events file under. This is what a claude-code
+        // subagent's respawned tail used to produce (its attribution state
+        // was dropped on session:end); without the fallback its whole
+        // transcript lands in orphans and the review view shows no answers.
+        const turn = turnFor(event.turn_id ?? currentTurnId ?? undefined);
         if (turn) {
           turn.modelRequests.push(event);
           // Requests arrive in seq order, so the final prose of the turn wins.
