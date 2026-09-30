@@ -834,7 +834,9 @@ ul.sessions ul.sessions.sub {
   border-radius: 0 8px 8px 0;
   background: color-mix(in srgb, var(--panel-2) 60%, transparent);
   color: var(--text);
-  white-space: pre-wrap;
+  /* markdown source: soft breaks stay literal newlines (pre-line), block
+   * separators are structural and must not double-space */
+  white-space: pre-line;
   overflow-wrap: anywhere;
 }
 .assistant-msg {
@@ -844,7 +846,6 @@ ul.sessions ul.sessions.sub {
   border-radius: 0 8px 8px 0;
   background: var(--accent-wash);
   color: var(--text);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .row {
@@ -2242,14 +2243,17 @@ ul.sessions ul.sessions.sub {
   }
 }
 
-/* the report itself — markdown rendered inside the dark panel */
-.retro-report {
+/* markdown bodies inside dark panels — the retro report and the turn
+ * view's message quotes share one element grammar */
+.retro-report,
+.user-msg,
+.assistant-msg {
   font-size: 13.5px;
   line-height: 1.65;
   color: var(--text);
   overflow-wrap: anywhere;
 }
-.retro-report h1 {
+:is(.retro-report, .user-msg, .assistant-msg) h1 {
   font-size: 17px;
   font-weight: 650;
   letter-spacing: -0.2px;
@@ -2257,7 +2261,7 @@ ul.sessions ul.sessions.sub {
   padding-bottom: 8px;
   border-bottom: 1px solid var(--line-soft);
 }
-.retro-report h2 {
+:is(.retro-report, .user-msg, .assistant-msg) h2 {
   font-size: 13px;
   font-weight: 650;
   color: var(--accent);
@@ -2265,28 +2269,28 @@ ul.sessions ul.sessions.sub {
   letter-spacing: 0.2px;
   margin: 18px 0 8px;
 }
-.retro-report h3 {
+:is(.retro-report, .user-msg, .assistant-msg) h3 {
   font-size: 12.5px;
   font-weight: 600;
   color: var(--dim);
   margin: 14px 0 6px;
 }
-.retro-report p {
+:is(.retro-report, .user-msg, .assistant-msg) p {
   margin: 6px 0;
 }
-.retro-report ul,
-.retro-report ol {
+:is(.retro-report, .user-msg, .assistant-msg) ul,
+:is(.retro-report, .user-msg, .assistant-msg) ol {
   margin: 6px 0;
   padding-left: 22px;
 }
-.retro-report li {
+:is(.retro-report, .user-msg, .assistant-msg) li {
   margin: 3px 0;
 }
-.retro-report strong {
+:is(.retro-report, .user-msg, .assistant-msg) strong {
   color: var(--text);
   font-weight: 650;
 }
-.retro-report blockquote {
+:is(.retro-report, .user-msg, .assistant-msg) blockquote {
   margin: 8px 0;
   padding: 6px 14px;
   border-left: 3px solid var(--accent);
@@ -2294,7 +2298,7 @@ ul.sessions ul.sessions.sub {
   background: color-mix(in srgb, var(--panel-2) 75%, transparent);
   color: var(--dim);
 }
-.retro-report code {
+:is(.retro-report, .user-msg, .assistant-msg) code {
   font-family: var(--font-mono);
   font-size: 12px;
   background: var(--panel-2);
@@ -2302,35 +2306,35 @@ ul.sessions ul.sessions.sub {
   border-radius: 4px;
   padding: 1px 5px;
 }
-.retro-report pre {
+:is(.retro-report, .user-msg, .assistant-msg) pre {
   background: var(--panel-2);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius);
   padding: 10px 12px;
   overflow-x: auto;
 }
-.retro-report pre code {
+:is(.retro-report, .user-msg, .assistant-msg) pre code {
   border: none;
   background: transparent;
   padding: 0;
 }
-.retro-report table {
+:is(.retro-report, .user-msg, .assistant-msg) table {
   border-collapse: collapse;
   margin: 8px 0;
   font-size: 12.5px;
 }
-.retro-report th,
-.retro-report td {
+:is(.retro-report, .user-msg, .assistant-msg) th,
+:is(.retro-report, .user-msg, .assistant-msg) td {
   border: 1px solid color-mix(in srgb, var(--line) 55%, var(--line-soft));
   padding: 5px 10px;
   text-align: left;
 }
-.retro-report th {
+:is(.retro-report, .user-msg, .assistant-msg) th {
   background: var(--panel-2);
   color: var(--dim);
   font-weight: 600;
 }
-.retro-report hr {
+:is(.retro-report, .user-msg, .assistant-msg) hr {
   border: none;
   border-top: 1px solid var(--line-soft);
   margin: 14px 0;

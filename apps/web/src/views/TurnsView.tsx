@@ -1,4 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type {
   ModelRequestEvent,
   TurnFileRef,
@@ -6,6 +8,7 @@ import type {
 } from "@slopwatch/events";
 import type { CommentRow } from "../api";
 import { attachmentUrl } from "../lib/attachments";
+import { repairFlatMarkdown } from "../lib/flat-markdown";
 import type { SessionTimeline, ToolActivity } from "../lib/timeline";
 import {
   clock,
@@ -158,6 +161,26 @@ const TurnFile = ({
 const markerPattern =
   /\[image #(\d+)\]|\[file #(\d+)\]|\[Image: source: ([^\]]+)\]/g;
 
+/** Markdown in, escaped HTML out (no rehype-raw) — the same posture as the
+ * retro report: model- or user-supplied markup renders as text, never
+ * executes. `inline` unwraps paragraphs so message fragments flow around
+ * the image/file chips they were split by. Legacy rows captured flattened
+ * get their heading/table structure rebuilt first (see flat-markdown). */
+const Markdown = ({
+  text,
+  inline = false,
+}: {
+  text: string;
+  inline?: boolean;
+}) => (
+  <ReactMarkdown
+    remarkPlugins={[remarkGfm]}
+    components={inline ? { p: ({ children }) => <>{children}</> } : undefined}
+  >
+    {repairFlatMarkdown(text)}
+  </ReactMarkdown>
+);
+
 /** The user's words with their images and files: `[image #n]` markers become
  * thumbnails, `[file #n]` markers become file chips, legacy
  * `[Image: source: <path>]` leftovers (cache pruned before capture shipped)
@@ -198,7 +221,13 @@ const UserMessageContent = ({
   const scan = (pattern: RegExp, handle: (m: RegExpExecArray) => void) => {
     pattern.lastIndex = 0;
     for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
-      parts.push(text.slice(cursor, m.index));
+      parts.push(
+        <Markdown
+          key={`t-${cursor}`}
+          inline
+          text={text.slice(cursor, m.index)}
+        />,
+      );
       handle(m);
       cursor = m.index + m[0].length;
     }
@@ -236,7 +265,7 @@ const UserMessageContent = ({
       </span>,
     );
   });
-  parts.push(text.slice(cursor));
+  parts.push(<Markdown key="t-tail" inline text={text.slice(cursor)} />);
   const stripped = (images ?? []).filter((img) => !referenced.has(img.n));
   if (stripped.length > 0)
     parts.push(
@@ -553,7 +582,7 @@ export const TurnsView = ({
           ))}
           {turn.assistantMessage && (
             <blockquote className="assistant-msg">
-              {turn.assistantMessage}
+              <Markdown text={turn.assistantMessage} />
             </blockquote>
           )}
         </article>
