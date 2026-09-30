@@ -92,10 +92,17 @@ export const SessionList = ({ sessions, selectedId, onSelect }: Props) => {
         className={s.session_id === selectedId ? "selected" : ""}
         role="button"
         tabIndex={0}
-        onClick={() => onSelect(s.session_id)}
+        onClick={(e) => {
+          // a subagent row lives inside its parent's <li> — without this the
+          // click bubbles up and the ancestor's onSelect overwrites the child
+          // selection in the same batch, so the pane never leaves the parent
+          e.stopPropagation();
+          onSelect(s.session_id);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
+            e.stopPropagation();
             onSelect(s.session_id);
           }
         }}
