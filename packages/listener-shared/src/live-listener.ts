@@ -339,6 +339,14 @@ export const createLiveListener = async (
         if (child.tail.onStart) await flush(child.tail.onStart());
       }
     }
+    // Every registered child drains each tick — the one-shot drain at
+    // registration only sees the backlog up to that moment, and a subagent
+    // keeps appending long after (its final answer included). The drain
+    // no-ops on an unchanged file (one stat), so the per-tick cost is the
+    // child count; the tail loop's re-entrancy guard absorbs overlap.
+    for (const child of children.values()) {
+      void child.drain();
+    }
   };
   const finish = async (reason: string): Promise<void> => {
     if (finished) return;
