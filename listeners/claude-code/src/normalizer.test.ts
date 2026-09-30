@@ -251,6 +251,32 @@ describe("one model request across its per-block records", () => {
     expect(flushOpenMessage(state, sessionId)).toBeNull();
   });
 
+  test("response_text keeps markdown newlines within and across blocks", () => {
+    const state = newTailState();
+    eventsFromRecord(promptRecord, sessionId, state);
+    const streamed = {
+      ...assistantTextRecord,
+      uuid: "a-0009",
+      message: {
+        ...assistantTextRecord.message,
+        content: [
+          {
+            type: "text",
+            text: "## 报告 **范围**:`repo`\n\n### packages/\n\n| a | b |\n|---|---|",
+          },
+          { type: "text", text: "第二段。" },
+        ],
+      },
+    };
+    eventsFromRecord(streamed, sessionId, state);
+    const flushed = flushOpenMessage(state, sessionId);
+    if (flushed === null || flushed.kind !== "model_request")
+      throw new Error("no model_request flushed");
+    expect(flushed.response_text).toBe(
+      "## 报告 **范围**:`repo`\n\n### packages/\n\n| a | b |\n|---|---|\n\n第二段。",
+    );
+  });
+
   test("a real prompt also closes the open message", () => {
     const state = newTailState();
     eventsFromRecord(promptRecord, sessionId, state);

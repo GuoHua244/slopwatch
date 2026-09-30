@@ -250,15 +250,16 @@ const blocksOf = (content: unknown): Record<string, unknown>[] =>
 const recordTimestamp = (record: Record<string, unknown>): string | null =>
   isNonEmptyString(record.timestamp) ? record.timestamp : null;
 
-/** Prompt text from string or block-array content; empty when none. */
+/** Prompt text from string or block-array content; empty when none. Text
+ * blocks keep their internal newlines — markdown structure (headings, GFM
+ * tables) in agent speech dies without them. */
 const promptText = (content: unknown): string => {
   if (typeof content === "string") return content.trim();
   const text = blocksOf(content)
     .filter((b) => b.type === "text")
-    .map((b) => String(b.text ?? ""))
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+    .map((b) => String(b.text ?? "").trim())
+    .filter((b) => b !== "")
+    .join("\n\n");
   return text;
 };
 
@@ -440,7 +441,9 @@ export const flushOpenMessage = (
   }
   if (state.turnId !== null) modelRequest.turn_id = state.turnId;
   if (open.usage) modelRequest.usage = open.usage;
-  const prose = open.texts.join(" ").replace(/\s+/g, " ").trim();
+  // Blocks of one message group are contiguous speech; paragraphs join with
+  // a blank line. Never flatten whitespace — newlines carry the markdown.
+  const prose = open.texts.join("\n\n").trim();
   if (prose) modelRequest.response_text = prose.slice(0, 2000);
   if (raw !== undefined) modelRequest.raw = raw;
   return modelRequest;
