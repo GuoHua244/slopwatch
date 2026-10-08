@@ -10,5 +10,6 @@ export {
 export { readPidFile, removePidFiles, spawnDetachedListener } from "./process";
 export { runQueueSweep, runAgentDrain, spawnDrainSweep } from "./sweep";
 export { createShipPipeline, type ShipPipeline } from "./ship";
+export { createSummaryFolder, type SummaryFolder } from "./summary-fold";
 export { createTurnDigest, type TurnDigest } from "./turn-digest";
 export { createTailLoop, type RecordAdapter } from "./tail";
