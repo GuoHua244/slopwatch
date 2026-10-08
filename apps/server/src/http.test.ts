@@ -230,6 +230,40 @@ describe("POST /events validation", () => {
   });
 });
 
+describe("POST /events unstorable content", () => {
+  // pg driver errors carry the SQLSTATE on `.code`; build one the way the
+  // store's insert path would surface it.
+  const pgError = (code: string) =>
+    Object.assign(new Error("pg boom"), { code });
+  const ingestWith = async (error: unknown): Promise<Response> => {
+    const store: Store = {
+      ...refusingStore(),
+      appendEvents: async () => {
+        throw error;
+      },
+    };
+    return post(
+      createApp({ tokens: new Map([["tok-alice", "alice"]]), store }),
+      { schema_version: SCHEMA_VERSION, events: [sessionStart()] },
+      "tok-alice",
+    );
+  };
+
+  test("422 on the jsonb NUL code (22P05) — a permanent rejection", async () => {
+    const res = await ingestWith(pgError("22P05"));
+    expect(res.status).toBe(422);
+  });
+
+  test("422 on the text NUL code (22021)", async () => {
+    const res = await ingestWith(pgError("22021"));
+    expect(res.status).toBe(422);
+  });
+
+  test("transient store failures still escape, they are never 422", async () => {
+    expect(ingestWith(pgError("08006"))).rejects.toThrow("pg boom");
+  });
+});
+
 describe("GET /rollups", () => {
   test("answers with the snapshot shape and sane default windows", async () => {
     let seen: { sinceDay: string; sinceHour: string } | undefined;

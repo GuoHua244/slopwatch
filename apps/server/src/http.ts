@@ -112,6 +112,18 @@ const assertReadableSession = async (
 };
 
 /**
+ * Postgres's "this content can never be stored" codes from the pg driver:
+ * 22P05 rejects jsonb input with \u0000 escapes, 22021 rejects text carrying
+ * the raw NUL byte. Both are permanent content faults — no retry will ever
+ * succeed. The store strips NULs at its serialization boundary, so these are
+ * last-resort defense against an unknown poison path.
+ */
+const isUnstorableContent = (e: unknown): boolean => {
+  const code = (e as { code?: string } | null)?.code;
+  return code === "22P05" || code === "22021";
+};
+
+/**
  * Route one request. Auth/400 guards throw prebuilt HttpError responses; the
  * catch in fetch is the single place that turns them back into responses.
  */
@@ -178,7 +190,22 @@ const route = async (
       if (owner !== null && owner !== user)
         return json(404, { error: "no such session" });
     }
-    const { accepted } = await store.appendEvents(events, user);
+    let accepted: number;
+    try {
+      ({ accepted } = await store.appendEvents(events, user));
+    } catch (e) {
+      if (isUnstorableContent(e)) {
+        // Answer 422, not the default 500: the listeners classify any other
+        // 4xx as a permanent rejection and drop the batch, while a 500 makes
+        // their disk queues retry forever — wedging every later batch behind
+        // the poison head (2026-10-08 incident: wsl.exe UTF-16 output).
+        console.error("ingest: unstorable content, dropping batch:", e);
+        return json(422, {
+          error: "event content cannot be stored (NUL byte)",
+        });
+      }
+      throw e;
+    }
     // v2 decision 25: finished sessions push to the org webhook —
     // fire-and-forget, never part of the ingest response
     pushSessionEnds(store, events, user);

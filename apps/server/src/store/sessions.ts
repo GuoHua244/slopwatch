@@ -9,6 +9,19 @@ import type { Store } from "./types";
 /** Raw rows nulled per pruneRaw sweep — bounds the per-run transaction size. */
 const PRUNE_RAW_BATCH = 200;
 
+/**
+ * Postgres text/jsonb cannot hold NUL (U+0000), and captured Windows tool
+ * output (wsl.exe UTF-16 leaks, binary spillover) carries real NUL bytes —
+ * jsonb input with a \u0000 escape is rejected outright (22P05) and a text
+ * parameter holding the raw byte fails encoding validation (22021). Strip at
+ * the only boundary that serializes captured content, so a poison batch
+ * stores clean instead of wedging the sender's disk queue behind it. NUL is
+ * never meaningful evidence — it is a decoding artifact, not content.
+ */
+const stripNul = (value: string): string => value.replaceAll("\u0000", "");
+const jsonWithoutNul = (value: unknown): string =>
+  JSON.stringify(value, (_key, v) => (typeof v === "string" ? stripNul(v) : v));
+
 export const sessionMethods = (
   ctx: PgCtx,
 ): Pick<
@@ -52,7 +65,7 @@ export const sessionMethods = (
               event.agent,
               event.session_id,
               event.reason,
-              event.line,
+              stripNul(event.line),
               event.occurred_at,
             ],
           );
@@ -111,14 +124,20 @@ export const sessionMethods = (
                 seq,
                 event.agent,
                 event.kind,
-                JSON.stringify(payload),
-                raw === undefined ? null : JSON.stringify(raw),
+                jsonWithoutNul(payload),
+                raw === undefined ? null : jsonWithoutNul(raw),
               ],
             );
             if (event.kind === "session" && event.event === "meta") {
               await client.query(
                 "UPDATE sessions SET title = COALESCE($2, title), task_preview = COALESCE($3, task_preview) WHERE session_id = $1",
-                [sessionId, event.title ?? null, event.task_preview ?? null],
+                [
+                  sessionId,
+                  event.title === undefined ? null : stripNul(event.title),
+                  event.task_preview === undefined
+                    ? null
+                    : stripNul(event.task_preview),
+                ],
               );
             }
             if (
