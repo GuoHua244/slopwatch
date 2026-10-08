@@ -1,0 +1,22 @@
+{
+  "name": "@slopwatch/listener-codebuddy",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "typecheck": "tsgo --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@slopwatch/buffer": "workspace:*",
+    "@slopwatch/config": "workspace:*",
+    "@slopwatch/events": "workspace:*",
+    "@slopwatch/listener-shared": "workspace:*",
+    "@slopwatch/summary": "workspace:*"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./install": "./src/install.ts"
+  }
+}
