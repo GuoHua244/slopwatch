@@ -50,7 +50,9 @@ import { AGENT } from "./normalizer";
 import {
   conversationDir,
   conversationIndexPath,
+  defaultHostRoots,
   resolveSurfaces,
+  usageLogPath,
 } from "./paths";
 import { createCodebuddyCapture } from "./capture";
 
@@ -149,6 +151,18 @@ const capture = createCodebuddyCapture({
   sessionId,
   stateFile: `${stateBase}.history.json`,
   usageLog: surfaces.usageLog,
+  // the log's day directory is created by the logger's first flush, which
+  // can lag the hook that spawned us by minutes — keep re-resolving instead
+  // of fixing a null (or yesterday's path, after midnight) at spawn
+  resolveUsageLog: () =>
+    usageLogPath({
+      localAppData: defaultHostRoots().localAppData,
+      workspaceHash: surfaces.ref.workspaceHash,
+    }),
+  // environment facts for sub-agent sessions: a child Session needs the same
+  // dimensions as its parent, and only live.ts knows the workspace
+  cwd,
+  hostname: hostname(),
 });
 
 let idleTimer: ReturnType<typeof setTimeout>;

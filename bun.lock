@@ -91,6 +91,7 @@
         "@slopwatch/config": "workspace:*",
         "@slopwatch/events": "workspace:*",
         "@slopwatch/listener-claude-code": "workspace:*",
+        "@slopwatch/listener-codebuddy": "workspace:*",
         "@slopwatch/listener-shared": "workspace:*",
         "@slopwatch/listener-zcode": "workspace:*",
       },

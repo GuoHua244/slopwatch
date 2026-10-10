@@ -8,9 +8,13 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type AgentName = "zcode" | "claude-code";
+export type AgentName = "zcode" | "claude-code" | "codebuddy";
 
-export const AGENTS: readonly AgentName[] = ["zcode", "claude-code"];
+export const AGENTS: readonly AgentName[] = [
+  "zcode",
+  "claude-code",
+  "codebuddy",
+];
 
 export type Detection = Record<AgentName, boolean>;
 
@@ -19,6 +23,7 @@ export const detectAgents = (homeDir?: string): Detection => {
   return {
     zcode: existsSync(join(home, ".zcode")),
     "claude-code": existsSync(join(home, ".claude")),
+    codebuddy: existsSync(join(home, ".codebuddy")),
   };
 };
 
@@ -37,3 +42,17 @@ export const claudeUserSettingsPath = (homeDir?: string): string =>
 /** Project-scope Claude Code settings. */
 export const claudeProjectSettingsPath = (dir: string): string =>
   join(dir, ".claude", "settings.json");
+
+/**
+ * User-scope CodeBuddy settings. Same CC-shaped `hooks` block as Claude Code
+ * (research/codebuddy-capture-surfaces.md §1) — and unlike Claude Code, an
+ * external edit needs no in-app review: the host's own watcher picks it up,
+ * even in a session that is already running.
+ */
+export const codebuddyUserSettingsPath = (homeDir?: string): string =>
+  join(homeDir ?? homedir(), ".codebuddy", "settings.json");
+
+/** Project-scope CodeBuddy settings — dropped silently while the workspace
+ * is untrusted, which only the client's own trust prompt can change. */
+export const codebuddyProjectSettingsPath = (dir: string): string =>
+  join(dir, ".codebuddy", "settings.json");

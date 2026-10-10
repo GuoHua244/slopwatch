@@ -17,12 +17,22 @@
  * with a hard grace after which evidence ships without counts rather than
  * never.
  */
-import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+} from "node:fs";
 import {
   envelope,
   quarantineLine,
+  type ModelRequestEvent,
   type NormalEvent,
+  type SessionEndEvent,
   type SessionMetaEvent,
+  type SessionStartEvent,
 } from "@slopwatch/events";
 import { atomicWriteJson } from "@slopwatch/listener-shared";
 import {
@@ -35,6 +45,7 @@ import {
   AGENT,
   newTailState,
   normalizeMessage,
+  PROVIDER,
   trimTailState,
   type TailState,
 } from "./normalizer";
@@ -51,6 +62,25 @@ import {
   usageFromLogText,
   type UsageRecord,
 } from "./usage";
+import {
+  CHILD_IDLE_MS,
+  childSessionId,
+  modelByPrefix,
+  parseAgentRuns,
+  type AgentRun,
+} from "./subagent";
+
+/** One sub-agent run, as far as this listener has shipped it. */
+export type ChildState = {
+  agentType: string;
+  model: string | null;
+  startedAt: string;
+  /** Steps of this run already shipped. */
+  emitted: number;
+  ended: boolean;
+  /** Epoch ms of the newest step seen — the idle clock for this run. */
+  lastSeenMs: number;
+};
 
 /**
  * Persisted across listener generations: a respawn must neither re-emit the
@@ -65,6 +95,13 @@ export type CaptureState = TailState & {
   pending: string[];
   /** The title already delivered — suppression is only committed on ack. */
   titleSent: string | null;
+  /**
+   * Request ids seen on the parent's own messages. Anything else in the log
+   * is a sub-agent run, not this session's step.
+   */
+  parentRuns: string[];
+  /** Sub-agent runs, keyed by run id. */
+  children: Record<string, ChildState>;
 };
 
 export type CaptureOptions = {
@@ -74,12 +111,21 @@ export type CaptureOptions = {
   stateFile: string;
   /** The workspace's per-day agent log, when one was found. */
   usageLog?: string | null;
+  /**
+   * Re-resolve the usage log on demand: the day directory is created by the
+   * logger's first flush, which can lag the session's first hook by minutes,
+   * and midnight rotates the path. Null while there is still nothing.
+   */
+  resolveUsageLog?: () => string | null;
   /** Title truncation budget for the dashboard's session rail. */
   maxTitle?: number;
   /** Injectable clock (tests). */
   now?: () => number;
   /** Wait for token counts before shipping without them (ms). */
   usageGraceMs?: number;
+  /** Environment facts for child sessions (the parent's are live.ts's job). */
+  cwd?: string;
+  hostname?: string;
 };
 
 export type CodebuddyCapture = {
@@ -99,6 +145,8 @@ const newState = (): CaptureState => ({
   usageCursor: 0,
   pending: [],
   titleSent: null,
+  parentRuns: [],
+  children: {},
 });
 
 const restoreState = (raw: unknown): CaptureState | null => {
@@ -121,7 +169,36 @@ const restoreState = (raw: unknown): CaptureState | null => {
       ? row.pending.filter((v): v is string => typeof v === "string")
       : [],
     titleSent: typeof row.titleSent === "string" ? row.titleSent : null,
+    parentRuns: Array.isArray(row.parentRuns)
+      ? row.parentRuns.filter((v): v is string => typeof v === "string")
+      : [],
+    children: restoreChildren(row.children),
   };
+};
+
+const restoreChildren = (raw: unknown): Record<string, ChildState> => {
+  if (typeof raw !== "object" || raw === null) return {};
+  const out: Record<string, ChildState> = {};
+  for (const [runId, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value !== "object" || value === null) continue;
+    const row = value as Record<string, unknown>;
+    if (typeof row.agentType !== "string") continue;
+    out[runId] = {
+      agentType: row.agentType,
+      model: typeof row.model === "string" ? row.model : null,
+      startedAt: typeof row.startedAt === "string" ? row.startedAt : "",
+      emitted:
+        typeof row.emitted === "number" && row.emitted >= 0
+          ? Math.trunc(row.emitted)
+          : 0,
+      ended: row.ended === true,
+      lastSeenMs:
+        typeof row.lastSeenMs === "number" && Number.isFinite(row.lastSeenMs)
+          ? row.lastSeenMs
+          : 0,
+    };
+  }
+  return out;
 };
 
 const readTail = (
@@ -142,6 +219,9 @@ const readTail = (
   return { text: buf.toString("utf8"), size };
 };
 
+/** Absolute ceiling for a held request, quiet log or not. */
+const PENDING_MAX_MS = 15 * 60_000;
+
 export const createCodebuddyCapture = (
   opts: CaptureOptions,
 ): CodebuddyCapture => {
@@ -158,9 +238,31 @@ export const createCodebuddyCapture = (
 
   const usageByMessage = new Map<string, UsageRecord>();
   const pendingSince = new Map<string, number>();
+  /** Re-resolved when null — the log's day directory may not exist yet. */
+  let usageLog = opts.usageLog ?? null;
+  // Sub-agent accounting: steps grouped by their run id, and the agent type
+  // that started each run. Nothing here is read from the conversation — a
+  // sub-agent writes no messages into it.
+  const usageByRun = new Map<string, UsageRecord[]>();
+  const runTypes = new Map<string, AgentRun>();
+  const modelByAgentType = new Map<string, string>();
+  const parentRunIds = new Set<string>(state.parentRuns);
+  /** Ids of every row the manifest has ever shown (parent-owned steps). */
+  const manifestIds = new Set<string>();
   // Messages already read once: a respawn re-reads its own backlog only.
   let explained = false;
   const now = opts.now ?? Date.now;
+  /** Last poll that saw new log bytes — the logger flushes in bursts. */
+  let usageProgressAt = now();
+  /**
+   * The host logger flushes in delayed bursts (measured 40–95s behind the
+   * line's own timestamp), so counts routinely land well after the message
+   * they belong to. A held request gives up only once the log has been quiet
+   * this long — new bytes mean the counts may still be inbound.
+   */
+  const quietMs = (opts.usageGraceMs ?? USAGE_GRACE_MS) * 2;
+  /** The conversation's own start, from its first message — set lazily. */
+  let conversationStartMs: number | null = null;
 
   const persist = (): void => {
     try {
@@ -179,11 +281,17 @@ export const createCodebuddyCapture = (
   };
 
   const drainUsage = (): void => {
-    if (!opts.usageLog) return;
-    const tail = readTail(opts.usageLog, state.usageCursor);
+    if (!usageLog && opts.resolveUsageLog) usageLog = opts.resolveUsageLog();
+    if (!usageLog) return;
+    const tail = readTail(usageLog, state.usageCursor);
     if (!tail) {
-      // rotated to a fresh day-file: start it from the beginning
-      state.usageCursor = 0;
+      // rotated away (midnight): re-resolve and read the replacement from
+      // the beginning
+      const next = opts.resolveUsageLog?.() ?? null;
+      if (next && next !== usageLog) {
+        usageLog = next;
+        state.usageCursor = 0;
+      }
       return;
     }
     if (tail.size < state.usageCursor) state.usageCursor = 0; // truncated
@@ -191,10 +299,24 @@ export const createCodebuddyCapture = (
       state.usageCursor = tail.size;
       return;
     }
-    for (const [id, record] of indexUsageByMessage(
-      usageFromLogText(tail.text),
-    )) {
+    usageProgressAt = now(); // new bytes — counts may still be inbound
+    const drained = usageFromLogText(tail.text);
+    for (const [id, record] of indexUsageByMessage(drained)) {
       usageByMessage.set(id, record);
+    }
+    for (const run of parseAgentRuns(tail.text)) runTypes.set(run.runId, run);
+    for (const [type, model] of modelByPrefix(tail.text))
+      modelByAgentType.set(type, model);
+    // A step belongs to this session when its run id (or its message) is the
+    // parent's; everything else in this workspace's log is a sub-agent run.
+    for (const record of drained) {
+      if (!record.requestId) continue;
+      if (parentRunIds.has(record.requestId)) continue;
+      if (record.messageId !== null && manifestIds.has(record.messageId))
+        continue;
+      const steps = usageByRun.get(record.requestId) ?? [];
+      steps.push(record);
+      usageByRun.set(record.requestId, steps);
     }
     state.usageCursor = tail.size;
   };
@@ -232,6 +354,17 @@ export const createCodebuddyCapture = (
       return { events: [], held: true };
     }
     pendingSince.delete(messageId);
+    // the parent's own run id: how the log's sub-agent runs are told apart
+    if (
+      parsed.message.requestId &&
+      !parentRunIds.has(parsed.message.requestId)
+    ) {
+      parentRunIds.add(parsed.message.requestId);
+      state.parentRuns.push(parsed.message.requestId);
+      // retro-active: a step drained before its message was read is the
+      // parent's, so drop any child run started with this id
+      usageByRun.delete(parsed.message.requestId);
+    }
     return {
       events: normalizeMessage({
         message: parsed.message,
@@ -262,15 +395,21 @@ export const createCodebuddyCapture = (
 
   const releaseExpiredPending = (events: NormalEvent[]): void => {
     if (state.pending.length === 0) return;
-    const deadline = opts.usageGraceMs ?? USAGE_GRACE_MS;
     const kept: string[] = [];
     for (const id of state.pending) {
       const resolved = usageByMessage.has(id);
-      if (!resolved && now() - (pendingSince.get(id) ?? now()) < deadline) {
-        kept.push(id);
-        continue;
+      if (!resolved) {
+        const age = now() - (pendingSince.get(id) ?? now());
+        const quietFor = now() - usageProgressAt;
+        // counts that flush late are the norm, not the exception — while the
+        // usage log is still growing they may land any tick, so only a log
+        // that has gone quiet (or the absolute ceiling) ships without them
+        if (age < PENDING_MAX_MS && quietFor < quietMs) {
+          kept.push(id);
+          continue;
+        }
       }
-      // resolved (counts arrived) or expired (they never will) — ship it
+      // resolved (counts arrived) or given up on — ship it
       const { events: evts } = eventsFor(id, true);
       events.push(...evts);
     }
@@ -284,6 +423,100 @@ export const createCodebuddyCapture = (
       events.push(...evts);
     }
     state.pending = [];
+    // the host logs no end for a sub-agent run, so this listener closes them
+    events.push(...endChildren("listener-end"));
+    return events;
+  };
+
+  /**
+   * The agent type of the session's own run — known once a message of ours
+   * has been read. Until then a stray step cannot be told from a sub-agent
+   * one, so children wait rather than risk inventing a session.
+   */
+  const parentType = (): string | null => {
+    for (const runId of parentRunIds) {
+      const type = runTypes.get(runId)?.agentType;
+      if (type) return type;
+    }
+    return null;
+  };
+
+  const childStartEvent = (run: AgentRun): SessionStartEvent => ({
+    ...envelope(AGENT, childSessionId(run.runId), run.startedAt),
+    kind: "session",
+    event: "start",
+    cwd: opts.cwd ?? "",
+    hostname: opts.hostname ?? "",
+    parent_session_id: opts.sessionId,
+    ...(state.turnId ? { spawned_by_turn_id: state.turnId } : {}),
+  });
+
+  const childRequestEvent = (
+    runId: string,
+    model: string,
+    record: UsageRecord,
+  ): ModelRequestEvent => ({
+    ...envelope(AGENT, childSessionId(runId), record.occurredAt),
+    kind: "model_request",
+    provider: PROVIDER,
+    model,
+    duration_ms: record.durationMs ?? 0,
+    ...(record.requestId ? { request_id: record.requestId } : {}),
+    usage: record.usage,
+  });
+
+  const childEndEvent = (runId: string, reason: string): SessionEndEvent => ({
+    ...envelope(AGENT, childSessionId(runId), new Date(now()).toISOString()),
+    kind: "session",
+    event: "end",
+    reason,
+  });
+
+  const shipChildren = (events: NormalEvent[]): void => {
+    const mine = parentType();
+    if (mine === null) return;
+    for (const [runId, steps] of usageByRun) {
+      const run = runTypes.get(runId);
+      // a run we never saw start cannot be attributed — skip rather than
+      // invent an agent type for it
+      if (!run || run.agentType === mine) continue;
+      const known = state.children[runId];
+      const child: ChildState = known ?? {
+        agentType: run.agentType,
+        model: modelByAgentType.get(run.agentType) ?? null,
+        startedAt: run.startedAt,
+        emitted: 0,
+        ended: false,
+        lastSeenMs: now(),
+      };
+      if (!known) {
+        state.children[runId] = child;
+        events.push(childStartEvent(run));
+        // the ↳ marker is how the sessions list shows this is a sub-agent
+        events.push(metaEvent(childSessionId(runId), `↳ ${run.agentType}`));
+      }
+      for (const record of steps.slice(child.emitted)) {
+        events.push(childRequestEvent(runId, child.model ?? "unknown", record));
+        child.emitted += 1;
+        child.lastSeenMs = Math.max(
+          child.lastSeenMs,
+          Date.parse(record.occurredAt) || child.lastSeenMs,
+        );
+      }
+      if (!child.ended && now() - child.lastSeenMs > CHILD_IDLE_MS) {
+        child.ended = true;
+        events.push(childEndEvent(runId, "idle-timeout"));
+      }
+    }
+  };
+
+  const endChildren = (reason: string): NormalEvent[] => {
+    const events: NormalEvent[] = [];
+    for (const [runId, child] of Object.entries(state.children)) {
+      if (child.ended) continue;
+      child.ended = true;
+      events.push(childEndEvent(runId, reason));
+    }
     return events;
   };
 
@@ -310,20 +543,46 @@ export const createCodebuddyCapture = (
       if (parsed.value.messages.length < state.processed)
         state.processed = parsed.value.messages.length;
 
+      for (const row of parsed.value.messages) manifestIds.add(row.id);
+      // the workspace log outlives the conversation and is replayed from byte
+      // 0 on attach — runs whose first step predates the conversation itself
+      // belong to an earlier conversation and must not be adopted as children
+      if (conversationStartMs === null && parsed.value.messages.length > 0) {
+        const raw = readMaybe(
+          messagePath(opts.ref, parsed.value.messages[0]!.id),
+        );
+        const first = raw === null ? null : parseMessageFile(raw);
+        if (first?.ok) {
+          const t = Date.parse(first.message.createdAt);
+          if (Number.isFinite(t)) conversationStartMs = t;
+        }
+      }
+      if (conversationStartMs !== null) {
+        for (const [runId, steps] of usageByRun) {
+          const firstStep = Date.parse(steps[0]?.occurredAt ?? "");
+          if (Number.isFinite(firstStep) && firstStep < conversationStartMs)
+            usageByRun.delete(runId);
+        }
+      }
       for (const row of newIndexMessages(parsed.value, state.processed)) {
+        // an index row can lead its message file by a beat — one poll landing
+        // in that gap consumed a whole conversation's steps as read failures.
+        // rows are appended in order, so wait for the file and retry next tick
+        if (!existsSync(messagePath(opts.ref, row.id))) break;
         state.processed += 1;
         const { events: evts, held } = eventsFor(row.id);
         if (held) state.pending.push(row.id);
         else events.push(...evts);
       }
       releaseExpiredPending(events);
+      shipChildren(events);
       events.push(...titleEvent());
       // one explainer per listener generation: why the first events lag a few
       // seconds is otherwise invisible in the log the user never reads
       if (!explained && state.pending.length > 0) {
         explained = true;
         console.error(
-          `capture: ${state.pending.length} model request(s) waiting for token counts (they ship without usage after ${opts.usageGraceMs ?? USAGE_GRACE_MS}ms)`,
+          `capture: ${state.pending.length} model request(s) waiting for token counts (they ship without usage after ${quietMs}ms of usage-log silence)`,
         );
       }
       persist();

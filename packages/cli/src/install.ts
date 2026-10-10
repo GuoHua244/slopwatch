@@ -17,12 +17,19 @@ import {
   mergeHookConfig as mergeZcodeHooks,
   slopwatchHookEntry,
 } from "@slopwatch/listener-zcode/install";
+import {
+  defaultHookScriptPath as codebuddyHookScriptPath,
+  mergeHookConfig as mergeCodebuddyHooks,
+  slopwatchHookCommand as codebuddyHookCommand,
+} from "@slopwatch/listener-codebuddy/install";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   AGENTS,
   claudeProjectSettingsPath,
   claudeUserSettingsPath,
+  codebuddyProjectSettingsPath,
+  codebuddyUserSettingsPath,
   detectAgents,
   type AgentName,
   zcodeUserConfigPath,
@@ -195,6 +202,34 @@ const wireHosts = (opts: InstallOptions, lines: string[]): void => {
       );
       writeJson(settingsPath, merged);
       lines.push(`claude-code: hooks wired → ${settingsPath} (${scope})`);
+    }
+  }
+
+  if (wanted.includes("codebuddy")) {
+    if (!detected.codebuddy) {
+      lines.push("codebuddy: not detected — skipped");
+    } else {
+      const hookScriptPath = codebuddyHookScriptPath();
+      const command = codebuddyHookCommand({ bunPath, hookScriptPath });
+      const settingsPath = opts.dir
+        ? codebuddyProjectSettingsPath(opts.dir)
+        : codebuddyUserSettingsPath(home);
+      const merged = mergeCodebuddyHooks(
+        readJsonIfExists(settingsPath),
+        command,
+        hookScriptPath,
+      );
+      writeJson(settingsPath, merged);
+      lines.push(`codebuddy: hooks wired → ${settingsPath} (${scope})`);
+      // no in-app review step exists for this host (measured: an external
+      // edit is picked up by the client's own watcher within ~30s, and at
+      // once in a newly opened session) — but project scope still needs the
+      // workspace to be trusted, or the entries are dropped silently
+      if (opts.dir) {
+        lines.push(
+          "codebuddy: approve the workspace TRUST prompt in the client — project hooks fire for nothing in an untrusted workspace",
+        );
+      }
     }
   }
 };

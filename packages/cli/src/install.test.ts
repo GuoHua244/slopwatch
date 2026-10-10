@@ -9,7 +9,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claudeUserSettingsPath, zcodeUserConfigPath } from "./detect";
+import {
+  claudeUserSettingsPath,
+  codebuddyUserSettingsPath,
+  zcodeUserConfigPath,
+} from "./detect";
 import { runInstall } from "./install";
 
 // A stand-in Server: /me answers like the real one, everything else 404s.
@@ -26,9 +30,10 @@ const serverUrl = `http://127.0.0.1:${meServer.port}`;
 
 const tempHome = (): string => {
   const home = mkdtempSync(join(tmpdir(), "slopwatch-install-"));
-  // both hosts "installed" — their home dirs exist
+  // all three hosts "installed" — their home dirs exist
   mkdirSync(join(home, ".zcode"), { recursive: true });
   mkdirSync(join(home, ".claude"), { recursive: true });
+  mkdirSync(join(home, ".codebuddy"), { recursive: true });
   return home;
 };
 

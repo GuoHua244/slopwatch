@@ -6,6 +6,8 @@ import {
   AGENTS,
   claudeProjectSettingsPath,
   claudeUserSettingsPath,
+  codebuddyProjectSettingsPath,
+  codebuddyUserSettingsPath,
   detectAgents,
   zcodeUserConfigPath,
   zcodeWorkspaceConfigPath,
@@ -18,6 +20,7 @@ describe("detectAgents", () => {
     expect(detectAgents(tempHome())).toEqual({
       zcode: false,
       "claude-code": false,
+      codebuddy: false,
     });
   });
 
@@ -26,8 +29,11 @@ describe("detectAgents", () => {
     mkdirSync(join(home, ".zcode"), { recursive: true });
     expect(detectAgents(home).zcode).toBe(true);
     expect(detectAgents(home)["claude-code"]).toBe(false);
+    expect(detectAgents(home).codebuddy).toBe(false);
     mkdirSync(join(home, ".claude"), { recursive: true });
     expect(detectAgents(home)["claude-code"]).toBe(true);
+    mkdirSync(join(home, ".codebuddy"), { recursive: true });
+    expect(detectAgents(home).codebuddy).toBe(true);
   });
 });
 
@@ -45,9 +51,16 @@ describe("wiring targets", () => {
     expect(claudeProjectSettingsPath("/repo")).toBe(
       join("/repo", ".claude", "settings.json"),
     );
+    // CodeBuddy keeps its settings at the root of its own directory
+    expect(codebuddyUserSettingsPath("/home")).toBe(
+      join("/home", ".codebuddy", "settings.json"),
+    );
+    expect(codebuddyProjectSettingsPath("/repo")).toBe(
+      join("/repo", ".codebuddy", "settings.json"),
+    );
   });
 
   test("the agent catalog is the wiring order", () => {
-    expect(AGENTS).toEqual(["zcode", "claude-code"]);
+    expect(AGENTS).toEqual(["zcode", "claude-code", "codebuddy"]);
   });
 });

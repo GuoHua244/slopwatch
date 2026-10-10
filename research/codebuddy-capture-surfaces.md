@@ -403,11 +403,36 @@ sweep, `createTurnDigest` for rolling summaries, `atomicWriteJson` /
 — path resolution, usage joining, message normalization — is the adapter layer
 in `listeners/codebuddy/src/`.
 
-Subagents were **not** observed to exist on this machine: the log's
-`subagent-manager` only loads a built-in catalogue, and no child conversation
-appeared during the session. Child-session capture (parent/child Session
-modelling per ADR 0008) is therefore left unimplemented until a real sample
-exists, rather than guessed at.
+### 5.1 Sub-agents — measured 2026-10-09
+
+A `Task` tool call (sub-agent) DOES run, and it is visible in exactly one
+place: the log. Measured:
+
+```
+[2026/10/9 12:21:29.062] [Info] [BaseAgent:craft] [d149dd4c…]  notifyAgentStart
+[2026/10/9 12:21:50.539] [Info] [BaseAgent:code-explorer] [c09d2e05…]  notifyAgentStart
+[2026/10/9 12:21:50.541] [Info] [BaseAgent:code-explorer]  DeepSeek ModelProvider initialized, modelId: hy4-preview-f, modelName: Hy4 preview
+[2026/10/9 12:22:00.174] [Info] [BaseAgent:code-explorer] [c09d2e05…]  notifyStepEnd, step: 1, requestId: c09d2e05…, messageId: 8c0fbe43…, usage: {…}
+```
+
+- A sub-agent is a **second `BaseAgent:<type>` run** with its own
+  `requestId`, which is constant across that run's steps — i.e. the run id.
+  205 log lines, 12 `notifyStepEnd` steps in the sampled run.
+- **The sub-agent writes nothing into the conversation**: no child
+  conversation directory is created (the workspace still had exactly one),
+  and none of its `messageId`s appear in the parent's `index.json`. Its tool
+  calls and its prose are unrecoverable; **its tokens are not**.
+- The parent's own steps are identifiable two ways: their `requestId` is one
+  the parent's messages carry in `extra`, and their `messageId` is a row of
+  the parent manifest. Everything else in the workspace log is a sub-agent.
+- No `notifyAgentEnd` exists, so a run ends on idleness (120 s) or when the
+  listener ends.
+
+So sub-agent capture ships a **child Session** (`parent_session_id`, ADR 0008) per run: `session.start` (dimensions inherited from the parent,
+`spawned_by_turn_id` when a turn is open), one `model_request` per step with
+usage and the run's model, a `↳ <type>` title, and a `session.end`. This is
+the same shape ZCode's subagent rollout files produce. What is missing is
+honest and stated: no turns, no tool calls, no prose for a sub-agent.
 
 ---
 

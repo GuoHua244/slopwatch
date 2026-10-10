@@ -83,6 +83,7 @@ describe("assistant messages are one model request plus their tool calls", () =>
         step: 2,
         requestId: "00592a8d23944ff7b9422c179366547d",
         messageId: "f47957d9eb514aba9c91a6e0cbe0843b",
+        agentPrefix: "craft",
         durationMs: 3021,
         usage: { input_tokens: 15714, output_tokens: 71 },
       },

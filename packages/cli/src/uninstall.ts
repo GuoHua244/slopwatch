@@ -14,11 +14,17 @@ import {
   defaultSpawnerPath,
   removeHookConfig as removeZcodeHooks,
 } from "@slopwatch/listener-zcode/install";
+import {
+  defaultHookScriptPath as codebuddyHookScriptPath,
+  removeHookConfig as removeCodebuddyHooks,
+} from "@slopwatch/listener-codebuddy/install";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   AGENTS,
   claudeProjectSettingsPath,
   claudeUserSettingsPath,
+  codebuddyProjectSettingsPath,
+  codebuddyUserSettingsPath,
   detectAgents,
   type AgentName,
   zcodeUserConfigPath,
@@ -99,6 +105,23 @@ export const runUninstall = (opts: UninstallOptions): UninstallResult => {
         defaultHookScriptPath(),
       );
       if (result) lines.push(`claude-code: ${result}`);
+    }
+  }
+
+  if (wanted.includes("codebuddy")) {
+    const targets = opts.dir
+      ? [codebuddyProjectSettingsPath(opts.dir)]
+      : [codebuddyUserSettingsPath(home)];
+    if (!detected.codebuddy && !targets.some((t) => existsSync(t))) {
+      lines.push("codebuddy: not detected — nothing to remove");
+    }
+    for (const target of targets) {
+      const result = stripHooks(
+        target,
+        removeCodebuddyHooks,
+        codebuddyHookScriptPath(),
+      );
+      if (result) lines.push(`codebuddy: ${result}`);
     }
   }
 

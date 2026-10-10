@@ -26,6 +26,12 @@ export type UsageRecord = {
   step: number | null;
   requestId: string | null;
   messageId: string | null;
+  /**
+   * The `BaseAgent:<type>` prefix of the line — `craft` for the session's
+   * own steps, another type (e.g. `code-explorer`) for a sub-agent run.
+   * This is how sub-agent tokens are told apart from the parent's.
+   */
+  agentPrefix: string | null;
   usage: TokenUsage;
   durationMs: number | null;
 };
@@ -33,6 +39,7 @@ export type UsageRecord = {
 const LINE_TS = /^\[(\d{4}\/\d{1,2}\/\d{1,2} \d{1,2}:\d{2}:\d{2}\.\d{3})\]/;
 const USAGE_BLOCK = /usage:\s*(\{[^}]*\})/;
 const METRICS = /Step execution metrics:\s*step=(\d+),\s*duration=(\d+)ms/;
+const AGENT_PREFIX = /\[BaseAgent:([^\]]+)\]/;
 const STEP = /\bstep:\s*(\d+)/;
 const ID_AFTER = (name: string): RegExp =>
   new RegExp(`${name}:\\s*([0-9a-fA-F][0-9a-fA-F-]*)`);
@@ -120,6 +127,7 @@ export const usageFromLogText = (text: string): UsageRecord[] => {
       step: Number.isFinite(step ?? Number.NaN) ? step : null,
       requestId: line.match(ID_AFTER("requestId"))?.[1] ?? null,
       messageId: line.match(ID_AFTER("messageId"))?.[1] ?? null,
+      agentPrefix: line.match(AGENT_PREFIX)?.[1] ?? null,
       usage,
       durationMs: null,
     };

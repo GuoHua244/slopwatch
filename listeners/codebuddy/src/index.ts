@@ -33,6 +33,14 @@ export {
   workspaceMap,
 } from "./paths";
 export {
+  CHILD_IDLE_MS,
+  childSessionId,
+  isChildRun,
+  modelByPrefix,
+  parseAgentRuns,
+  type AgentRun,
+} from "./subagent";
+export {
   indexUsageByMessage,
   usageFromLogText,
   USAGE_GRACE_MS,

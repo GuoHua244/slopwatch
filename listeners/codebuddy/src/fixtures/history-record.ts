@@ -21,7 +21,7 @@
  */
 
 const CONVERSATION = "775cc5f8f8604b798be88bbf9bc3c06d";
-const REQUEST = "00592a8d23944ff7b9422c179366547d";
+export const REQUEST = "00592a8d23944ff7b9422c179366547d";
 const TRACE = "3b4e456c29373c181d8f681f9c309d51";
 
 /** `<conversation>/index.json` — trimmed to two messages of one request. */
@@ -98,6 +98,27 @@ export const realUsageLogLines = [
   `[2026/10/8 18:38:04.276] [Info] [AgentReporter] [${TRACE}]  Step execution metrics: step=1, duration=4381ms, usage={"inputTokens":12633,"outputTokens":59,"totalTokens":12692,"cacheTokens":4224,"cachedWriteTokens":0,"cachedMissTokens":8409,"lastTokens":12692,"credit":0,"thinkingTokens":59}`,
   `[2026/10/8 18:38:07.947] [Info] [BaseAgent:craft] [${REQUEST}]  notifyStepEnd, step: 2, requestId: ${REQUEST}, messageId: f47957d9eb514aba9c91a6e0cbe0843b, usage: {"inputTokens":15714,"outputTokens":71,"totalTokens":15785,"cacheTokens":12608,"cachedWriteTokens":0,"cachedMissTokens":3106,"lastTokens":15785,"credit":0,"thinkingTokens":12}, isMaxTokenLimit: false, isMaxStepLimit: false, hasReactiveTool:false, isContentFilter: false`,
   `[2026/10/8 18:38:07.947] [Info] [AgentReporter] [${TRACE}]  Step execution metrics: step=2, duration=3021ms, usage={"inputTokens":15714,"outputTokens":71,"totalTokens":15785,"cacheTokens":12608,"cachedWriteTokens":0,"cachedMissTokens":3106,"lastTokens":15785,"credit":0,"thinkingTokens":12}`,
+];
+
+/**
+ * Verbatim sub-agent lines (2026-10-09), from a `Task` tool run inside this
+ * very workspace. A sub-agent is a separate `BaseAgent:<type>` run with its
+ * own `requestId` (the run id): it logs its own `notifyStepEnd` usage, but
+ * its messages never reach the parent conversation's manifest — so the log
+ * is the only place a sub-agent's tokens exist.
+ */
+export const SUBAGENT_RUN = "c09d2e055d2743d8afde32392d534f88";
+export const PRIMARY_RUN = "d149dd4c45c445cda8dba8616c14dd34";
+
+export const realAgentStartLines = [
+  `[2026/10/9 12:21:29.062] [Info] [BaseAgent:craft] [${PRIMARY_RUN}]  notifyAgentStart`,
+  `[2026/10/9 12:21:50.539] [Info] [BaseAgent:code-explorer] [${SUBAGENT_RUN}]  notifyAgentStart`,
+];
+
+export const realSubagentUsageLogLines = [
+  `[2026/10/9 12:21:50.541] [Info] [BaseAgent:code-explorer]  DeepSeek ModelProvider initialized, modelId: hy4-preview-f, modelName: Hy4 preview`,
+  `[2026/10/9 12:22:00.174] [Info] [BaseAgent:code-explorer] [${SUBAGENT_RUN}]  notifyStepEnd, step: 1, requestId: ${SUBAGENT_RUN}, messageId: 8c0fbe4372844b9aa2a69b01d604b18e, usage: {"inputTokens":3346,"outputTokens":92,"totalTokens":3438,"cacheTokens":2944,"cachedWriteTokens":0,"cachedMissTokens":402,"lastTokens":3438,"credit":0,"thinkingTokens":0}, isMaxTokenLimit: false, isMaxStepLimit: false, hasReactiveTool:false, isContentFilter: false`,
+  `[2026/10/9 12:22:10.338] [Info] [BaseAgent:code-explorer] [${SUBAGENT_RUN}]  notifyStepEnd, step: 2, requestId: ${SUBAGENT_RUN}, messageId: 8729d3a5c2b4450888fcdf1e582e5498, usage: {"inputTokens":4663,"outputTokens":167,"totalTokens":4830,"cacheTokens":3264,"cachedWriteTokens":0,"cachedMissTokens":1399,"lastTokens":4830,"credit":0,"thinkingTokens":26}, isMaxTokenLimit: false, isMaxStepLimit: false, hasReactiveTool:false, isContentFilter: false`,
 ];
 
 /** A real hook payload (PostToolUse) as CodeBuddy delivers it on stdin. */
