@@ -74,14 +74,12 @@ const rolloutFile = join(
 const liveTs = fileURLToPath(new URL("./live.ts", import.meta.url));
 
 // SessionStart also fires on resume/clear/compact — skip if a listener for
-// this session is already alive: the PID exists AND its heartbeat is fresh.
-// Signal-0 alone misreads Windows PID reuse as a live listener and would
-// stall this session's capture forever.
+// this session is already alive: the heartbeat is fresh. The heartbeat is
+// the liveness proof; probing the recorded PID with signal-0 instead would
+// cost ~3s per hook fire on Windows (Bun's first cross-process kill) and
+// Windows PID reuse made that probe lie anyway.
 const existingPid = readPidFile(pidFile);
-if (
-  existingPid !== null &&
-  isListenerAlive({ pid: existingPid, heartbeatFile })
-) {
+if (existingPid !== null && isListenerAlive({ heartbeatFile })) {
   console.error(`slopwatch listener already running: pid=${existingPid}`);
   process.exit(0);
 }

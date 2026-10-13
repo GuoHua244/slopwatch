@@ -132,7 +132,7 @@ const killStaleListener = (sessionId: string): void => {
   const pid = readPidFile(pidFile(sessionId));
   if (
     pid !== null &&
-    isListenerAlive({ pid, heartbeatFile: heartbeatFile(sessionId) })
+    isListenerAlive({ heartbeatFile: heartbeatFile(sessionId) })
   ) {
     process.kill(pid);
   }
@@ -150,7 +150,7 @@ const requestGracefulStop = (sessionId: string): void => {
   const pid = readPidFile(pidFile(sessionId));
   if (
     pid !== null &&
-    isListenerAlive({ pid, heartbeatFile: heartbeatFile(sessionId) })
+    isListenerAlive({ heartbeatFile: heartbeatFile(sessionId) })
   ) {
     try {
       writeFileSync(stopFile(sessionId), String(Date.now()));
@@ -236,15 +236,15 @@ const main = async (): Promise<void> => {
     process.exit(0);
   }
 
-  // spawn — but skip when a listener for this session is already alive.
-  // The heartbeat is the liveness proof: signal-0 alone mistakes a
-  // PID-reuse stranger for our listener and capture would stall.
+  // spawn — but skip when a listener for this session is already alive:
+  // the heartbeat is fresh. The heartbeat is the liveness proof; probing
+  // the recorded PID with signal-0 instead would cost ~3s per hook fire
+  // on Windows (Bun's first cross-process kill).
   mkdirSync(logDir, { recursive: true });
   const existingPid = readPidFile(pidFile(plan.sessionId));
   if (
     existingPid !== null &&
     isListenerAlive({
-      pid: existingPid,
       heartbeatFile: heartbeatFile(plan.sessionId),
     })
   ) {
@@ -275,6 +275,7 @@ const main = async (): Promise<void> => {
         cwd: plan.cwd,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
       }).trim();
     } catch {
       // optional — plan.cwd is the IDE's own directory on this build anyway

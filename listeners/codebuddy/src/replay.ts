@@ -92,6 +92,7 @@ try {
   const remote = execSync("git remote get-url origin", {
     cwd,
     encoding: "utf8",
+    windowsHide: true,
   }).trim();
   if (remote) gitRemote = remote;
 } catch {

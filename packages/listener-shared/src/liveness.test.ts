@@ -4,15 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HEARTBEAT_TTL_MS, isListenerAlive } from "./liveness";
 
-// A PID that is guaranteed dead: spawn a process synchronously — spawnSync
-// only returns after it has exited. (Any hardcoded PID could be reused by a
-// stranger — the exact hazard under test.) The instant-exit command is
-// per-platform: cmd only exists on Windows, sh everywhere else.
-const deadPid = (): number =>
-  process.platform === "win32"
-    ? Bun.spawnSync(["cmd", "/c", "exit"]).pid
-    : Bun.spawnSync(["sh", "-c", "exit"]).pid;
-
 const touch = (path: string, ageMs = 0): void => {
   closeSync(openSync(path, "w"));
   if (ageMs !== 0) {
@@ -25,44 +16,37 @@ describe("isListenerAlive", () => {
   const heartbeat = (): string =>
     join(mkdtempSync(join(tmpdir(), "slopwatch-liveness-")), "heartbeat");
 
-  test("live PID with a fresh heartbeat is alive", () => {
+  test("fresh heartbeat is alive", () => {
     const file = heartbeat();
     touch(file);
-    expect(isListenerAlive({ pid: process.pid, heartbeatFile: file })).toBe(
-      true,
-    );
+    expect(isListenerAlive({ heartbeatFile: file })).toBe(true);
   });
 
-  test("dead PID is not alive even with a fresh heartbeat", () => {
-    const file = heartbeat();
-    touch(file);
-    expect(isListenerAlive({ pid: deadPid(), heartbeatFile: file })).toBe(
-      false,
-    );
-  });
-
-  test("live PID without a heartbeat is not alive (pre-heartbeat listener)", () => {
+  test("missing heartbeat file is not alive", () => {
     expect(
-      isListenerAlive({
-        pid: process.pid,
-        heartbeatFile: join(heartbeat(), "never-written"),
-      }),
+      isListenerAlive({ heartbeatFile: join(heartbeat(), "never-written") }),
     ).toBe(false);
   });
 
   test("stale heartbeat is not alive", () => {
     const file = heartbeat();
     touch(file, HEARTBEAT_TTL_MS + 60_000);
-    expect(isListenerAlive({ pid: process.pid, heartbeatFile: file })).toBe(
-      false,
-    );
+    expect(isListenerAlive({ heartbeatFile: file })).toBe(false);
   });
 
   test("heartbeat exactly at the TTL boundary is already stale", () => {
     const file = heartbeat();
     touch(file, HEARTBEAT_TTL_MS);
-    expect(isListenerAlive({ pid: process.pid, heartbeatFile: file })).toBe(
-      false,
-    );
+    expect(isListenerAlive({ heartbeatFile: file })).toBe(false);
+  });
+
+  test("heartbeat freshness, not wall clock: an old file just written is fresh", () => {
+    // the spawner pre-writes the heartbeat before the child can boot — a
+    // generation whose process died in that window stays "alive" for at
+    // most one TTL; the cursor backfill at the eventual respawn makes this
+    // a capture delay, never a data loss
+    const file = heartbeat();
+    touch(file, HEARTBEAT_TTL_MS - 1_000);
+    expect(isListenerAlive({ heartbeatFile: file })).toBe(true);
   });
 });

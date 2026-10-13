@@ -24,6 +24,7 @@ export const spawnDetachedListener = (
   const logFd = openSync(opts.logFile, "a");
   const child = Bun.spawn([process.execPath, opts.scriptPath, ...opts.args], {
     detached: true,
+    windowsHide: true,
     stdio: ["ignore", logFd, logFd],
   });
   child.unref?.();

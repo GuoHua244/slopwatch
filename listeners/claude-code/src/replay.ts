@@ -56,6 +56,7 @@ let gitRemote: string | undefined;
 try {
   const remote = execSync("git remote get-url origin", {
     encoding: "utf8",
+    windowsHide: true,
   }).trim();
   if (remote) gitRemote = remote;
 } catch {

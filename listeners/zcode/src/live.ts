@@ -96,6 +96,10 @@ try {
   const remote = execSync("git remote get-url origin", {
     encoding: "utf8",
     cwd: arg("cwd"),
+    // the listener runs console-less (spawned detached from the hook) —
+    // without this the git child gets a fresh VISIBLE console window that
+    // flashes on every session open
+    windowsHide: true,
   }).trim();
   if (remote) gitRemote = remote;
 } catch {

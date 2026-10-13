@@ -8,24 +8,25 @@ import { statSync } from "node:fs";
 export const HEARTBEAT_TTL_MS = 5 * 60_000;
 
 /**
- * True when a listener for this session is alive: the PID exists AND the
- * listener's heartbeat file was touched within the TTL. Signal-0 alone is not
- * enough on Windows — PIDs are reused within minutes, so a dead listener's PID
- * can belong to a stranger and the spawner would skip respawning forever,
- * silently stalling that session's capture. A missing or stale heartbeat
- * therefore means "not alive", including listeners from before heartbeats
- * existed.
+ * True when a listener for this session is alive: its heartbeat file was
+ * touched within the TTL. The listener touches it at boot and every 30s, and
+ * the spawner pre-writes it at spawn so a just-started generation is visible
+ * immediately.
+ *
+ * This used to also require the recorded PID to exist (signal-0). The probe
+ * is gone on purpose: on Windows (Bun 1.4.2 measured) the FIRST
+ * `process.kill(pid, 0)` of a fresh process against an existing foreign
+ * process costs ~3s (Node: ~3ms), and hooks run inline — every hook fire is
+ * a fresh process, so SessionStart stalled opening a session by that long.
+ * The heartbeat alone is the liveness proof the spawner acts on; the trade
+ * is that a listener which crashes before its first heartbeat stays
+ * "alive" for at most one TTL — capture lags, never loses data, because the
+ * respawn backfills from the cursor.
  */
 export const isListenerAlive = (opts: {
-  pid: number;
   heartbeatFile: string;
   nowMs?: number;
 }): boolean => {
-  try {
-    process.kill(opts.pid, 0);
-  } catch {
-    return false;
-  }
   try {
     const age =
       (opts.nowMs ?? Date.now()) - statSync(opts.heartbeatFile).mtimeMs;

@@ -14,6 +14,7 @@ export const spawnDrainSweep = (drainTs: string): void => {
   try {
     const child = Bun.spawn([process.execPath, drainTs], {
       detached: true,
+      windowsHide: true,
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",

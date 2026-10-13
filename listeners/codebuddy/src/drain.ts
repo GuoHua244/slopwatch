@@ -32,12 +32,10 @@ await runAgentDrain({
   agent: AGENT,
   stateDir,
   send: (events) => sendEvents(events, ship),
-  // the heartbeat file is the liveness proof — Windows reuses PIDs, so
-  // signal-0 alone can mistake a dead listener for a live one and skip
-  // an orphaned queue on every sweep
-  ownerAlive: (sessionId, pid) =>
+  // the heartbeat file is the liveness proof — a stale heartbeat means the
+  // session's listener (if any) is gone and the queue is orphaned
+  ownerAlive: (sessionId) =>
     isListenerAlive({
-      pid,
       heartbeatFile: join(stateDir, `${AGENT}-${sessionId}.heartbeat`),
     }),
 });
