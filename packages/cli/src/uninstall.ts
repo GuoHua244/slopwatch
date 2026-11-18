@@ -18,6 +18,10 @@ import {
   defaultHookScriptPath as codebuddyHookScriptPath,
   removeHookConfig as removeCodebuddyHooks,
 } from "@slopwatch/listener-codebuddy/install";
+import {
+  defaultHookScriptPath as codexHookScriptPath,
+  removeHookConfig as removeCodexHooks,
+} from "@slopwatch/listener-codex/install";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   AGENTS,
@@ -25,6 +29,8 @@ import {
   claudeUserSettingsPath,
   codebuddyProjectSettingsPath,
   codebuddyUserSettingsPath,
+  codexProjectHooksPath,
+  codexUserHooksPath,
   detectAgents,
   type AgentName,
   zcodeUserConfigPath,
@@ -122,6 +128,23 @@ export const runUninstall = (opts: UninstallOptions): UninstallResult => {
         codebuddyHookScriptPath(),
       );
       if (result) lines.push(`codebuddy: ${result}`);
+    }
+  }
+
+  if (wanted.includes("codex")) {
+    const targets = opts.dir
+      ? [codexProjectHooksPath(opts.dir)]
+      : [codexUserHooksPath(home)];
+    if (!detected.codex && !targets.some((t) => existsSync(t))) {
+      lines.push("codex: not detected — nothing to remove");
+    }
+    for (const target of targets) {
+      const result = stripHooks(
+        target,
+        removeCodexHooks,
+        codexHookScriptPath(),
+      );
+      if (result) lines.push(`codex: ${result}`);
     }
   }
 

@@ -27,7 +27,7 @@ See [`research/v1-architecture-decisions.md`](./research/v1-architecture-decisio
   the production build is baked into the Server container.
 - `packages/events` — the Listener→Server event contract (`NormalEvent`,
   `sendEvents`).
-- `listeners/*` — per-agent Listeners (Claude Code, ZCode, CodeBuddy).
+- `listeners/*` — per-agent Listeners (Claude Code, ZCode, CodeBuddy, Codex).
 
 ## Running the dashboard locally
 

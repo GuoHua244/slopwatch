@@ -8,6 +8,8 @@ import {
   claudeUserSettingsPath,
   codebuddyProjectSettingsPath,
   codebuddyUserSettingsPath,
+  codexProjectHooksPath,
+  codexUserHooksPath,
   detectAgents,
   zcodeUserConfigPath,
   zcodeWorkspaceConfigPath,
@@ -21,6 +23,7 @@ describe("detectAgents", () => {
       zcode: false,
       "claude-code": false,
       codebuddy: false,
+      codex: false,
     });
   });
 
@@ -30,10 +33,13 @@ describe("detectAgents", () => {
     expect(detectAgents(home).zcode).toBe(true);
     expect(detectAgents(home)["claude-code"]).toBe(false);
     expect(detectAgents(home).codebuddy).toBe(false);
+    expect(detectAgents(home).codex).toBe(false);
     mkdirSync(join(home, ".claude"), { recursive: true });
     expect(detectAgents(home)["claude-code"]).toBe(true);
     mkdirSync(join(home, ".codebuddy"), { recursive: true });
     expect(detectAgents(home).codebuddy).toBe(true);
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    expect(detectAgents(home).codex).toBe(true);
   });
 });
 
@@ -58,9 +64,16 @@ describe("wiring targets", () => {
     expect(codebuddyProjectSettingsPath("/repo")).toBe(
       join("/repo", ".codebuddy", "settings.json"),
     );
+    // Codex hooks land in hooks.json (Claude Code-compatible shape)
+    expect(codexUserHooksPath("/home")).toBe(
+      join("/home", ".codex", "hooks.json"),
+    );
+    expect(codexProjectHooksPath("/repo")).toBe(
+      join("/repo", ".codex", "hooks.json"),
+    );
   });
 
   test("the agent catalog is the wiring order", () => {
-    expect(AGENTS).toEqual(["zcode", "claude-code", "codebuddy"]);
+    expect(AGENTS).toEqual(["zcode", "claude-code", "codebuddy", "codex"]);
   });
 });

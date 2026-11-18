@@ -20,6 +20,10 @@ import {
   defaultHookScriptPath as codebuddyHookScriptPath,
   isOurEntry as isOurCodebuddyEntry,
 } from "@slopwatch/listener-codebuddy/install";
+import {
+  defaultHookScriptPath as codexHookScriptPath,
+  isOurEntry as isOurCodexEntry,
+} from "@slopwatch/listener-codex/install";
 import { readFileSync } from "node:fs";
 import {
   AGENTS,
@@ -27,6 +31,8 @@ import {
   claudeUserSettingsPath,
   codebuddyProjectSettingsPath,
   codebuddyUserSettingsPath,
+  codexProjectHooksPath,
+  codexUserHooksPath,
   detectAgents,
   type AgentName,
   zcodeUserConfigPath,
@@ -62,6 +68,15 @@ const CODEBUDDY_EVENTS = [
   "SessionStart",
   "UserPromptSubmit",
   "PostToolUse",
+  "SessionEnd",
+];
+// Codex wires the same four plus Stop (turn-complete keep-alive) — the
+// SessionEnd entry alone proves the wiring, like Claude Code's.
+const CODEX_EVENTS = [
+  "SessionStart",
+  "UserPromptSubmit",
+  "PostToolUse",
+  "Stop",
   "SessionEnd",
 ];
 
@@ -107,6 +122,21 @@ const wiredZcode = (path: string): boolean => {
   });
 };
 
+// Codex's hooks.json is the same flat CC-shaped `hooks` block as Claude
+// Code's settings.json, so its check reads the same way.
+const wiredCodex = (path: string): boolean => {
+  const json = readJsonLenient(path) as Record<string, unknown> | undefined;
+  const hooks = json?.hooks as Record<string, unknown> | undefined;
+  if (!hooks) return false;
+  return CODEX_EVENTS.some((event) => {
+    const entries = hooks[event];
+    return (
+      Array.isArray(entries) &&
+      entries.some((e) => isOurCodexEntry(e, codexHookScriptPath()))
+    );
+  });
+};
+
 const describeConfig = (config: SlopwatchConfig | null): string => {
   if (!config) return "none";
   const parts = [
@@ -144,14 +174,20 @@ export const statusReport = (opts: {
             ? scope === "user"
               ? codebuddyUserSettingsPath(home)
               : codebuddyProjectSettingsPath(opts.dir!)
-            : scope === "user"
-              ? claudeUserSettingsPath(home)
-              : claudeProjectSettingsPath(opts.dir!);
+            : agent === "codex"
+              ? scope === "user"
+                ? codexUserHooksPath(home)
+                : codexProjectHooksPath(opts.dir!)
+              : scope === "user"
+                ? claudeUserSettingsPath(home)
+                : claudeProjectSettingsPath(opts.dir!);
       return agent === "zcode"
         ? wiredZcode(path)
         : agent === "codebuddy"
           ? wiredCodebuddy(path)
-          : wiredClaude(path);
+          : agent === "codex"
+            ? wiredCodex(path)
+            : wiredClaude(path);
     };
     lines.push(
       `${agent}: detected · user-scope hooks ${wiredAt(agent, "user") ? "wired" : "not wired"}`,

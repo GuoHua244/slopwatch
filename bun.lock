@@ -63,6 +63,17 @@
         "@slopwatch/summary": "workspace:*",
       },
     },
+    "listeners/codex": {
+      "name": "@slopwatch/listener-codex",
+      "version": "0.0.0",
+      "dependencies": {
+        "@slopwatch/buffer": "workspace:*",
+        "@slopwatch/config": "workspace:*",
+        "@slopwatch/events": "workspace:*",
+        "@slopwatch/listener-shared": "workspace:*",
+        "@slopwatch/summary": "workspace:*",
+      },
+    },
     "listeners/zcode": {
       "name": "@slopwatch/listener-zcode",
       "version": "0.0.0",
@@ -92,6 +103,7 @@
         "@slopwatch/events": "workspace:*",
         "@slopwatch/listener-claude-code": "workspace:*",
         "@slopwatch/listener-codebuddy": "workspace:*",
+        "@slopwatch/listener-codex": "workspace:*",
         "@slopwatch/listener-shared": "workspace:*",
         "@slopwatch/listener-zcode": "workspace:*",
       },
@@ -165,6 +177,8 @@
     "@slopwatch/listener-claude-code": ["@slopwatch/listener-claude-code@workspace:listeners/claude-code"],
 
     "@slopwatch/listener-codebuddy": ["@slopwatch/listener-codebuddy@workspace:listeners/codebuddy"],
+
+    "@slopwatch/listener-codex": ["@slopwatch/listener-codex@workspace:listeners/codex"],
 
     "@slopwatch/listener-shared": ["@slopwatch/listener-shared@workspace:packages/listener-shared"],
 

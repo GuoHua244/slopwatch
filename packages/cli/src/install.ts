@@ -22,6 +22,10 @@ import {
   mergeHookConfig as mergeCodebuddyHooks,
   slopwatchHookCommand as codebuddyHookCommand,
 } from "@slopwatch/listener-codebuddy/install";
+import {
+  defaultHookScriptPath as codexHookScriptPath,
+  mergeHookConfig as mergeCodexHooks,
+} from "@slopwatch/listener-codex/install";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import {
@@ -30,6 +34,8 @@ import {
   claudeUserSettingsPath,
   codebuddyProjectSettingsPath,
   codebuddyUserSettingsPath,
+  codexProjectHooksPath,
+  codexUserHooksPath,
   detectAgents,
   type AgentName,
   zcodeUserConfigPath,
@@ -230,6 +236,34 @@ const wireHosts = (opts: InstallOptions, lines: string[]): void => {
           "codebuddy: approve the workspace TRUST prompt in the client — project hooks fire for nothing in an untrusted workspace",
         );
       }
+    }
+  }
+
+  if (wanted.includes("codex")) {
+    if (!detected.codex) {
+      lines.push("codex: not detected — skipped");
+    } else {
+      const hookScriptPath = codexHookScriptPath();
+      const command = [
+        JSON.stringify(bunPath),
+        JSON.stringify(hookScriptPath),
+      ].join(" ");
+      const hooksPath = opts.dir
+        ? codexProjectHooksPath(opts.dir)
+        : codexUserHooksPath(home);
+      const merged = mergeCodexHooks(
+        readJsonIfExists(hooksPath),
+        command,
+        hookScriptPath,
+      );
+      writeJson(hooksPath, merged);
+      lines.push(`codex: hooks wired → ${hooksPath} (${scope})`);
+      // the hooks engine is stable and default-on since ≤ 0.147.0 (measured
+      // `codex features list`), but handlers run only after the user trusts
+      // them — the review modal appears at the next TUI session start
+      lines.push(
+        "codex: trust the slopwatch hooks at the next session start (TUI \u201cHooks need review\u201d prompt) — untrusted hooks never fire",
+      );
     }
   }
 };

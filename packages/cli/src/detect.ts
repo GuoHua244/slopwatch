@@ -8,12 +8,13 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type AgentName = "zcode" | "claude-code" | "codebuddy";
+export type AgentName = "zcode" | "claude-code" | "codebuddy" | "codex";
 
 export const AGENTS: readonly AgentName[] = [
   "zcode",
   "claude-code",
   "codebuddy",
+  "codex",
 ];
 
 export type Detection = Record<AgentName, boolean>;
@@ -24,6 +25,7 @@ export const detectAgents = (homeDir?: string): Detection => {
     zcode: existsSync(join(home, ".zcode")),
     "claude-code": existsSync(join(home, ".claude")),
     codebuddy: existsSync(join(home, ".codebuddy")),
+    codex: existsSync(join(home, ".codex")),
   };
 };
 
@@ -56,3 +58,12 @@ export const codebuddyUserSettingsPath = (homeDir?: string): string =>
  * is untrusted, which only the client's own trust prompt can change. */
 export const codebuddyProjectSettingsPath = (dir: string): string =>
   join(dir, ".codebuddy", "settings.json");
+
+/** User-scope Codex hooks (`CODEX_HOME` relocates the whole tree, but
+ * detection stays home-dir based — no process spawns). */
+export const codexUserHooksPath = (homeDir?: string): string =>
+  join(homeDir ?? homedir(), ".codex", "hooks.json");
+
+/** Project-scope Codex hooks. */
+export const codexProjectHooksPath = (dir: string): string =>
+  join(dir, ".codex", "hooks.json");

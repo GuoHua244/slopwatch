@@ -31,7 +31,7 @@ usage:
 install options:
   --token <bearer>          admin-minted token (prompted on a TTY when omitted)
   --server-url <url>        backend base URL (default http://localhost:8787)
-  --agent <name,...>        restrict wiring: zcode,claude-code,codebuddy (default: all detected)
+  --agent <name,...>        restrict wiring: zcode,claude-code,codebuddy,codex (default: all detected)
   --dir <path>              wire project scope under this directory instead of user scope
 
 flags accept "--flag value" or "--flag=value". credentials live in

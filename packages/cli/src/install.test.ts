@@ -30,10 +30,11 @@ const serverUrl = `http://127.0.0.1:${meServer.port}`;
 
 const tempHome = (): string => {
   const home = mkdtempSync(join(tmpdir(), "slopwatch-install-"));
-  // all three hosts "installed" — their home dirs exist
+  // all hosts "installed" — their home dirs exist
   mkdirSync(join(home, ".zcode"), { recursive: true });
   mkdirSync(join(home, ".claude"), { recursive: true });
   mkdirSync(join(home, ".codebuddy"), { recursive: true });
+  mkdirSync(join(home, ".codex"), { recursive: true });
   return home;
 };
 
@@ -118,10 +119,30 @@ describe("runInstall", () => {
     const result = await runInstall({
       token: "tok-1",
       homeDir: home,
-      agents: ["codex"],
+      agents: ["nope"],
     });
     expect(result.ok).toBe(false);
-    expect(result.lines.join("\n")).toContain("codex");
+    expect(result.lines.join("\n")).toContain("nope");
+  });
+
+  test("codex hooks land in ~/.codex/hooks.json without an embedded token", async () => {
+    const home = tempHome();
+    const result = await runInstall({
+      token: "tok-1",
+      serverUrl,
+      homeDir: home,
+    });
+    expect(result.ok).toBe(true);
+    const { codexUserHooksPath } = await import("./detect");
+    const hooksPath = codexUserHooksPath(home);
+    expect(existsSync(hooksPath)).toBe(true);
+    const hooks = JSON.parse(readFileSync(hooksPath, "utf8"));
+    expect(hooks.hooks.SessionStart[0].hooks[0].command).toContain("hook.ts");
+    expect(hooks.hooks.Stop).toHaveLength(1);
+    // the SessionEnd handler stays inside codex's 3s clamp
+    expect(hooks.hooks.SessionEnd[0].hooks[0].timeout).toBe(3);
+    expect(JSON.stringify(hooks)).not.toContain("tok-1");
+    expect(result.lines.join("\n")).toContain("Hooks need review");
   });
 
   test("a rejected token stops everything before any wiring", async () => {
