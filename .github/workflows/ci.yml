@@ -36,6 +36,19 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t slopwatch:ci .
 
+  # Secret scan (the public-repo API-key rule): every object in .git —
+  # reachable or dangling — checked against secret-shaped patterns and
+  # deployment placeholders allowlisted. The repo has no secrets in CI, so
+  # this is the pattern layer; locally `bun run scan:secrets` also matches
+  # the real values the root .env carries.
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun scripts/secret-scan.ts
+
   # Acceptance: the same suites against a real Postgres (the DB-backed tests
   # skip elsewhere), then a RUNNING server smoked end-to-end over HTTP —
   # ingest with the assistant's response text, the sessions/events reads,

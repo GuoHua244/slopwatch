@@ -12,6 +12,7 @@
     "test": "bun run --filter '*' test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "scan:secrets": "bun scripts/secret-scan.ts",
     "ci": "bun run format:check && bun run typecheck && bun run test",
     "prepare": "husky"
   },
