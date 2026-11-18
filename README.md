@@ -1,18 +1,33 @@
 # slopwatch
 
-Self-hosted, on-prem observability platform for coding agents. See
-[`research/v1-architecture-decisions.md`](./research/v1-architecture-decisions.md)
-and [`CONTEXT.md`](./CONTEXT.md) for the architecture and glossary.
+Self-hosted, on-prem observability platform for coding agents.
+
+> **The idea is not mine.** Slopwatch was conceived — named, scoped, and
+> architected — by [Matt Pocock](https://github.com/mattpocock) in
+> [mattpocock/slopwatch](https://github.com/mattpocock/slopwatch). This
+> repository is an independent implementation that follows the idea and the
+> direction he laid out; the code, decisions, and add-on features here
+> (teams, retrospectives, feedback, password sign-in, and the per-agent
+> listeners) are ours, but the concept belongs to him.
+
+Sign in with a user name and password; an admin mints an API token
+(`sw_…`) for the first sign-in and for tools and scripts — the sign-in page
+has a token door that also walks a first-time user through setting their own
+password.
+
+See [`research/v1-architecture-decisions.md`](./research/v1-architecture-decisions.md),
+[`research/v2-plan.md`](./research/v2-plan.md), and
+[`CONTEXT.md`](./CONTEXT.md) for the architecture and glossary.
 
 ## Layout
 
 - `apps/server` — the Server: receives events from Listeners, stores them in
-  Postgres, serves the read-only dashboard API.
+  Postgres, serves the dashboard API.
 - `apps/web` — the dashboard SPA (React + Vite). Dev server proxies the API;
-  the production build is meant to be embedded into the Server binary.
+  the production build is baked into the Server container.
 - `packages/events` — the Listener→Server event contract (`NormalEvent`,
   `sendEvents`).
-- `listeners/*` — per-agent Listeners.
+- `listeners/*` — per-agent Listeners (Claude Code, ZCode, CodeBuddy).
 
 ## Running the dashboard locally
 
@@ -35,4 +50,9 @@ and [`CONTEXT.md`](./CONTEXT.md) for the architecture and glossary.
 ## Quality gate
 
 `bun run ci` (prettier, tsgo, bun test across every workspace) must pass
-before a milestone is called done.
+before a milestone is called done. Tests that need Postgres read
+`DATABASE_URL_TEST` and skip cleanly when it is absent.
+
+## License
+
+[Apache License 2.0](./LICENSE).
