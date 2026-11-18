@@ -5,11 +5,14 @@ FROM oven/bun:1 AS build
 WORKDIR /app
 
 # Install dependencies first so source changes don't bust the layer cache.
+# Every workspace listed in bun.lock must be on disk, even ones the image
+# never ships — a pruned checkout breaks --frozen-lockfile resolution.
 COPY package.json bun.lock ./
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY listeners/zcode/package.json listeners/zcode/
 COPY listeners/claude-code/package.json listeners/claude-code/
+COPY listeners/codebuddy/package.json listeners/codebuddy/
 COPY packages/cli/package.json packages/cli/
 COPY packages/config/package.json packages/config/
 COPY packages/events/package.json packages/events/
@@ -34,6 +37,7 @@ COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY listeners/zcode/package.json listeners/zcode/
 COPY listeners/claude-code/package.json listeners/claude-code/
+COPY listeners/codebuddy/package.json listeners/codebuddy/
 COPY packages/cli/package.json packages/cli/
 COPY packages/config/package.json packages/config/
 COPY packages/events/package.json packages/events/
