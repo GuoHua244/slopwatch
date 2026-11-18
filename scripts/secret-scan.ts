@@ -49,6 +49,13 @@ const DSN_PLACEHOLDER_PASSWORDS = new Set([
   "password",
 ]);
 
+const isAllowlistedDsnPassword = (password: string): boolean => {
+  if (DSN_PLACEHOLDER_PASSWORDS.has(password.toLowerCase())) return true;
+  // Documentation placeholders like <pw>, ${appPassword}, [password] —
+  // anything bracketed is a slot for a real secret, not one.
+  return /^[<$[{].+[>}\]]$/.test(password);
+};
+
 const patterns = (): [string, RegExp][] => [
   ["openai-style sk- key", /sk-[A-Za-z0-9_-]{16,}/g],
   // GLM/Zhipu key shape: 32 hex chars, a dot, then 10+ alphanumerics.
@@ -61,9 +68,6 @@ const patterns = (): [string, RegExp][] => [
   ["DSN with password", /postgres(?:ql)?:\/\/[A-Za-z0-9_]+:([^@\s]{4,})@/g],
   ["bearer literal", /\bBearer [A-Za-z0-9_\-]{28,}/g],
 ];
-
-const isAllowlistedDsnPassword = (password: string): boolean =>
-  DSN_PLACEHOLDER_PASSWORDS.has(password.toLowerCase());
 
 const findingsIn = (text: string): string[] => {
   const findings: string[] = [];
@@ -120,43 +124,67 @@ if (process.argv.includes("--staged")) {
   }
   console.log(`secret-scan: ${hits} staged file(s) with findings`);
 } else {
+  const check = Bun.spawnSync(
+    ["git", "cat-file", "--batch-all-objects", "--batch-check"],
+    { stdout: "pipe" },
+  );
+  const totalObjects = check.stdout
+    .toString()
+    .split("\n")
+    .filter((line) => line.trim().length > 0).length;
   const proc = Bun.spawn(
     ["git", "cat-file", "--batch-all-objects", "--batch", "--buffer"],
     { stdout: "pipe", stderr: "pipe" },
   );
+  // Byte-level framing: cat-file's sizes are BYTES, so buffering decoded
+  // text and slicing by character count drifts out of sync on multi-byte
+  // content and silently swallows objects (the bug CI caught). Everything
+  // below accumulates raw bytes; only blob bodies get decoded.
   const decoder = new TextDecoder("utf-8", { fatal: false });
   const reader = proc.stdout.getReader();
-  let buffer = "";
+  let bytes: number[] = [];
   let pendingSha = "";
   let pendingKind = "";
   let pendingSize = -1;
+  let objectsSeen = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+    for (const byte of value) bytes.push(byte);
     for (;;) {
       if (pendingSize === -1) {
-        const nl = buffer.indexOf("\n");
+        const nl = bytes.indexOf(10);
         if (nl === -1) break;
-        const [sha, kind, size] = buffer.slice(0, nl).split(" ");
+        const header = String.fromCharCode(...bytes.slice(0, nl));
+        const [sha, kind, size] = header.split(" ");
         if (sha && kind && size && /^\d+$/.test(size)) {
           pendingSha = sha;
           pendingKind = kind;
           pendingSize = Number(size);
         }
-        buffer = buffer.slice(nl + 1);
+        bytes = bytes.slice(nl + 1);
         continue;
       }
-      if (buffer.length < pendingSize + 1) break;
-      const body = buffer.slice(0, pendingSize);
-      buffer = buffer.slice(pendingSize + 1);
-      if (pendingKind === "blob") report(`blob ${pendingSha}`, body);
+      if (bytes.length < pendingSize + 1) break;
+      const body = new Uint8Array(bytes.slice(0, pendingSize));
+      bytes = bytes.slice(pendingSize + 1);
+      objectsSeen += 1;
+      if (pendingKind === "blob")
+        report(`blob ${pendingSha}`, decoder.decode(body));
       pendingSha = "";
       pendingSize = -1;
     }
   }
+  // The completeness check is the point: a framing bug must fail loudly,
+  // not silently shrink the audit surface.
+  if (objectsSeen !== totalObjects) {
+    console.log(
+      `secret-scan: FRAMING BUG — parsed ${objectsSeen} of ${totalObjects} objects; refusing to pass`,
+    );
+    process.exit(1);
+  }
   console.log(
-    `secret-scan: ${hits} object(s) with findings across the whole .git`,
+    `secret-scan: ${totalObjects} objects walked, ${hits} with findings, across the whole .git`,
   );
 }
 process.exit(hits > 0 ? 1 : 0);
