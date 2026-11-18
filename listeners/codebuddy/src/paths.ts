@@ -19,7 +19,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { join, sep } from "node:path";
 
 /** Candidate product directories under `%APPDATA%` (CN build first). */
 export const APPDATA_DIRS = ["CodeBuddy CN", "CodeBuddy"] as const;
@@ -48,7 +48,11 @@ export const defaultHostRoots = (): HostRoots => ({
  * directory names).
  */
 export const windowsKey = (path: string): string => {
-  const normalized = resolve(path).replaceAll("/", "\\");
+  // Pure string normalization, deliberately not the running platform's
+  // resolve(): the key names a Windows path on every host — a posix
+  // resolve() would silently prefix a Linux cwd onto "d:\..." and change
+  // the hash under non-Windows tests.
+  const normalized = path.replaceAll("/", "\\");
   const trimmed = normalized.replace(/\\+$/, "");
   const drive = trimmed.match(/^([A-Za-z]):/);
   return drive ? `${drive[1]!.toLowerCase()}${trimmed.slice(1)}` : trimmed;
