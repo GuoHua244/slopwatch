@@ -16,7 +16,7 @@
  * Usage: bun install.ts --token <bearer> [--dir <project>] [--server-url U]
  */
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join as joinWin32 } from "node:path/win32";
 import { fileURLToPath } from "node:url";
 import {
   argvHelpers,
@@ -80,11 +80,13 @@ export const defaultHookScriptPath = (): string =>
 
 /** User-scope settings file. */
 export const codebuddyUserSettingsPath = (homeDir?: string): string =>
-  join(homeDir ?? homedir(), ".codebuddy", "settings.json");
+  // The settings file lives in Windows-shaped CodeBuddy dirs, so the join
+  // uses win32 semantics on every host (tests run on Linux too).
+  joinWin32(homeDir ?? homedir(), ".codebuddy", "settings.json");
 
 /** Project-scope settings file — only honoured in a trusted workspace. */
 export const codebuddyProjectSettingsPath = (dir: string): string =>
-  join(dir, ".codebuddy", "settings.json");
+  joinWin32(dir, ".codebuddy", "settings.json");
 
 /** Remove our entries from each of our hook events; keep everything else. */
 export const removeHookConfig = (
