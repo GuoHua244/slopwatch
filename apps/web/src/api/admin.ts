@@ -26,6 +26,11 @@ export type AdminApi = {
   mintToken(name: string, label?: string | null): Promise<MintedToken>;
   tokens(name: string): Promise<AdminTokenRow[]>;
   revokeToken(tokenId: string): Promise<void>;
+  /**
+   * ADR 0011: clear a user's password and revoke their sign-in sessions —
+   * they re-initialize with a minted token.
+   */
+  clearPassword(name: string): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
   health(): Promise<AdminHealth>;
   quarantine(limit?: number): Promise<QuarantineRow[]>;
@@ -153,6 +158,12 @@ export const createAdminApi = (
     revokeToken: async (tokenId) => {
       await unwrap(
         `/admin/tokens/${encodeURIComponent(tokenId)}`,
+        auth({ method: "DELETE" }),
+      );
+    },
+    clearPassword: async (name) => {
+      await unwrap(
+        `/admin/users/${encodeURIComponent(name)}/password`,
         auth({ method: "DELETE" }),
       );
     },

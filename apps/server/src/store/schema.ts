@@ -251,6 +251,22 @@ CREATE TABLE IF NOT EXISTS feedback_attachments (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (feedback_id, sha256)
 );
+-- Password sign-in (ADR 0011): the argon2id hash of the user's dashboard
+-- password; NULL until they set one, so token and OIDC sign-ins keep working
+-- untouched.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+-- One server-side session per password login: a revocable bearer stored
+-- hashed like every other credential. Deleting the user cascades the
+-- sessions away with them.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  session_id   UUID PRIMARY KEY,
+  token_hash   TEXT NOT NULL UNIQUE,
+  user_name    TEXT NOT NULL REFERENCES users (name) ON DELETE CASCADE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen_at TIMESTAMPTZ,
+  revoked_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS auth_sessions_user ON auth_sessions (user_name);
 `;
 
 export const schemaMethods = ({ pool }: PgCtx): Pick<Store, "migrate"> => ({

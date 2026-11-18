@@ -175,6 +175,68 @@ check("DELETE an already-deleted note returns 404", repeat.status === 404);
 const anon = await fetch(`${base}/sessions`);
 check("anonymous GET /sessions is 401", anon.status === 401);
 
+// 7. Password sign-in (ADR 0011): set a password on the acceptance user,
+// ride a login-issued session bearer, change under it, and watch logout
+// revoke it. Idempotent across runs: once the password exists, the set
+// step switches to the change flow with the same known password.
+const meJson = (await (await req("/me")).json()) as {
+  user: string;
+  password_set: boolean;
+};
+const pw = "acceptance-password-1";
+const loginReq = (body: Record<string, string>): Promise<Response> =>
+  fetch(`${base}/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+const firstSet = await req("/me/password", {
+  method: "PUT",
+  body: JSON.stringify(
+    meJson.password_set
+      ? { current_password: pw, new_password: pw }
+      : { new_password: pw },
+  ),
+});
+check("PUT /me/password sets or changes the password", firstSet.status === 200);
+const wrongLogin = await loginReq({
+  name: meJson.user,
+  password: "wrong-password-9",
+});
+check(
+  "POST /auth/login rejects a wrong password with invalid_credentials",
+  wrongLogin.status === 401 &&
+    ((await wrongLogin.json()) as { error?: string }).error ===
+      "invalid_credentials",
+);
+const login = await loginReq({ name: meJson.user, password: pw });
+const loginBody =
+  login.status === 200 ? ((await login.json()) as { token?: string }) : null;
+check(
+  "POST /auth/login mints a swsess_ session bearer",
+  login.status === 200 &&
+    typeof loginBody?.token === "string" &&
+    loginBody.token.startsWith("swsess_"),
+);
+const sessionMe = await fetch(`${base}/me`, {
+  headers: { authorization: `Bearer ${loginBody?.token ?? ""}` },
+});
+check(
+  "the session bearer verifies on GET /me and reports password_set",
+  sessionMe.status === 200 &&
+    ((await sessionMe.json()) as { password_set?: boolean }).password_set ===
+      true,
+);
+const logout = await fetch(`${base}/auth/logout`, {
+  method: "POST",
+  headers: { authorization: `Bearer ${loginBody?.token ?? ""}` },
+});
+check("POST /auth/logout answers 204", logout.status === 204);
+const afterLogout = await fetch(`${base}/me`, {
+  headers: { authorization: `Bearer ${loginBody?.token ?? ""}` },
+});
+check("a logged-out session bearer reads as 401", afterLogout.status === 401);
+
 // 7. Audit trail (ADR 0007): the note lifecycle above must be traceable, the
 // operator can page and filter the log, and non-admins cannot read it. Runs
 // only when the server was booted with an operator bypass token.

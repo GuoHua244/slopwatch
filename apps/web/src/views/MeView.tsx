@@ -129,6 +129,114 @@ const LlmCard = ({ me, onChanged }: { me: MeInfo; onChanged: () => void }) => {
 };
 
 /**
+ * ADR 0011: the user's password sign-in. Setting it (first time) or
+ * changing it (current required) both revoke the other sessions server-
+ * side, so a changed password actually locks other browsers out.
+ */
+const PasswordCard = ({
+  me,
+  onChanged,
+}: {
+  me: MeInfo;
+  onChanged: () => void;
+}) => {
+  const api = useState(() => createReviewApi(storedToken))[0];
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const { formError, setFormError, notice, setNotice, run } =
+    useFormFeedback(onChanged);
+  const hasPassword = me.password_set;
+
+  const save = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (next.length < 8) {
+      setFormError("The new password needs at least 8 characters.");
+      return;
+    }
+    if (next !== confirm) {
+      setFormError("The two passwords do not match.");
+      return;
+    }
+    if (hasPassword && !current) {
+      setFormError("Enter your current password to change it.");
+      return;
+    }
+    void run(async () => {
+      await api.setPassword({
+        new_password: next,
+        ...(hasPassword ? { current_password: current } : {}),
+      });
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+      setNotice(
+        hasPassword
+          ? "Password changed — your other sign-in sessions were signed out."
+          : "Password set — next time you can sign in with your user name.",
+      );
+    });
+  };
+
+  return (
+    <div className="panel-card">
+      <div className="card-head">
+        <h3 className="card-title">
+          {hasPassword ? "Password" : "Set a password"}
+        </h3>
+        <span className={`settings-status ${hasPassword ? "live" : "off"}`}>
+          {hasPassword ? "Password sign-in on" : "Token-only sign-in"}
+        </span>
+      </div>
+      <p className="card-lede">
+        {hasPassword
+          ? "You can sign in with your user name and password. Changing it signs your other browsers out; this one stays."
+          : "You sign in with an API token today. Set a password and from then on your user name is all you need — the token stays for tools and scripts."}
+      </p>
+      <form className="settings-form llm-form" onSubmit={save}>
+        {hasPassword && (
+          <label className="field wide">
+            <span>Current password</span>
+            <input
+              type="password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
+        )}
+        <label className="field">
+          <span>New password</span>
+          <input
+            type="password"
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            placeholder="8+ characters"
+            autoComplete="new-password"
+          />
+        </label>
+        <label className="field">
+          <span>Repeat it</span>
+          <input
+            type="password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            autoComplete="new-password"
+          />
+        </label>
+        <div className="field actions">
+          <button className="primary" type="submit">
+            {hasPassword ? "Change password" : "Set password"}
+          </button>
+        </div>
+      </form>
+      {formError && <p className="banner-error">{formError}</p>}
+      {notice && <p className="dim">{notice}</p>}
+    </div>
+  );
+};
+
+/**
  * The "me" page (profile): everything that belongs to the signed-in user —
  * identity, role, team, their lifetime footprint, and the one sign-out — in
  * one view. Every identity/auth affordance in the product lives here.
@@ -240,14 +348,17 @@ export const MeView = ({ onSignOut }: { onSignOut: () => void }) => {
 
       <LlmCard me={me} onChanged={() => setVersion((v) => v + 1)} />
 
+      <PasswordCard me={me} onChanged={() => setVersion((v) => v + 1)} />
+
       <div className="panel-card">
         <div className="card-head">
           <h3 className="card-title">Account</h3>
         </div>
         <p className="card-lede">
-          You are signed in with a user token kept in this browser's
-          localStorage only. Tokens are minted by an admin on the Admin → Users
-          page; ask one if you need a new one.
+          You are signed in with a credential kept in this browser's
+          localStorage only — a password session, or an API token minted by an
+          admin on the Admin → Users page (tools and scripts keep using the
+          token). Ask an admin if you need a new one.
         </p>
         <button
           className="signout"

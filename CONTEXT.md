@@ -53,8 +53,12 @@ A normalized record a **Listener** produces and ships to the **Server** — the 
 _Avoid_: message, payload, wire format, record.
 
 **Issuer**:
-Whoever minted a bearer token: the **Server** (admin-minted, stored hashed in `tokens`) or the org's OIDC IdP (verified against its published JWKS, ADR 0005). The token's wire shape is the same either way — a Listener can never tell which Issuer stood behind it.
+Whoever minted a bearer token: the **Server** (admin-minted tokens stored hashed in `tokens`, and password-login **Auth sessions** stored hashed in `auth_sessions`) or the org's OIDC IdP (verified against its published JWKS, ADR 0005). The token's wire shape is the same either way — a Listener can never tell which Issuer stood behind it.
 _Avoid_: SSO, identity provider without naming which Issuer.
+
+**Auth session**:
+One password sign-in's revocable bearer (ADR 0011): minted by the **Server** when a **User** signs in with user name and password, stored hashed in `auth_sessions`, and revoked by logout, by a password change, or by the admin password reset. It rides every request like any token; admin-minted API tokens and Auth sessions differ only in prefix and lifecycle.
+_Avoid_: session (that means a captured coding-agent **Session**), cookie (there are none), login (that is the act, not the credential).
 
 **Summary**:
 A rolling digest of a **Session**'s progress so far, folded by the **Listener** at each session end and shipped as an **Event** — the LLM call itself executes on the **Server** with the **User**'s own LLM credentials, the same per-user config a **Retrospective** runs on (decision 28), so a User who has not configured credentials gets no Summary at all. A reading aid for someone joining mid-run, never evidence of what happened.
@@ -75,6 +79,7 @@ _Avoid_: bug report (it also carries feature suggestions), issue (implies a trac
 ## Relationships
 
 - A **User**'s **Role** decides what they may see: admins get the admin plane and the org-wide read; members get their own **Sessions** only.
+- A **User** signs in with a password once one is set (ADR 0011); before that — and after an admin password reset — the issued token opens the token door, and a token sign-in invites the User to set a password.
 - A **User** belongs to exactly one **Team**; membership can change over time.
 - A **Session** is attributed to the **Team** its **User** belonged to when the Session was created; later membership changes do not move existing Sessions.
 - A **Session** contains a DAG of **Turns**; most agents produce a linear DAG, Pi can branch.

@@ -11,6 +11,15 @@ const scriptedStore = (
 ): Store =>
   ({
     resolveTokenUser: async () => null,
+    resolveAuthSession: async () => null,
+    getPasswordAuth: async () => null,
+    setPasswordHash: async () => false,
+    clearPassword: async () => false,
+    createAuthSession: async () => {
+      throw new Error("not scripted");
+    },
+    revokeAuthSession: async () => false,
+    revokeAllAuthSessions: async () => 0,
     roleOf: async () => "member" as const,
     getUser: async () => null,
     getLlmConfig: async () => null,

@@ -423,6 +423,23 @@ export const handleAdmin = async (
     }
   }
 
+  // ADR 0011: clear a user's password and kill their sessions — the admin
+  // reset when someone loses both. The user re-initializes with a minted
+  // token (sign-in page's token door) and sets a new password.
+  const passwordMatch = url.pathname.match(
+    /^\/admin\/users\/([^/]+)\/password$/,
+  );
+  if (passwordMatch && req.method === "DELETE") {
+    const name = decodeParam(passwordMatch[1]!);
+    if (name === null) return json(400, { error: "malformed user name" });
+    if (await store.clearPassword(name)) {
+      await store.revokeAllAuthSessions(name);
+      await audit(adminActor, "auth.password.clear", name);
+      return json(200, { ok: true });
+    }
+    return json(404, { error: "no such user" });
+  }
+
   const tokensMatch = url.pathname.match(/^\/admin\/users\/([^/]+)\/tokens$/);
   if (tokensMatch) {
     const name = decodeParam(tokensMatch[1]!);

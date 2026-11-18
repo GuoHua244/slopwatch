@@ -60,6 +60,12 @@ export type MeInfo = {
   email: string | null;
   team_name: string | null;
   is_dri: boolean;
+  /**
+   * ADR 0011: whether password sign-in is available — false until the user
+   * sets a password (first sign-in is via token), so the profile page and
+   * the sign-in gate know which door to offer.
+   */
+  password_set: boolean;
   created_at: string | null;
   /**
    * ADR 0008: the user's own LLM credentials for retrospectives — masked
@@ -163,6 +169,8 @@ export type AdminUserRow = {
   role: "admin" | "member";
   created_at: string;
   active_tokens: number;
+  /** ADR 0011: whether password sign-in is available to this user. */
+  password_set: boolean;
   team_id: string | null;
   team_name: string | null;
 };

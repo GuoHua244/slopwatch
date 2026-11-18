@@ -29,6 +29,7 @@ const memStore = () => {
       created_at: string;
       team_id?: string | null;
       team_name?: string | null;
+      password_hash?: string | null;
     }
   >();
   const tokens = new Map<
@@ -65,6 +66,9 @@ const memStore = () => {
     active_tokens: [...tokens.values()].filter(
       (t) => t.user === name && t.revoked_at === null,
     ).length,
+    password_set:
+      users.get(name)!.password_hash !== null &&
+      users.get(name)!.password_hash !== undefined,
     team_id: users.get(name)!.team_id ?? null,
     team_name: users.get(name)!.team_name ?? null,
   });
@@ -303,6 +307,30 @@ const memStore = () => {
       }
       return null;
     },
+    resolveAuthSession: async () => null,
+    getPasswordAuth: async (name) => {
+      const u = users.get(name);
+      if (!u) return null;
+      return { passwordHash: u.password_hash ?? null, disabled: u.disabled };
+    },
+    setPasswordHash: async (name, hash) => {
+      const u = users.get(name);
+      if (!u) return false;
+      u.password_hash = hash;
+      return true;
+    },
+    clearPassword: async (name) => {
+      const u = users.get(name);
+      if (!u) return false;
+      u.password_hash = null;
+      return true;
+    },
+    createAuthSession: async (userName) => ({
+      token: `swsess_${crypto.randomUUID()}`,
+      session_id: "session",
+    }),
+    revokeAuthSession: async () => false,
+    revokeAllAuthSessions: async () => 0,
     resolveOidcUser: async () => null,
     markReviewed: async () => null,
     unmarkReviewed: async () => false,

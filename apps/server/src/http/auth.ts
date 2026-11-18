@@ -34,7 +34,8 @@ export type Auth = {
 
 /**
  * Token resolution for one app instance: env tokens first (v0 bootstrap),
- * then admin-minted tokens (decision 6), then IdP-issued JWTs (ADR 0005).
+ * then admin-minted tokens (decision 6), then password-login sessions
+ * (ADR 0011), then IdP-issued JWTs (ADR 0005).
  */
 export const createAuth = ({
   tokens,
@@ -57,6 +58,8 @@ export const createAuth = ({
       if (row?.disabled) return null;
       return minted;
     }
+    const session = await store.resolveAuthSession(bearer);
+    if (session !== null) return session;
     const identity = oidc === undefined ? null : await oidc.verify(bearer);
     if (identity === null) return null;
     return store.resolveOidcUser(identity);

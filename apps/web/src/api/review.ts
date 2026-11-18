@@ -9,6 +9,15 @@ import type { CommentRow, MeInfo, ReviewRow } from "./types";
 
 export type ReviewApi = {
   me(): Promise<MeInfo>;
+  /**
+   * ADR 0011: set the caller's password (first time) or change it (the
+   * server requires current_password when one already exists). Other
+   * sign-in sessions are revoked server-side.
+   */
+  setPassword(body: {
+    new_password: string;
+    current_password?: string;
+  }): Promise<void>;
   /** Org-wide read: the session's review marker, or null when unreviewed. */
   review(sessionId: string): Promise<ReviewRow | null>;
   /** DRI-only server-side; 403 surfaces as ApiError for non-DRIs. */
@@ -37,6 +46,9 @@ export const createReviewApi = (
   return {
     me: async () =>
       unwrapJson<MeInfo>(doFetch, "/me", auth({ method: "GET" }), "GET"),
+    setPassword: async (body) => {
+      await unwrapJson(doFetch, "/me/password", authedJson("PUT", body), "PUT");
+    },
     review: async (sessionId) =>
       (
         await getJson<{ review: ReviewRow | null }>(

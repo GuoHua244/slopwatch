@@ -71,6 +71,15 @@ const auditStore = (
     listTokens: async () => [],
     revokeToken: async () => false,
     resolveTokenUser: async () => null,
+    resolveAuthSession: async () => null,
+    getPasswordAuth: async () => null,
+    setPasswordHash: async () => false,
+    clearPassword: async () => false,
+    createAuthSession: async () => {
+      throw new Error("not scripted");
+    },
+    revokeAuthSession: async () => false,
+    revokeAllAuthSessions: async () => 0,
     resolveOidcUser: async () => null,
     markReviewed: async () => {
       throw new Error("not scripted");
@@ -162,18 +171,20 @@ const req = (
     }),
   );
 
-const userRow = (over: Partial<AdminUserRow> = {}): AdminUserRow => ({
-  name: "bob",
-  email: null,
-  disabled: false,
-  is_dri: false,
-  role: "member",
-  created_at: "2026-09-01T00:00:00.000Z",
-  active_tokens: 0,
-  team_id: null,
-  team_name: null,
-  ...over,
-});
+const userRow = (over: Partial<AdminUserRow> = {}): AdminUserRow =>
+  ({
+    name: "bob",
+    email: null,
+    disabled: false,
+    is_dri: false,
+    role: "member",
+    created_at: "2026-09-01T00:00:00.000Z",
+    active_tokens: 0,
+    password_set: false,
+    team_id: null,
+    team_name: null,
+    ...over,
+  }) as AdminUserRow;
 
 describe("audit trail (in memory)", () => {
   test("admin user create is attributed to the acting admin", async () => {

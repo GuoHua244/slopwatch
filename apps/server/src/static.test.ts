@@ -81,6 +81,15 @@ const refusingStore = (): Store => ({
     throw new Error("store must not be touched");
   },
   resolveTokenUser: async () => null,
+  resolveAuthSession: async () => null,
+  getPasswordAuth: async () => null,
+  setPasswordHash: async () => false,
+  clearPassword: async () => false,
+  createAuthSession: async () => {
+    throw new Error("not scripted");
+  },
+  revokeAuthSession: async () => false,
+  revokeAllAuthSessions: async () => 0,
   resolveOidcUser: async () => null,
   markReviewed: () => {
     throw new Error("store must not be touched");

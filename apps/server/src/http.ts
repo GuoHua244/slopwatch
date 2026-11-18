@@ -7,6 +7,15 @@ import { handleAdmin } from "./http/admin";
 import { createAudit, type Audit } from "./http/audit";
 import { createAuth, type Auth, type Reader } from "./http/auth";
 import { parseFeedbackForm } from "./http/feedback";
+import {
+  createLoginGuard,
+  DEFAULT_LOGIN_GUARD,
+  handleAuthLogin,
+  handleAuthLogout,
+  handleMePassword,
+  type LoginGuard,
+  type LoginGuardConfig,
+} from "./http/password";
 import { attachmentResponse, HttpError, json, text } from "./http/respond";
 import { staticFile, staticResponse } from "./http/static";
 import {
@@ -76,6 +85,12 @@ export type AppOptions = {
    * (tests), both answer 503.
    */
   summaryFold?: SummaryFold;
+  /**
+   * ADR 0011: POST /auth/login's per-name failure throttling. Tests pass a
+   * tighter config to exercise the lockout quickly; production uses the
+   * default (10 failures, 15-minute lockout).
+   */
+  loginGuard?: LoginGuardConfig;
 };
 
 /** Everything a route handler needs beyond the request itself. */
@@ -89,6 +104,7 @@ type RouteContext = {
   audit: Audit;
   retrospectives?: RetroQueue;
   summaryFold?: SummaryFold;
+  guard: LoginGuard;
 };
 
 /** Masked form of a stored LLM api key — the only shape any read returns. */
@@ -140,6 +156,7 @@ const route = async (
     audit,
     retrospectives,
     summaryFold,
+    guard,
   }: RouteContext,
 ): Promise<Response> => {
   if (url.pathname === "/healthz") return json(200, { ok: true });
@@ -481,6 +498,23 @@ const route = async (
     return json(200, { teams: await store.teamsWithMembers() });
   }
 
+  // --- Password sign-in (ADR 0011): the human-facing door. /auth/login
+  // is anonymous by design — it *is* the authentication. /auth/logout
+  // revokes the bearer's session when it is one; PUT /me/password sets or
+  // changes the caller's password. ---
+  if (url.pathname === "/auth/login" && req.method === "POST") {
+    return handleAuthLogin(req, { store, guard, audit });
+  }
+  if (url.pathname === "/auth/logout" && req.method === "POST") {
+    return handleAuthLogout(req, store);
+  }
+  if (url.pathname === "/me/password" && req.method === "PUT") {
+    return handleMePassword(req, await auth.requireReader(req), {
+      store,
+      audit,
+    });
+  }
+
   // --- Read-plane identity: GET /me — the signed-in user plus their
   // lifetime footprint, the one payload the profile page needs. First
   // sight also provisions the users row, so env-token users become
@@ -507,6 +541,9 @@ const route = async (
       email: row?.email ?? null,
       team_name: row?.team_name ?? null,
       is_dri: row?.is_dri ?? false,
+      // ADR 0011: the sign-in page offers password sign-in only when the
+      // user has one; the profile page and the admin panel read this too.
+      password_set: row?.password_set ?? false,
       created_at: row?.created_at ?? null,
       llm:
         credentials === null
@@ -766,28 +803,33 @@ export const createApp = ({
   oidc,
   retrospectives,
   summaryFold,
-}: AppOptions): App => ({
-  async fetch(req) {
-    const url = new URL(req.url);
-    const auth = createAuth({ tokens, store, oidc });
-    const audit = createAudit(store);
-    try {
-      return await route(req, url, {
-        store,
-        staticRoot,
-        adminToken,
-        archive,
-        defaultRawTtlDays,
-        auth,
-        audit,
-        retrospectives,
-        summaryFold,
-      });
-    } catch (e) {
-      // Guards throw prebuilt responses for the auth/400 prologues; anything
-      // else keeps escaping exactly as before the guards existed.
-      if (e instanceof HttpError) return e.response;
-      throw e;
-    }
-  },
-});
+  loginGuard,
+}: AppOptions): App => {
+  const guard = createLoginGuard(loginGuard ?? DEFAULT_LOGIN_GUARD);
+  return {
+    async fetch(req) {
+      const url = new URL(req.url);
+      const auth = createAuth({ tokens, store, oidc });
+      const audit = createAudit(store);
+      try {
+        return await route(req, url, {
+          store,
+          staticRoot,
+          adminToken,
+          archive,
+          defaultRawTtlDays,
+          auth,
+          audit,
+          retrospectives,
+          summaryFold,
+          guard,
+        });
+      } catch (e) {
+        // Guards throw prebuilt responses for the auth/400 prologues; anything
+        // else keeps escaping exactly as before the guards existed.
+        if (e instanceof HttpError) return e.response;
+        throw e;
+      }
+    },
+  };
+};

@@ -16,6 +16,7 @@ import type { AdminUserRow, MeUsage, Role, Store } from "./types";
 const USER_SELECT = `
   SELECT u.name, u.email, u.disabled, u.is_dri, u.role, u.created_at,
          u.team_id, t.name AS team_name,
+         u.password_hash IS NOT NULL AS password_set,
          (SELECT COUNT(*) FROM tokens t2 WHERE t2.user_name = u.name AND t2.revoked_at IS NULL) AS active_tokens
   FROM users u LEFT JOIN teams t ON t.id = u.team_id`;
 

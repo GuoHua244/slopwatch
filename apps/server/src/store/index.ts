@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import { auditMethods } from "./audit";
+import { authSessionMethods } from "./auth-sessions";
 import type { PgCtx } from "./db";
 import { feedbackMethods } from "./feedback";
 import { quarantineMethods } from "./quarantine";
@@ -60,6 +61,7 @@ export const createPgStore = (databaseUrl: string): Store => {
     ...quarantineMethods(ctx),
     ...settingsMethods(ctx),
     ...retrospectiveMethods(ctx),
+    ...authSessionMethods(ctx),
     async close() {
       await pool.end();
     },

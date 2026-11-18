@@ -61,6 +61,10 @@ Storage and rollup buckets stay UTC (v1 decision 18 stands). Daily aggregates re
 
 The rolling Summary's LLM call moves off the observed machine (ADR 0010): the listener ships the fold prompt to `POST /summary/fold`, and the Server executes it with the caller's own profile LLM credentials — the same config Retrospectives run on, so one place stores endpoint, model, key, and any plan-specific endpoint semantics. A user without credentials gets no summary at all (silent skip, digests kept). The per-machine `summary` config block and the install `--summary-*` flags are removed; ADR 0008's write-only key rule holds because the key never leaves the server.
 
+### 29. Password sign-in: the dashboard's human door, token-first
+
+The dashboard's only door was the pasted API token — right for listeners, hostile to humans (ADR 0011). `users.password_hash` (argon2id; NULL until set) and `POST /auth/login` add a user-name-and-password door that mints one revocable **Auth session** (`auth_sessions`, hashed, `swsess_` prefix) carried as an ordinary bearer — the wire shape, the localStorage contract, and the resolution order only grow. `PUT /me/password` (current required once set; every other session revoked), `POST /auth/logout`, and the admin reset `DELETE /admin/users/:name/password` complete the lifecycle. The sign-in gate shows the password door first and the token door for first sign-in and recovery, prompting a skippable password set on token sign-in; unknown/wrong/disabled all answer one `invalid_credentials` with equal argon2 work, and per-name failures throttle (10 → 15-minute lockout). Rejected: cookie sessions (would fork the bearer model), JWTs (revocation needs a table anyway), forced passwords (env-token and OIDC users must not be locked out).
+
 ---
 
 ## Out of scope for v2

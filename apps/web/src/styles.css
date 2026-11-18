@@ -1463,6 +1463,35 @@ ul.sessions ul.sessions.sub {
     radial-gradient(820px 460px at 50% -8%, #17222f 0%, transparent 62%) fixed,
     var(--bg);
 }
+/* The two doors (ADR 0011): password sign-in primary, token first-run secondary. */
+.auth-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 16px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.auth-tabs button {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  border-radius: 6px;
+  color: var(--dim);
+}
+.auth-tabs button.active {
+  background: var(--panel-2);
+  color: var(--text);
+  font-weight: 600;
+}
+.auth-skip {
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
 .auth-card {
   width: min(420px, 100%);
   background: var(--panel);

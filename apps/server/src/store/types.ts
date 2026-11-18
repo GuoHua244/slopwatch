@@ -38,6 +38,8 @@ export type AdminUserRow = {
   /** The user's one team (v2 decision 23); null until the admin assigns one. */
   team_id: string | null;
   team_name: string | null;
+  /** ADR 0011: whether password sign-in is available to this user. */
+  password_set: boolean;
 };
 
 /**
@@ -566,5 +568,39 @@ export type Store = {
   getLlmConfig(name: string): Promise<LlmConfig | null>;
   setLlmConfig(name: string, config: LlmConfig): Promise<void>;
   clearLlmConfig(name: string): Promise<void>;
+  /**
+   * ADR 0011: the password-login plane. The hash is set/cleared verbatim by
+   * the handler layer (it owns hashing); the store never hashes.
+   */
+  /** One user's credential state: null when the user does not exist. */
+  getPasswordAuth(
+    name: string,
+  ): Promise<{ passwordHash: string | null; disabled: boolean } | null>;
+  /** Store a password hash; false when the user does not exist. */
+  setPasswordHash(name: string, hash: string): Promise<boolean>;
+  /** Clear a password hash (admin reset); false when the user does not exist. */
+  clearPassword(name: string): Promise<boolean>;
+  /**
+   * Mint one password-login session for the user. The plaintext token
+   * appears exactly once, in the return.
+   */
+  createAuthSession(userName: string): Promise<{
+    token: string;
+    session_id: string;
+  }>;
+  /**
+   * Session bearer → user name; null for unknown, revoked, or disabled.
+   * Also refreshes `last_seen_at` when it has gone stale (one round trip).
+   */
+  resolveAuthSession(token: string): Promise<string | null>;
+  /** Revoke one session bearer; false when it was unknown or already revoked. */
+  revokeAuthSession(token: string): Promise<boolean>;
+  /**
+   * Revoke every session of one user — on password change or admin reset.
+   * `exceptHash` spares the caller's own session when the change is made
+   * from one (a token bearer spares nothing, by hash non-match).
+   * Returns the number of sessions revoked.
+   */
+  revokeAllAuthSessions(userName: string, exceptHash?: string): Promise<number>;
   close(): Promise<void>;
 };

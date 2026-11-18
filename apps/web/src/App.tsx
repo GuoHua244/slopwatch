@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { createReviewApi } from "./api";
+import { createAuthApi, createReviewApi } from "./api";
 import { clearToken, storedToken } from "./auth";
 import { useSessions } from "./hooks/useSessions";
 import { useTeams } from "./hooks/useTeams";
@@ -69,6 +69,10 @@ export const App = () => {
       sessionId={sessionId}
       userId={userId}
       onSignOut={() => {
+        // ADR 0011: a password session dies server-side too; a token
+        // bearer is a harmless no-op. Best-effort either way.
+        const token = storedToken();
+        if (token) void createAuthApi().logout(token);
         clearToken();
         setAuth({ status: "anon" });
       }}

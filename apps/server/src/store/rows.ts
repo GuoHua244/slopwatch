@@ -29,6 +29,20 @@ export const mintTokenValue = (): {
   return { token, hash: hashToken(token), hint: token.slice(0, 10) };
 };
 
+/**
+ * A password-login session's bearer (ADR 0011). Same hash discipline as
+ * tokens — only the `swsess_` prefix distinguishes it on the wire, which
+ * keeps resolution order unambiguous.
+ */
+export const mintSessionValue = (): {
+  token: string;
+  hash: string;
+  sessionId: string;
+} => {
+  const token = `swsess_${randomBytes(24).toString("hex")}`;
+  return { token, hash: hashToken(token), sessionId: crypto.randomUUID() };
+};
+
 /** The full session-row SELECT list, shared by listSessions and getSession. */
 export const SESSION_COLUMNS =
   "session_id, agent, user_id, team_id, first_seen_at, last_event_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens, parent_session_id";
@@ -44,6 +58,8 @@ export const pgUserRow = (r: Record<string, unknown>): AdminUserRow => ({
   role: asRole(r.role),
   created_at: iso(r.created_at),
   active_tokens: Number(r.active_tokens ?? 0),
+  /** ADR 0011: whether password sign-in is available to this user. */
+  password_set: r.password_set === true,
   team_id: (r.team_id as string | null) ?? null,
   team_name: (r.team_name as string | null) ?? null,
 });

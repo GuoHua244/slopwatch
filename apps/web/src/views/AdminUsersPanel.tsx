@@ -119,6 +119,10 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
             Token minted{minted.label ? ` (${minted.label})` : ""} — copy it
             now, it is shown once:
             <div className="secret">{minted.token}</div>
+            <span className="dim">
+              Hand it to the user: they sign in once on the sign-in page's "Use
+              a token" door, then set their own password.
+            </span>
             <button onClick={() => setMinted(null)}>Hide</button>
           </div>
         )}
@@ -137,6 +141,9 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
                   title="API access tokens minted for this user (not LLM usage)"
                 >
                   API tokens
+                </th>
+                <th title="Whether the user can sign in with a user name and password (ADR 0011)">
+                  Password
                 </th>
                 <th>Created</th>
                 <th className="actions">Actions</th>
@@ -191,6 +198,13 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
                     {u.is_dri ? <span className="tag tag-dim">dri</span> : "—"}
                   </td>
                   <td className="num">{u.active_tokens}</td>
+                  <td>
+                    {u.password_set ? (
+                      <span className="tag tag-live">set</span>
+                    ) : (
+                      <span className="dim">token only</span>
+                    )}
+                  </td>
                   <td className="mono">{clock(u.created_at)}</td>
                   <td className="actions">
                     <button
@@ -236,6 +250,15 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
                     <button onClick={() => void toggleTokens(u)}>
                       API tokens
                     </button>
+                    {u.password_set && (
+                      <ConfirmButton
+                        className="danger"
+                        message={`Clear ${u.name}'s password? They must sign in with a token once and set a new one.`}
+                        onClick={() => run(() => api.clearPassword(u.name))}
+                      >
+                        Clear password
+                      </ConfirmButton>
+                    )}
                     <ConfirmButton
                       className="danger"
                       message={`Delete user "${u.name}" and all their tokens?`}
@@ -248,7 +271,7 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
                 ...(mintFor === u.name
                   ? [
                       <tr key={`${u.name}-mint`} className="token-row">
-                        <td colSpan={9}>
+                        <td colSpan={10}>
                           <form
                             className="admin-form"
                             onSubmit={(e) => {
@@ -280,7 +303,7 @@ export const AdminUsersPanel = ({ api, user, refreshKey, refresh }: Props) => {
                 ...(openTokens[u.name]
                   ? [
                       <tr key={`${u.name}-tokens`} className="token-row">
-                        <td colSpan={9}>
+                        <td colSpan={10}>
                           {openTokens[u.name]!.length === 0
                             ? "No tokens minted yet."
                             : openTokens[u.name]!.map((t) => (

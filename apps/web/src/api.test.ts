@@ -409,6 +409,7 @@ describe("createReviewApi", () => {
       email: "dri@corp.dev",
       team_name: "platform",
       is_dri: true,
+      password_set: false,
       created_at: "2026-09-01T00:00:00.000Z",
       llm: null,
       usage: {

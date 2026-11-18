@@ -60,6 +60,15 @@ const scriptedStore = (): Store & { calls: string[] } => {
     listTokens: async () => [],
     revokeToken: async () => false,
     resolveTokenUser: async () => null,
+    resolveAuthSession: async () => null,
+    getPasswordAuth: async () => null,
+    setPasswordHash: async () => false,
+    clearPassword: async () => false,
+    createAuthSession: async () => {
+      throw new Error("not scripted");
+    },
+    revokeAuthSession: async () => false,
+    revokeAllAuthSessions: async () => 0,
     resolveOidcUser: async () => null,
     markReviewed: async () => null,
     unmarkReviewed: async () => false,
