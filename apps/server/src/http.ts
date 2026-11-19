@@ -33,6 +33,7 @@ import {
   effectiveRetroAngles,
 } from "./retrospective/presets";
 import type { RetroQueue } from "./retrospective/queue";
+import { handleMcp } from "./mcp";
 import type { WeeklyRunner } from "./weekly";
 import { buildTranscript, failureRawSeqs } from "./retrospective/transcript";
 import type { SummaryFold } from "./summary-fold";
@@ -543,6 +544,20 @@ const route = async (
           : undefined;
       return json(200, { report: await weekly.generate(reader.user, teamId) });
     }
+  }
+
+  // v3 decision 37: the read-only MCP endpoint — one JSON-RPC request per
+  // POST, the reader's bearer carrying, member scoping inherited verbatim.
+  if (url.pathname === "/mcp" && req.method === "POST") {
+    const reader = await auth.requireReader(req);
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return json(400, { error: "invalid json" });
+    }
+    const result = await handleMcp(store, reader, body);
+    return json(result.status, result.body);
   }
 
   // --- Password sign-in (ADR 0011): the human-facing door. /auth/login

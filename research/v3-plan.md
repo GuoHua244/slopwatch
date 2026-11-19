@@ -1,6 +1,6 @@
 # Slopwatch v3 Plan — Observability Depth
 
-**Status: IN PROGRESS (2026-11-20).** Seven features adopted from the feature survey, ordered by dependency: the waste metrics feed the leaderboard, the alerts, and the weekly report; the MCP server lands last so it can expose everything else. Decision numbering continues the ledger: 1–19 in [`v1-architecture-decisions.md`](./v1-architecture-decisions.md), 20–30 in [`v2-plan.md`](./v2-plan.md). The "quick wins" from the survey (retro prompt i18n, npm packaging, Codex listener v1 leftovers) stay out of scope here.
+**Status: SHIPPED (2026-11-20).** Seven features adopted from the feature survey, ordered by dependency: the waste metrics feed the leaderboard, the alerts, and the weekly report; the MCP server lands last so it can expose everything else. Decision numbering continues the ledger: 1–19 in [`v1-architecture-decisions.md`](./v1-architecture-decisions.md), 20–30 in [`v2-plan.md`](./v2-plan.md). The "quick wins" from the survey (retro prompt i18n, npm packaging, Codex listener v1 leftovers) stay out of scope here.
 
 Goal: deepen what the captured stream can answer. v1/v2 answered "who spent what when"; v3 answers "how well was the work done" (waste metrics, waterfall, model comparison, commit correlation), "when should someone look" (alerts), and "what happened this week" (weekly report) — plus a machine-readable read surface (MCP) so agents can ask the same questions.
 
@@ -10,7 +10,7 @@ Goal: deepen what the captured stream can answer. v1/v2 answered "who spent what
 - [x] 34. Session ↔ commit correlation — git commits extracted from tool calls
 - [x] 35. Model comparison view — two-model observational comparison
 - [x] 36. Team weekly report — LLM weekly retrospective over team rollups
-- [ ] 37. Read-only MCP server — token-gated tools over the org's own data
+- [x] 37. Read-only MCP server — token-gated tools over the org's own data
 
 ---
 

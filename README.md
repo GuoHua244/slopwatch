@@ -16,8 +16,20 @@ has a token door that also walks a first-time user through setting their own
 password.
 
 See [`research/v1-architecture-decisions.md`](./research/v1-architecture-decisions.md),
-[`research/v2-plan.md`](./research/v2-plan.md), and
+[`research/v2-plan.md`](./research/v2-plan.md),
+[`research/v3-plan.md`](./research/v3-plan.md), and
 [`CONTEXT.md`](./CONTEXT.md) for the architecture and glossary.
+
+## MCP endpoint
+
+The Server exposes a read-only
+[MCP](https://modelcontextprotocol.io) endpoint at `POST /mcp` (streamable
+HTTP, one JSON-RPC request per call, your existing bearer token as the
+credential). Tools: `get_session`, `list_recent_sessions`,
+`list_session_events`, `list_session_commits`, `get_usage` — all read-only,
+scoped exactly like the dashboard (members see only their own rows; admins
+read org-wide). Point any MCP client at `http://<server>:8787/mcp` with the
+`Authorization: Bearer` header.
 
 ## Layout
 
