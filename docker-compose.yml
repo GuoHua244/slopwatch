@@ -28,6 +28,16 @@ services:
       # by design (see config.ts).
       SLOPWATCH_OIDC_ISSUER: ${SLOPWATCH_OIDC_ISSUER:-}
       SLOPWATCH_OIDC_AUDIENCE: ${SLOPWATCH_OIDC_AUDIENCE:-}
+      # v2 decision 30: session-open activation — each touch of a Codex
+      # thread-writer lock bumps the session's activity clock. The mount
+      # below shares the host's locks read-only; on hosts without Codex the
+      # directory is empty/missing and the watcher disables itself.
+      CODEX_LOCKS_DIR: /codex-locks
+    volumes:
+      # ${USERPROFILE} resolves on Windows/Docker Desktop hosts (the box that
+      # runs Codex); elsewhere the /nonexistent fallback mounts an empty
+      # directory, which is harmless.
+      - ${USERPROFILE:-/nonexistent}/.codex/thread-writer-locks:/codex-locks:ro
     depends_on:
       db:
         condition: service_healthy

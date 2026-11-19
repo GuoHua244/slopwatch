@@ -52,6 +52,20 @@ ledgers: 1–19 in
    the dashboard loads at `http://<host>:8787/` (anonymous until sign-in —
    every read needs a bearer token, decision 22).
 
+### Session-open activation (decision 30, optional)
+
+On the host that runs Codex, the Server can follow the user's attention:
+opening a historical thread in the Codex app touches
+`~/.codex/thread-writer-locks/<thread-uuid>.lock` — the only signal the app
+emits (see `listeners/codex/SPEC.md`). The compose file mounts that directory
+read-only (`${USERPROFILE:-/nonexistent}/.codex/thread-writer-locks` →
+`/codex-locks`) and sets `CODEX_LOCKS_DIR=/codex-locks`; each observed touch
+bumps the session's `last_event_at`, so the dashboard's live dot and
+newest-first order follow the click. On a host without Codex the mount is
+empty and the watcher disables itself with one boot warning. Windows bind
+mounts may not propagate `fs.watch` events — the watcher's 30s poll carries
+the signal instead, so activation latency is bounded by that poll.
+
 ## Automated deploys
 
 This host deploys itself: `.github/workflows/deploy.yml` fires after every
