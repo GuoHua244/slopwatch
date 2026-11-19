@@ -6,6 +6,7 @@ import { createPgStore } from "./store";
 import { createS3Client } from "./s3";
 import { codexLocksDir, createCodexLockWatcher } from "./thread-locks";
 import { createOidcVerifier } from "./oidc";
+import { createWeeklyRunner } from "./weekly";
 import { fileURLToPath } from "node:url";
 
 const config = loadConfig();
@@ -32,6 +33,7 @@ if (stale > 0)
   console.log(`marked ${stale} interrupted retrospective(s) failed`);
 const retrospectives = createRetroQueue(store);
 const summaryFold = createSummaryFold(store);
+const weekly = createWeeklyRunner(store);
 
 // The system pseudo-actor for audit entries the server itself causes (ADR
 // 0007) — boot provisioning and prune sweeps. Best-effort like every append.
@@ -127,6 +129,7 @@ const app = createApp({
   oidc,
   retrospectives,
   summaryFold,
+  weekly,
 });
 
 Bun.serve({

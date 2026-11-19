@@ -15,6 +15,7 @@ import { sessionMethods } from "./sessions";
 import { settingsMethods } from "./settings";
 import { teamMethods } from "./teams";
 import { userMethods } from "./users-tokens";
+import { weeklyMethods } from "./weekly";
 import type { Store } from "./types";
 
 export { NoSuchTeamError, TeamExistsError, UserExistsError } from "./errors";
@@ -45,6 +46,8 @@ export type {
   TeamInfo,
   TeamRow,
   UserHourlyRollupRow,
+  WeeklyData,
+  WeeklyReportRow,
 } from "./types";
 export type { Store } from "./types";
 
@@ -62,6 +65,7 @@ export const createPgStore = (databaseUrl: string): Store => {
     ...auditMethods(ctx),
     ...alertMethods(ctx),
     ...commitMethods(ctx),
+    ...weeklyMethods(ctx),
     ...quarantineMethods(ctx),
     ...settingsMethods(ctx),
     ...retrospectiveMethods(ctx),

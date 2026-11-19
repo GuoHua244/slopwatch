@@ -1,11 +1,12 @@
 import { storedToken } from "../auth";
-import { bearerAuth, defaultFetch, getJson, type FetchLike } from "./http";
+import { authedClient, defaultFetch, getJson, type FetchLike } from "./http";
 import type {
   RollupsSnapshot,
   SessionCommitRow,
   SessionSummary,
   StoredEvent,
   TeamInfo,
+  WeeklyReportRow,
 } from "./types";
 
 export type Api = {
@@ -21,6 +22,10 @@ export type Api = {
    * v3 decision 34: the git commits one session's tool calls made.
    */
   listCommits(sessionId: string): Promise<SessionCommitRow[]>;
+  /** v3 decision 36: stored team weekly reports, newest first. */
+  weeklyReports(): Promise<WeeklyReportRow[]>;
+  /** v3 decision 36: generate this week's report (admin-only server-side). */
+  generateWeeklyReport(teamId?: string): Promise<WeeklyReportRow>;
   /**
    * Decision 18: per-developer usage rollups. `days` lower-bounds the daily
    * windows (absent = all history); `hours` the hourly window (server
@@ -45,7 +50,7 @@ export const createApi = (
   doFetch: FetchLike = defaultFetch,
   getToken: () => string | null = storedToken,
 ): Api => {
-  const auth = bearerAuth(getToken);
+  const { auth, authedJson } = authedClient(getToken);
   return {
     listSessions: async (teamId, userId) => {
       const parts: string[] = [];
@@ -92,5 +97,21 @@ export const createApi = (
     },
     teams: async () =>
       (await getJson<{ teams: TeamInfo[] }>(doFetch, "/teams", auth())).teams,
+    weeklyReports: async () =>
+      (
+        await getJson<{ reports: WeeklyReportRow[] }>(
+          doFetch,
+          "/team-weekly",
+          auth(),
+        )
+      ).reports,
+    generateWeeklyReport: async (teamId) =>
+      (
+        await getJson<{ report: WeeklyReportRow }>(
+          doFetch,
+          "/team-weekly",
+          authedJson("POST", teamId === undefined ? {} : { team_id: teamId }),
+        )
+      ).report,
   };
 };

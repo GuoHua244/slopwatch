@@ -9,7 +9,7 @@ Goal: deepen what the captured stream can answer. v1/v2 answered "who spent what
 - [x] 33. Anomaly alerts — threshold checks pushed over the org webhook
 - [x] 34. Session ↔ commit correlation — git commits extracted from tool calls
 - [x] 35. Model comparison view — two-model observational comparison
-- [ ] 36. Team weekly report — LLM weekly retrospective over team rollups
+- [x] 36. Team weekly report — LLM weekly retrospective over team rollups
 - [ ] 37. Read-only MCP server — token-gated tools over the org's own data
 
 ---

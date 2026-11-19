@@ -18,6 +18,7 @@ import { SessionDetail } from "./views/SessionDetail";
 import { SessionList } from "./views/SessionList";
 import { Select } from "./views/Select";
 import { SignInGate, type Role } from "./views/SignIn";
+import { WeeklyReportView } from "./views/WeeklyReportView";
 
 /** Saved-token lifecycle: anon → checking (verifying against /me) → signed-in. */
 type AuthState =
@@ -224,6 +225,7 @@ const Dashboard = ({
                       re-sort, a row to open the developer's history.
                     </p>
                     <LeaderboardView sessions={feed.sessions} />
+                    <WeeklyReportView />
                   </>
                 )}
               </div>

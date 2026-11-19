@@ -2682,3 +2682,32 @@ ul.sessions ul.sessions.sub {
 .compare-lede {
   font-size: 12px;
 }
+
+/* --- v3 decision 36: the weekly report panel --- */
+.weekly-card {
+  border-top: 1px solid var(--line-soft);
+  margin-top: 10px;
+  padding-top: 12px;
+}
+.weekly-report {
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.weekly-report h1,
+.weekly-report h2,
+.weekly-report h3 {
+  font-size: 14px;
+  margin: 12px 0 4px;
+}
+.weekly-report table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin: 8px 0;
+}
+.weekly-report th,
+.weekly-report td {
+  border: 1px solid var(--line-soft);
+  padding: 4px 8px;
+  text-align: left;
+}

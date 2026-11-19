@@ -41,6 +41,18 @@ const refusingStore = (): Store => ({
   listSessionCommits: () => {
     throw new Error("store must not be touched");
   },
+  topSessionsByTokens: () => {
+    throw new Error("store must not be touched");
+  },
+  commitsSince: () => {
+    throw new Error("store must not be touched");
+  },
+  addWeeklyReport: () => {
+    throw new Error("store must not be touched");
+  },
+  listWeeklyReports: () => {
+    throw new Error("store must not be touched");
+  },
   getSetting: async () => null,
   setSetting: async () => {},
   clearSetting: async () => {},

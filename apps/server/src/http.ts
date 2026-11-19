@@ -33,6 +33,7 @@ import {
   effectiveRetroAngles,
 } from "./retrospective/presets";
 import type { RetroQueue } from "./retrospective/queue";
+import type { WeeklyRunner } from "./weekly";
 import { buildTranscript, failureRawSeqs } from "./retrospective/transcript";
 import type { SummaryFold } from "./summary-fold";
 import type { Store } from "./store";
@@ -87,6 +88,12 @@ export type AppOptions = {
    */
   summaryFold?: SummaryFold;
   /**
+   * v3 decision 36: the team weekly report runner. Present, GET/POST
+   * /team-weekly list and generate reports on the requesting admin's own
+   * LLM credentials; absent (tests), they answer 503.
+   */
+  weekly?: WeeklyRunner;
+  /**
    * ADR 0011: POST /auth/login's per-name failure throttling. Tests pass a
    * tighter config to exercise the lockout quickly; production uses the
    * default (10 failures, 15-minute lockout).
@@ -105,6 +112,7 @@ type RouteContext = {
   audit: Audit;
   retrospectives?: RetroQueue;
   summaryFold?: SummaryFold;
+  weekly?: WeeklyRunner;
   guard: LoginGuard;
 };
 
@@ -157,6 +165,7 @@ const route = async (
     audit,
     retrospectives,
     summaryFold,
+    weekly,
     guard,
   }: RouteContext,
 ): Promise<Response> => {
@@ -515,6 +524,27 @@ const route = async (
     return json(200, { teams: await store.teamsWithMembers() });
   }
 
+  // v3 decision 36: the team weekly report — an admin pull, billed to the
+  // requesting admin's own LLM credentials (ADR 0010), stored with the same
+  // snapshot discipline as the session retros.
+  if (url.pathname === "/team-weekly") {
+    const reader = await auth.requireReader(req);
+    if (reader.role !== "admin") return json(403, { error: "admin only" });
+    if (weekly === undefined)
+      return json(503, { error: "weekly reports are not enabled" });
+    if (req.method === "GET")
+      return json(200, { reports: await store.listWeeklyReports(20) });
+    if (req.method === "POST") {
+      const body = await readJsonOr400(req);
+      const rawTeam = (body as { team_id?: unknown }).team_id;
+      const teamId =
+        typeof rawTeam === "string" && rawTeam.trim() !== ""
+          ? rawTeam.trim()
+          : undefined;
+      return json(200, { report: await weekly.generate(reader.user, teamId) });
+    }
+  }
+
   // --- Password sign-in (ADR 0011): the human-facing door. /auth/login
   // is anonymous by design — it *is* the authentication. /auth/logout
   // revokes the bearer's session when it is one; PUT /me/password sets or
@@ -820,6 +850,7 @@ export const createApp = ({
   oidc,
   retrospectives,
   summaryFold,
+  weekly,
   loginGuard,
 }: AppOptions): App => {
   const guard = createLoginGuard(loginGuard ?? DEFAULT_LOGIN_GUARD);
@@ -839,6 +870,7 @@ export const createApp = ({
           audit,
           retrospectives,
           summaryFold,
+          weekly,
           guard,
         });
       } catch (e) {

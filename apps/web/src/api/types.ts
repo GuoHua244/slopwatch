@@ -111,6 +111,24 @@ export type RetroRow = {
 /** One selectable retrospective angle of GET /retrospectives/angles. */
 export type RetroAngleInfo = { id: string; title: string };
 
+/** v3 decision 36: one stored team weekly report. */
+export type WeeklyReportRow = {
+  id: number;
+  requested_by: string;
+  team_id: string | null;
+  since_day: string;
+  until_day: string;
+  status: "completed" | "failed";
+  result: string | null;
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  reasoning_tokens: number | null;
+  error: string | null;
+  created_at: string;
+};
+
 /** v3 decision 34: one git commit a session's tool call made. */
 export type SessionCommitRow = {
   session_id: string;

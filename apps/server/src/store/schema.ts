@@ -291,6 +291,28 @@ CREATE TABLE IF NOT EXISTS session_commits (
   PRIMARY KEY (session_id, tool_call_id)
 );
 CREATE INDEX IF NOT EXISTS session_commits_time ON session_commits (occurred_at DESC);
+-- v3 decision 36: one stored team weekly report per run — the assembled data
+-- and the resolved prompt ride with the row (the retros' snapshot discipline),
+-- so any report stays reproducible against exactly what produced it.
+CREATE TABLE IF NOT EXISTS weekly_reports (
+  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  requested_by    TEXT NOT NULL,
+  team_id         UUID,
+  since_day       TEXT NOT NULL,
+  until_day       TEXT NOT NULL,
+  data_snapshot   TEXT NOT NULL,
+  prompt_snapshot TEXT NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'completed',
+  result          TEXT,
+  model           TEXT,
+  input_tokens    BIGINT,
+  output_tokens   BIGINT,
+  cache_read_tokens BIGINT,
+  reasoning_tokens  BIGINT,
+  error           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS weekly_reports_created ON weekly_reports (created_at DESC);
 `;
 
 export const schemaMethods = ({ pool }: PgCtx): Pick<Store, "migrate"> => ({

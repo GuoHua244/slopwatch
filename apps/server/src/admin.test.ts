@@ -79,6 +79,25 @@ const memStore = () => {
     hourTokenTotal: async () => 0,
     hasAudit: async () => false,
     listSessionCommits: async () => [],
+    topSessionsByTokens: async () => [],
+    commitsSince: async () => [],
+    addWeeklyReport: async (row) => ({
+      id: 1,
+      requested_by: row.requested_by,
+      team_id: row.team_id,
+      since_day: row.since_day,
+      until_day: row.until_day,
+      status: row.status,
+      result: row.result,
+      model: row.model,
+      input_tokens: row.input_tokens,
+      output_tokens: row.output_tokens,
+      cache_read_tokens: row.cache_read_tokens,
+      reasoning_tokens: row.reasoning_tokens,
+      error: row.error,
+      created_at: "2026-01-01T00:00:00.000Z",
+    }),
+    listWeeklyReports: async () => [],
     appendEvents: async (events_: unknown[], userId) => {
       for (const e of events_ as { session_id: string }[]) {
         if (!seenSessions.has(e.session_id)) {

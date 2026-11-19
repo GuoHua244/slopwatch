@@ -36,6 +36,48 @@ export type SessionCommitRow = {
   occurred_at: string;
 };
 
+/** v3 decision 36: one stored team weekly report. */
+export type WeeklyReportRow = {
+  id: number;
+  requested_by: string;
+  team_id: string | null;
+  since_day: string;
+  until_day: string;
+  status: "completed" | "failed";
+  result: string | null;
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  reasoning_tokens: number | null;
+  error: string | null;
+  created_at: string;
+};
+
+/** The facts the weekly report's prompt is built from (v3 decision 36). */
+export type WeeklyData = {
+  sinceDay: string;
+  untilDay: string;
+  prevSinceDay: string;
+  prevUntilDay: string;
+  /** Per-user rollups for both weeks, split for the delta table. */
+  daily: DailyRollupRow[];
+  modelDaily: ModelRollupRow[];
+  topSessions: {
+    session_id: string;
+    title: string | null;
+    user_id: string | null;
+    agent: string;
+    tokens: number;
+  }[];
+  commits: {
+    sha: string | null;
+    subject: string | null;
+    user_id: string | null;
+    occurred_at: string;
+  }[];
+};
+
 /** Authorization role: admins manage the operator plane and read org-wide. */
 export type Role = "admin" | "member";
 
@@ -507,6 +549,36 @@ export type Store = {
   hasAudit(action: string, target: string): Promise<boolean>;
   /** v3 decision 34: the git commits one session's tool calls made. */
   listSessionCommits(sessionId: string): Promise<SessionCommitRow[]>;
+  /** v3 decision 36: the team weekly report plane. */
+  topSessionsByTokens(opts: {
+    sinceDay: string;
+    untilDay: string;
+    teamId?: string;
+    limit: number;
+  }): Promise<WeeklyData["topSessions"]>;
+  commitsSince(opts: {
+    sinceDay: string;
+    untilDay: string;
+    teamId?: string;
+    limit: number;
+  }): Promise<WeeklyData["commits"]>;
+  addWeeklyReport(row: {
+    requested_by: string;
+    team_id: string | null;
+    since_day: string;
+    until_day: string;
+    data_snapshot: string;
+    prompt_snapshot: string;
+    status: "completed" | "failed";
+    result: string | null;
+    model: string | null;
+    input_tokens: number | null;
+    output_tokens: number | null;
+    cache_read_tokens: number | null;
+    reasoning_tokens: number | null;
+    error: string | null;
+  }): Promise<WeeklyReportRow>;
+  listWeeklyReports(limit: number): Promise<WeeklyReportRow[]>;
   /** One session row — the snapshot an audit trail captures before a hard delete. */
   getSession(sessionId: string): Promise<SessionRow | null>;
   /** One review note by id, regardless of author — the preview for its own audit entry. */
