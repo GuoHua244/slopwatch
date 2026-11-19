@@ -36,6 +36,7 @@ export const sessionMethods = (
   | "backfillTokenTotals"
   | "backfillResponseText"
   | "getSession"
+  | "touchSession"
 > => {
   const { pool } = ctx;
   return {
@@ -427,6 +428,21 @@ export const sessionMethods = (
         [sessionId],
       );
       return rows[0] ? pgSessionRow(rows[0]) : null;
+    },
+
+    async touchSession(sessionId) {
+      // v2 decision 30: opening a thread in the Codex app touches its
+      // thread-writer lock — the server's lock watcher echoes that into the
+      // activity clock here. Deliberately not appendEvents: no synthetic
+      // event, no last_seq advance (the listeners' tail cursor), no rows for
+      // threads that were never captured. The 30s guard collapses rapid
+      // re-opens into one write; the agent guard keeps a codex thread uuid
+      // from bumping a foreign agent's session that collided on the id.
+      const { rowCount } = await pool.query(
+        "UPDATE sessions SET last_event_at = now() WHERE session_id = $1 AND agent = 'codex' AND (last_event_at IS NULL OR last_event_at < now() - interval '30 seconds')",
+        [sessionId],
+      );
+      return (rowCount ?? 0) > 0;
     },
   };
 };

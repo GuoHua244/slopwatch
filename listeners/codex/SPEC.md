@@ -105,6 +105,23 @@ exiting. Idle timeout (5 min) + max lifetime (4 h) are the fallback, same as
 the other listeners. `probeBeforeFold: false` (a SessionEnd hook exists, like
 Claude Code).
 
+## Session-open activation (server-side, v2 decision 30)
+
+Opening a historical thread in the Codex app fires no hook and appends
+nothing to the rollout — verified against the running app, the only
+observable change is the mtime touch of
+`<CODEX_HOME|~/.codex>/thread-writer-locks/<thread-uuid>.lock` (two live
+clicks each touched exactly their thread's lock; rollout, `session_index.jsonl`,
+and the sidebar read-state stayed put). The lock name is the thread uuid —
+the session id. The server optionally watches that directory (`CODEX_LOCKS_DIR`
+/`CODEX_HOME` override, the rollout-path convention) and echoes each observed
+touch into the session's `last_event_at` via `touchSession`, so the
+dashboard's live dot and newest-first order follow the user's attention — no
+synthetic event, no `last_seq` move, and no bump for threads never captured.
+The boot sweep records a baseline without bumping (restarts never replay old
+touches); a missing directory (decision 26 compose hosts) disables the
+watcher with one warning.
+
 ## Out of scope (v1)
 
 - Attachments (`input_image` items) — no machine-verified capture path yet.

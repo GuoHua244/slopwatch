@@ -4,6 +4,7 @@ import { createRetroQueue } from "./retrospective/queue";
 import { createSummaryFold } from "./summary-fold";
 import { createPgStore } from "./store";
 import { createS3Client } from "./s3";
+import { codexLocksDir, createCodexLockWatcher } from "./thread-locks";
 import { createOidcVerifier } from "./oidc";
 import { fileURLToPath } from "node:url";
 
@@ -95,6 +96,15 @@ const prune = () =>
     .catch((e: unknown) => console.error("prune failed:", e));
 void prune();
 setInterval(prune, 24 * 60 * 60 * 1000);
+
+// v2 decision 30: opening a thread in the Codex app touches its thread-writer
+// lock — the only signal the app emits for the user's attention. Watch the
+// locks directory and echo each touch into the session's activity clock; on
+// hosts without a Codex install the watcher disables itself (decision 26
+// compose deployments see no ~/.codex at all).
+const locksDir = codexLocksDir();
+const lockWatcher = createCodexLockWatcher({ store, dir: locksDir });
+if (lockWatcher.active) console.log(`codex lock watcher watching ${locksDir}`);
 
 // ADR 0005: the org IdP as a second token issuer. JWKS fetches happen lazily
 // on first use, so boot never blocks on the IdP being reachable.

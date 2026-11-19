@@ -74,6 +74,7 @@ const memStore = () => {
   });
   const store: Store = {
     migrate: async () => {},
+    touchSession: async () => false,
     appendEvents: async (events_: unknown[], userId) => {
       for (const e of events_ as { session_id: string }[]) {
         if (!seenSessions.has(e.session_id)) {

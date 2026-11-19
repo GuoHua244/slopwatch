@@ -22,6 +22,7 @@ const scriptedStore = (): Store & { calls: string[] } => {
     sessionOwner: async () => "alice",
     getAttachment: async () => null,
     deleteSession: async () => false,
+    touchSession: async () => false,
     pruneRaw: async () => ({ archived: 0, pruned: 0 }),
     getSetting: async () => null,
     setSetting: async () => {},

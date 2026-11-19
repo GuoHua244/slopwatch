@@ -328,6 +328,14 @@ export type Store = {
    */
   deleteSession(sessionId: string): Promise<boolean>;
   /**
+   * v2 decision 30: echo a Codex thread-writer lock touch into the session's
+   * activity clock — the dashboard's live dot and newest-first order follow
+   * the user opening the thread in the Codex app. Never advances `last_seq`
+   * (the listeners' tail cursor); false when nothing was bumped — unknown
+   * session, non-codex agent, or inside the 30s debounce window.
+   */
+  touchSession(sessionId: string): Promise<boolean>;
+  /**
    * Decision 11 + v2 decision 24: expire raw payloads past their effective
    * TTL — the owning user's current team override, else the default —
    * archiving each payload to the sink first when one is configured.

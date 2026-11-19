@@ -31,6 +31,9 @@ const refusingStore = (): Store => ({
   deleteSession: () => {
     throw new Error("store must not be touched");
   },
+  touchSession: () => {
+    throw new Error("store must not be touched");
+  },
   getSetting: async () => null,
   setSetting: async () => {},
   clearSetting: async () => {},
