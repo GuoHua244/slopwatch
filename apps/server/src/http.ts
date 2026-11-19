@@ -3,6 +3,7 @@ import {
   SCHEMA_VERSION,
   type NormalEvent,
 } from "@slopwatch/events";
+import { checkAlerts } from "./alerts";
 import { handleAdmin } from "./http/admin";
 import { createAudit, type Audit } from "./http/audit";
 import { createAuth, type Auth, type Reader } from "./http/auth";
@@ -226,6 +227,9 @@ const route = async (
     // v2 decision 25: finished sessions push to the org webhook —
     // fire-and-forget, never part of the ingest response
     pushSessionEnds(store, events, user);
+    // v3 decision 33: threshold alerts ride the same fire-and-forget slot —
+    // both checks push over the same webhook and audit their findings.
+    checkAlerts(store, events, user);
     return json(202, { accepted });
   }
 

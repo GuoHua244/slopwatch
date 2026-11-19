@@ -75,6 +75,9 @@ const memStore = () => {
   const store: Store = {
     migrate: async () => {},
     touchSession: async () => false,
+    sessionBurnSnapshot: async () => null,
+    hourTokenTotal: async () => 0,
+    hasAudit: async () => false,
     appendEvents: async (events_: unknown[], userId) => {
       for (const e of events_ as { session_id: string }[]) {
         if (!seenSessions.has(e.session_id)) {
@@ -831,6 +834,8 @@ describe("operator settings (decision 25)", () => {
         webhook_url: "",
         webhook_enabled: "true",
         webhook_format: "slack",
+        alert_zero_tool_tokens: "",
+        alert_hourly_tokens: "",
         raw_ttl_days: "45",
         retro_angles: JSON.stringify(DEFAULT_ANGLES),
       },

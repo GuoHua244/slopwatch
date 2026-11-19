@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { alertMethods } from "./alerts";
 import { auditMethods } from "./audit";
 import { authSessionMethods } from "./auth-sessions";
 import type { PgCtx } from "./db";
@@ -58,6 +59,7 @@ export const createPgStore = (databaseUrl: string): Store => {
     ...reviewMethods(ctx),
     ...feedbackMethods(ctx),
     ...auditMethods(ctx),
+    ...alertMethods(ctx),
     ...quarantineMethods(ctx),
     ...settingsMethods(ctx),
     ...retrospectiveMethods(ctx),

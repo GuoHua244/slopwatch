@@ -495,6 +495,8 @@ export const handleAdmin = async (
         webhook_url: stored.webhook_url ?? "",
         webhook_enabled: stored.webhook_enabled ?? "true",
         webhook_format: stored.webhook_format ?? "slack",
+        alert_zero_tool_tokens: stored.alert_zero_tool_tokens ?? "",
+        alert_hourly_tokens: stored.alert_hourly_tokens ?? "",
         raw_ttl_days: stored.raw_ttl_days ?? String(defaultRawTtlDays),
         retro_angles: stored.retro_angles ?? JSON.stringify(DEFAULT_ANGLES),
       };
@@ -535,6 +537,19 @@ export const handleAdmin = async (
           if (!Number.isInteger(days) || days < 1)
             return json(400, {
               error: "raw_ttl_days must be a positive integer",
+            });
+        }
+        // v3 decision 33: an empty string or 0 clears the check (the
+        // threshold reader treats both as off); otherwise a whole token
+        // count.
+        if (
+          (key === "alert_zero_tool_tokens" || key === "alert_hourly_tokens") &&
+          value !== null
+        ) {
+          const raw = String(value).trim();
+          if (raw !== "" && (!Number.isInteger(Number(raw)) || Number(raw) < 0))
+            return json(400, {
+              error: `${key} must be a non-negative integer or an empty string`,
             });
         }
         if (key === RETRO_ANGLES_SETTING_KEY && value !== null) {

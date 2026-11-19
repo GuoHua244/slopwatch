@@ -489,6 +489,12 @@ export type Store = {
     kind?: string;
     actor?: string;
   }): Promise<{ rows: AuditRow[]; total: number }>;
+  /** v3 decision 33: the threshold alerts' read helpers. */
+  sessionBurnSnapshot(
+    sessionId: string,
+  ): Promise<{ totalTokens: number; toolCalls: number } | null>;
+  hourTokenTotal(user: string, hour: string): Promise<number>;
+  hasAudit(action: string, target: string): Promise<boolean>;
   /** One session row — the snapshot an audit trail captures before a hard delete. */
   getSession(sessionId: string): Promise<SessionRow | null>;
   /** One review note by id, regardless of author — the preview for its own audit entry. */

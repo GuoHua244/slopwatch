@@ -29,6 +29,15 @@ const refusingStore = (): Store => ({
   touchSession: () => {
     throw new Error("store must not be touched");
   },
+  sessionBurnSnapshot: () => {
+    throw new Error("store must not be touched");
+  },
+  hourTokenTotal: () => {
+    throw new Error("store must not be touched");
+  },
+  hasAudit: () => {
+    throw new Error("store must not be touched");
+  },
   getSetting: async () => null,
   setSetting: async () => {},
   clearSetting: async () => {},

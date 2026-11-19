@@ -158,6 +158,8 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
   const [formatDraft, setFormatDraft] = useState<string | null>(null);
   const [enabledDraft, setEnabledDraft] = useState<string | null>(null);
   const [ttlDraft, setTtlDraft] = useState<string | null>(null);
+  const [zeroToolDraft, setZeroToolDraft] = useState<string | null>(null);
+  const [hourlyDraft, setHourlyDraft] = useState<string | null>(null);
   const { formError, setFormError, notice, setNotice, run } =
     useFormFeedback(refresh);
 
@@ -167,8 +169,16 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
   const enabled =
     (enabledDraft ?? current.webhook_enabled ?? "true") === "true";
   const ttl = ttlDraft ?? current.raw_ttl_days ?? "90";
+  // v3 decision 33: the alerts ride the session-notification webhook; an
+  // empty field means the check is off, matching the server's threshold rule.
+  const zeroToolAlert = zeroToolDraft ?? current.alert_zero_tool_tokens ?? "";
+  const hourlyAlert = hourlyDraft ?? current.alert_hourly_tokens ?? "";
 
   const webhookLive = url.trim().length > 0 && enabled;
+  const alertsLive =
+    webhookLive &&
+    ((Number(zeroToolAlert) > 0 && zeroToolAlert.trim() !== "") ||
+      (Number(hourlyAlert) > 0 && hourlyAlert.trim() !== ""));
 
   const saveWebhook = (e: React.FormEvent) => {
     e.preventDefault();
@@ -202,6 +212,30 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
       await api.updateSettings({ raw_ttl_days: String(days) });
       setTtlDraft(null);
       setNotice("Retention saved — the next prune run applies it.");
+    });
+  };
+
+  const saveAlerts = (e: React.FormEvent) => {
+    e.preventDefault();
+    const zero = zeroToolAlert.trim();
+    const hourly = hourlyAlert.trim();
+    for (const [name, raw] of [
+      ["zero-tool burn", zero],
+      ["hourly burn", hourly],
+    ] as const) {
+      if (raw !== "" && (!Number.isInteger(Number(raw)) || Number(raw) < 0)) {
+        setFormError(`${name} must be a non-negative whole number or empty.`);
+        return;
+      }
+    }
+    void run(async () => {
+      await api.updateSettings({
+        alert_zero_tool_tokens: zero,
+        alert_hourly_tokens: hourly,
+      });
+      setZeroToolDraft(null);
+      setHourlyDraft(null);
+      setNotice("Alerts saved — checks apply to the next ingested batches.");
     });
   };
 
@@ -287,6 +321,50 @@ export const AdminSettingsPanel = ({ api, refreshKey, refresh }: Props) => {
                 onClick={sendTest}
               >
                 Send test
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section className="settings-card">
+          <div className="card-head">
+            <h3 className="card-title">Anomaly alerts</h3>
+            <span className={`settings-status ${alertsLive ? "live" : "off"}`}>
+              {alertsLive ? "Armed" : "Off"}
+            </span>
+          </div>
+          <p className="card-lede">
+            Push a chat message when something looks off: a session burning
+            tokens with zero tool calls at all, or one user's hourly burn
+            crossing a ceiling. Findings are audited and fire once per session
+            or hour; empty or 0 keeps a check off.
+          </p>
+          <form className="settings-form" onSubmit={saveAlerts}>
+            <label className="field">
+              <span>Zero-tool session burn ≥ (tokens)</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                placeholder="off"
+                value={zeroToolAlert}
+                onChange={(e) => setZeroToolDraft(e.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>Hourly burn per user ≥ (tokens)</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                placeholder="off"
+                value={hourlyAlert}
+                onChange={(e) => setHourlyDraft(e.target.value)}
+              />
+            </label>
+            <div className="field actions">
+              <button className="primary" type="submit">
+                Save
               </button>
             </div>
           </form>

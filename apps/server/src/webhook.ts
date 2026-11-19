@@ -12,6 +12,8 @@ export const SETTING_KEYS = [
   "webhook_url",
   "webhook_enabled",
   "webhook_format",
+  "alert_zero_tool_tokens",
+  "alert_hourly_tokens",
   "raw_ttl_days",
   "retro_angles",
 ] as const;
