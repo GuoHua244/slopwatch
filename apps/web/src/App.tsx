@@ -7,6 +7,7 @@ import { clock } from "./lib/format";
 import type { Route } from "./lib/router";
 import { useHashRoute } from "./lib/router";
 import { BackToTop } from "./views/BackToTop";
+import { CompareView } from "./views/CompareView";
 import { DeveloperDetail } from "./views/DeveloperDetail";
 import { FeedbackModal } from "./views/FeedbackModal";
 import { LeaderboardView } from "./views/LeaderboardView";
@@ -133,11 +134,13 @@ const Dashboard = ({
         ? userId
           ? "Developer"
           : "Leaderboard"
-        : route === "admin"
-          ? "Admin"
-          : route === "me"
-            ? "Me"
-            : "Sessions";
+        : route === "compare"
+          ? "Models"
+          : route === "admin"
+            ? "Admin"
+            : route === "me"
+              ? "Me"
+              : "Sessions";
     document.title = `${label} · slopwatch`;
   }, [route, userId]);
 
@@ -154,6 +157,9 @@ const Dashboard = ({
         <nav className="menu">
           <a href="#/sessions" className={route === "sessions" ? "active" : ""}>
             Sessions
+          </a>
+          <a href="#/compare" className={route === "compare" ? "active" : ""}>
+            Models
           </a>
           {isAdmin && (
             <a
@@ -226,6 +232,19 @@ const Dashboard = ({
         ) : (
           <NotAuthorized route="leaderboard" />
         )
+      ) : route === "compare" ? (
+        <main className="full">
+          <section>
+            <div className="stage">
+              <h2 className="page-title">Model comparison</h2>
+              <p className="page-sub">
+                Two models side by side over the same window — what the team's
+                real workloads actually cost each in tokens and requests.
+              </p>
+              <CompareView />
+            </div>
+          </section>
+        </main>
       ) : route === "admin" ? (
         isAdmin ? (
           <main className="full">

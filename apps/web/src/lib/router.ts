@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-export type Route = "sessions" | "leaderboard" | "admin" | "me";
+export type Route = "sessions" | "leaderboard" | "compare" | "admin" | "me";
 
 /** decodeURIComponent that never throws — a malformed hash (e.g. a truncated
  * pasted URL with a stray %) falls back to the raw text instead of throwing
@@ -34,6 +34,8 @@ export const parseHash = (
     };
   if (path === "leaderboard")
     return { route: "leaderboard", sessionId: null, userId: null };
+  if (path === "compare")
+    return { route: "compare", sessionId: null, userId: null };
   if (path === "admin")
     return { route: "admin", sessionId: null, userId: null };
   if (path === "me") return { route: "me", sessionId: null, userId: null };
