@@ -5,6 +5,11 @@ import type {
 } from "@slopwatch/events";
 import { verifyAttachment, type AttachmentEvent } from "@slopwatch/events";
 import {
+  commitCommandFromArgs,
+  commitOutputFromRaw,
+  commitSubjectFromCommand,
+} from "../commits";
+import {
   emptyFlatDelta,
   rollupDeltas,
   utcDay,
@@ -151,6 +156,17 @@ export const sessionMethods = (
           let dOut = 0;
           let dCacheRead = 0;
           let dCacheWrite = 0;
+          // v3 decision 34: git-commit-shaped calls to record, and results
+          // whose raw may carry git's own output to enrich them with.
+          const commitTriggers: {
+            toolCallId: string;
+            subject: string | null;
+            occurredAt: string;
+          }[] = [];
+          const commitResults: {
+            toolCallId: string;
+            raw: unknown;
+          }[] = [];
           for (const event of group) {
             seq += 1;
             const { raw, ...payload } = event;
@@ -192,6 +208,22 @@ export const sessionMethods = (
               dOut += event.usage.output_tokens ?? 0;
               dCacheRead += event.usage.cache_read_tokens ?? 0;
               dCacheWrite += event.usage.cache_write_tokens ?? 0;
+            }
+            if (event.kind === "tool" && event.event === "call") {
+              const command = commitCommandFromArgs(event.args);
+              if (command !== null) {
+                commitTriggers.push({
+                  toolCallId: event.tool_call_id,
+                  subject: commitSubjectFromCommand(command),
+                  occurredAt: event.occurred_at,
+                });
+              }
+            } else if (
+              event.kind === "tool" &&
+              event.event === "result" &&
+              raw !== undefined
+            ) {
+              commitResults.push({ toolCallId: event.tool_call_id, raw });
             }
           }
           if (dIn || dOut || dCacheRead || dCacheWrite) {
@@ -264,6 +296,48 @@ export const sessionMethods = (
               "UPDATE sessions SET failed_tool_calls = failed_tool_calls + $2, repeated_calls = repeated_calls + $3 WHERE session_id = $1",
               [sessionId, failedInBatch, repeatedInBatch],
             );
+          }
+          // v3 decision 34: the call inserts the row (idempotent on the
+          // pair key); the paired result's raw — this batch's or an earlier
+          // one's — fills sha and branch when it carries git's own output.
+          for (const trigger of commitTriggers) {
+            await client.query(
+              `INSERT INTO session_commits (session_id, tool_call_id, subject, occurred_at)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (session_id, tool_call_id) DO NOTHING`,
+              [
+                sessionId,
+                trigger.toolCallId,
+                trigger.subject,
+                trigger.occurredAt,
+              ],
+            );
+          }
+          if (commitResults.length > 0) {
+            const pending = await client.query(
+              `SELECT tool_call_id FROM session_commits
+               WHERE session_id = $1 AND sha IS NULL AND tool_call_id = ANY($2::text[])`,
+              [sessionId, commitResults.map((r) => r.toolCallId)],
+            );
+            const known = new Set(
+              pending.rows.map((r) => r.tool_call_id as string),
+            );
+            for (const r of commitResults) {
+              if (!known.has(r.toolCallId)) continue;
+              const output = commitOutputFromRaw(r.raw);
+              if (!output) continue;
+              await client.query(
+                `UPDATE session_commits SET sha = $3, branch = $4, subject = COALESCE($5, subject)
+                 WHERE session_id = $1 AND tool_call_id = $2`,
+                [
+                  sessionId,
+                  r.toolCallId,
+                  output.sha,
+                  output.branch,
+                  output.subject,
+                ],
+              );
+            }
           }
           // Captured images, content-addressed per session. Content
           // addressing is earned, not claimed: a payload that does not decode

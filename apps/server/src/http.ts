@@ -272,6 +272,19 @@ const route = async (
     return attachmentResponse(attachment);
   }
 
+  // v3 decision 34: the git commits a session's tool calls made — same
+  // read-plane gate and member scoping as the events route.
+  const commitsMatch = url.pathname.match(/^\/sessions\/([^/]+)\/commits$/);
+  if (commitsMatch && req.method === "GET") {
+    const reader = await auth.requireReader(req);
+    const sessionId = requireSessionId(commitsMatch[1]!);
+    await assertReadableSession(sessionId, reader, store);
+    return json(200, {
+      session_id: sessionId,
+      commits: await store.listSessionCommits(sessionId),
+    });
+  }
+
   // --- Retrospectives (ADR 0008): visibility follows the session read
   // scope — whoever can read a session's events can trigger and read its
   // retrospectives. Runs bill to the triggering user's own LLM credentials;

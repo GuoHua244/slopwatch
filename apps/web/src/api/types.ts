@@ -111,6 +111,16 @@ export type RetroRow = {
 /** One selectable retrospective angle of GET /retrospectives/angles. */
 export type RetroAngleInfo = { id: string; title: string };
 
+/** v3 decision 34: one git commit a session's tool call made. */
+export type SessionCommitRow = {
+  session_id: string;
+  tool_call_id: string;
+  subject: string | null;
+  branch: string | null;
+  sha: string | null;
+  occurred_at: string;
+};
+
 /** POST /sessions/:id/retrospectives' picture of what the run will cost. */
 export type RetroEstimate = {
   input_tokens: number;

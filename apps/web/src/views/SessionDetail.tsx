@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { TokenUsage } from "@slopwatch/events";
 import type { CommentRow } from "../api";
 import type { SessionSummary } from "../api";
+import { useCommits } from "../hooks/useCommits";
 import { useEventStream } from "../hooks/useEventStream";
 import { useRetrospectives } from "../hooks/useRetrospectives";
 import { useReview } from "../hooks/useReview";
@@ -77,6 +78,7 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
   const stream = useEventStream(summary.session_id);
   const review = useReview(summary.session_id);
   const retro = useRetrospectives(summary.session_id);
+  const commits = useCommits(summary.session_id);
   const [tab, setTab] = useState<Tab>("turns");
   const [note, setNote] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
@@ -264,6 +266,32 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
             </span>
           </div>
           <TokenWaterfall bars={waterfall} />
+        </div>
+      )}
+      {commits.commits.length > 0 && (
+        <div className="panel-card">
+          <div className="card-head">
+            <h3 className="card-title">Commits</h3>
+            <span className="dim" style={{ fontSize: "12px" }}>
+              git commits made by this session's tool calls
+            </span>
+          </div>
+          <div className="commit-list">
+            {commits.commits.map((c) => (
+              <div className="commit-line" key={c.tool_call_id}>
+                {c.sha !== null ? (
+                  <code className="commit-sha">{c.sha}</code>
+                ) : (
+                  <span className="chip">git commit</span>
+                )}
+                <span className="commit-subject">
+                  {c.subject ?? "(subject not captured)"}
+                </span>
+                {c.branch !== null && <span className="dim">{c.branch}</span>}
+                <span className="commit-time">{clock(c.occurred_at)}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       {totals && totals.requests > 0 && (

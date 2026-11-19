@@ -78,6 +78,7 @@ const memStore = () => {
     sessionBurnSnapshot: async () => null,
     hourTokenTotal: async () => 0,
     hasAudit: async () => false,
+    listSessionCommits: async () => [],
     appendEvents: async (events_: unknown[], userId) => {
       for (const e of events_ as { session_id: string }[]) {
         if (!seenSessions.has(e.session_id)) {

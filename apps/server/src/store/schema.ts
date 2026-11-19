@@ -264,8 +264,7 @@ CREATE TABLE IF NOT EXISTS feedback_attachments (
 -- Password sign-in (ADR 0011): the argon2id hash of the user's dashboard
 -- password; NULL until they set one, so token and OIDC sign-ins keep working
 -- untouched.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
--- One server-side session per password login: a revocable bearer stored
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;-- One server-side session per password login: a revocable bearer stored
 -- hashed like every other credential. Deleting the user cascades the
 -- sessions away with them.
 CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -277,6 +276,21 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   revoked_at   TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS auth_sessions_user ON auth_sessions (user_name);
+-- v3 decision 34: sessions linked to the git commits their tool calls made.
+-- One row per git-commit-shaped tool call, keyed by (session, tool_call_id);
+-- sha and branch fill in from the paired result's raw when it carries git's
+-- own output, and stay null when it does not — the subject still links.
+CREATE TABLE IF NOT EXISTS session_commits (
+  session_id   TEXT NOT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,
+  tool_call_id TEXT NOT NULL,
+  subject      TEXT,
+  branch       TEXT,
+  sha          TEXT,
+  occurred_at  TIMESTAMPTZ NOT NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (session_id, tool_call_id)
+);
+CREATE INDEX IF NOT EXISTS session_commits_time ON session_commits (occurred_at DESC);
 `;
 
 export const schemaMethods = ({ pool }: PgCtx): Pick<Store, "migrate"> => ({

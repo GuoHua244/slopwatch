@@ -26,6 +26,16 @@ export type SessionRow = {
 
 export type StoredEvent = { event_seq: number; event: NormalEvent };
 
+/** v3 decision 34: one git commit a session's tool call made. */
+export type SessionCommitRow = {
+  session_id: string;
+  tool_call_id: string;
+  subject: string | null;
+  branch: string | null;
+  sha: string | null;
+  occurred_at: string;
+};
+
 /** Authorization role: admins manage the operator plane and read org-wide. */
 export type Role = "admin" | "member";
 
@@ -495,6 +505,8 @@ export type Store = {
   ): Promise<{ totalTokens: number; toolCalls: number } | null>;
   hourTokenTotal(user: string, hour: string): Promise<number>;
   hasAudit(action: string, target: string): Promise<boolean>;
+  /** v3 decision 34: the git commits one session's tool calls made. */
+  listSessionCommits(sessionId: string): Promise<SessionCommitRow[]>;
   /** One session row — the snapshot an audit trail captures before a hard delete. */
   getSession(sessionId: string): Promise<SessionRow | null>;
   /** One review note by id, regardless of author — the preview for its own audit entry. */

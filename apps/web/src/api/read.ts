@@ -2,6 +2,7 @@ import { storedToken } from "../auth";
 import { bearerAuth, defaultFetch, getJson, type FetchLike } from "./http";
 import type {
   RollupsSnapshot,
+  SessionCommitRow,
   SessionSummary,
   StoredEvent,
   TeamInfo,
@@ -16,6 +17,10 @@ export type Api = {
   listSessions(teamId?: string, userId?: string): Promise<SessionSummary[]>;
   /** Decision 8: incremental page of a session's events after sinceSeq. */
   eventsSince(sessionId: string, sinceSeq: number): Promise<StoredEvent[]>;
+  /**
+   * v3 decision 34: the git commits one session's tool calls made.
+   */
+  listCommits(sessionId: string): Promise<SessionCommitRow[]>;
   /**
    * Decision 18: per-developer usage rollups. `days` lower-bounds the daily
    * windows (absent = all history); `hours` the hourly window (server
@@ -65,6 +70,14 @@ export const createApi = (
           auth(),
         )
       ).events,
+    listCommits: async (sessionId) =>
+      (
+        await getJson<{ commits: SessionCommitRow[] }>(
+          doFetch,
+          `/sessions/${encodeURIComponent(sessionId)}/commits`,
+          auth(),
+        )
+      ).commits,
     rollups: async (params = {}) => {
       const search = new URLSearchParams();
       if (params.days !== undefined) search.set("days", String(params.days));

@@ -24,6 +24,7 @@ const scriptedStore = (): Store & { calls: string[] } => {
     sessionBurnSnapshot: async () => null,
     hourTokenTotal: async () => 0,
     hasAudit: async () => false,
+    listSessionCommits: async () => [],
     pruneRaw: async () => ({ archived: 0, pruned: 0 }),
     getSetting: async () => null,
     setSetting: async () => {},

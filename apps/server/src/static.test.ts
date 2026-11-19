@@ -38,6 +38,9 @@ const refusingStore = (): Store => ({
   hasAudit: () => {
     throw new Error("store must not be touched");
   },
+  listSessionCommits: () => {
+    throw new Error("store must not be touched");
+  },
   getSetting: async () => null,
   setSetting: async () => {},
   clearSetting: async () => {},

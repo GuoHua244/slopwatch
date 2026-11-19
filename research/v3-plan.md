@@ -7,7 +7,7 @@ Goal: deepen what the captured stream can answer. v1/v2 answered "who spent what
 - [x] 31. Waste metrics — deterministic slop counters on the ingest path, surfaced as a leaderboard column
 - [x] 32. Session token waterfall — per-turn token burn chart in SessionDetail
 - [x] 33. Anomaly alerts — threshold checks pushed over the org webhook
-- [ ] 34. Session ↔ commit correlation — git commits extracted from tool calls
+- [x] 34. Session ↔ commit correlation — git commits extracted from tool calls
 - [ ] 35. Model comparison view — two-model observational comparison
 - [ ] 36. Team weekly report — LLM weekly retrospective over team rollups
 - [ ] 37. Read-only MCP server — token-gated tools over the org's own data
@@ -40,7 +40,7 @@ The org webhook (v2 decision 25) pushes nothing on its own today. The server gro
 
 ### 34. Session ↔ commit correlation: what the agent shipped
 
-Tool-call `args` already carry what the agent ran. A server-side extractor watches tool **call** events for `git commit`-shaped commands (`git commit …`, `git push …`, plus hub-CLI PR creation), lifts the resulting sha (from the command's output via the paired result when present, else the command line's own `-m` context is not enough — v1 keeps it to the sha/short-sha visible in args or result text), and stores one row per (session, sha) in a `session_commits` table. SessionDetail lists linked commits; the extractor is generic string matching over the two universal event fields, so every listener benefits without adapter changes. Rejected: running git in the working tree server-side — the server has no clone and no right to one; diff stat extraction — needs a repo, same rejection.
+Tool-call `args` already carry what the agent ran, untruncated, and they are agent-agnostic — the extractor is generic string scanning, not a per-adapter table. On ingest, a tool **call** whose args embed a `git commit` command (any tool — Bash, shell, whatever the agent names it; `--dry-run` excluded) records a `session_commits` row keyed by (session, tool_call_id), with the `-m`/`--message` subject when the command carries one. The result half of the contract carries no output text (a deliberate v1 omission), so the sha is mined from the paired **result's raw** — the verbatim agent record, where git's `[branch sha] subject` output lives — when that raw arrives; sha and branch degrade to null for listeners whose raw lacks the output, and the subject from the command line still links the session to the work. SessionDetail lists the session's commits through `GET /sessions/:id/commits` (read-scoped like every session read); the table feeds the weekly report (decision 36). Rejected: running git in the working tree server-side — the server has no clone and no right to one; mining shas from assistant prose — response_text mentions existing commits as often as new ones, and a wrong link is worse than a missing one.
 
 ### 35. Model comparison view: two models, same org's real workloads
 
