@@ -2541,3 +2541,61 @@ ul.sessions ul.sessions.sub {
 .fb-thumb-link {
   line-height: 0;
 }
+
+/* --- v3 decision 32: the session token waterfall ---
+   One column per turn, height proportional to its burn, stacked by token
+   kind: input as the foundation, cache read/write mid, output (the accent)
+   on top — so "where did it go" reads at a glance. */
+.waterfall {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 132px;
+  padding: 2px 0;
+  overflow-x: auto;
+}
+.wf-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 3px;
+  flex: 1 0 14px;
+  min-width: 14px;
+  height: 100%;
+}
+.wf-stack {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  width: 100%;
+  min-height: 2px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--line-soft) 55%, transparent);
+}
+.wf-seg {
+  width: 100%;
+}
+.wf-in {
+  background: #4a7dab;
+}
+.wf-cache-read {
+  background: #35597c;
+}
+.wf-cache-write {
+  background: #7c5caf;
+}
+.wf-out {
+  background: var(--accent);
+}
+.wf-zero {
+  height: 2px;
+  background: color-mix(in srgb, var(--line-soft) 80%, transparent);
+}
+.wf-tick {
+  font-size: 9.5px;
+  color: var(--dim);
+  line-height: 1;
+  user-select: none;
+}

@@ -5,7 +5,7 @@
 Goal: deepen what the captured stream can answer. v1/v2 answered "who spent what when"; v3 answers "how well was the work done" (waste metrics, waterfall, model comparison, commit correlation), "when should someone look" (alerts), and "what happened this week" (weekly report) — plus a machine-readable read surface (MCP) so agents can ask the same questions.
 
 - [x] 31. Waste metrics — deterministic slop counters on the ingest path, surfaced as a leaderboard column
-- [ ] 32. Session token waterfall — per-turn token burn chart in SessionDetail
+- [x] 32. Session token waterfall — per-turn token burn chart in SessionDetail
 - [ ] 33. Anomaly alerts — threshold checks pushed over the org webhook
 - [ ] 34. Session ↔ commit correlation — git commits extracted from tool calls
 - [ ] 35. Model comparison view — two-model observational comparison
@@ -32,7 +32,7 @@ The name says slopwatch but nothing in the code judged sloppiness — the closes
 
 ### 32. Session token waterfall: where the tokens went, per turn
 
-CONTEXT.md's founding dialogue — "this session cost $14 — where did it go?" — is currently answered by scrolling turns. SessionDetail gains a horizontal per-turn bar strip: one bar per top-level turn (subagent turns folded into their spawning turn), width proportional to that turn's total tokens (input + output + cache read + cache write), labeled on hover. Data comes entirely from the events the dashboard already polls — no new endpoint, no new table. Rejected: a time-axis flame graph — turn durations are wall-clock, not token burn, and would misrepresent cache-heavy turns.
+CONTEXT.md's founding dialogue — "this session cost $14 — where did it go?" — is currently answered by scrolling turns. SessionDetail gains a horizontal per-turn bar strip: one bar per turn, width proportional to that turn's total tokens, stacked into the four canonical token kinds (input / output / cache read / cache write — the same sums the Usage panel and the rollups carry), labeled on hover with the turn's user message and the numbers. An "(unattributed)" bar covers requests the timeline could not file under a turn, so the strip's total reconciles with the session's own totals. Data comes entirely from the events the dashboard already polls — no new endpoint, no new table, no recompute. Scope note: the waterfall covers **this session's own stream** — subagent sessions are separate Sessions (v1 decision 9) with their own event streams and their own waterfall on their own detail page; folding child burn into the parent would need a cross-session aggregate endpoint, deferred until someone misses it. Rejected: a time-axis flame graph — turn durations are wall-clock, not token burn, and would misrepresent cache-heavy turns.
 
 ### 33. Anomaly alerts: thresholds over the org webhook
 

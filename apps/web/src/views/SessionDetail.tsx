@@ -8,10 +8,12 @@ import { useReview } from "../hooks/useReview";
 import { sessionTotals } from "../lib/aggregate";
 import { clock, fmtTokens } from "../lib/format";
 import { buildTimeline, isEnded } from "../lib/timeline";
+import { waterfallBars, waterfallTotal } from "../lib/waterfall";
 import { ConfirmButton, useAsyncAction } from "./admin-shared";
 import { FeedbackModal } from "./FeedbackModal";
 import { RawEventsView } from "./RawEventsView";
 import { RetrospectivesView } from "./RetrospectivesView";
+import { TokenWaterfall } from "./TokenWaterfall";
 import { TurnsView } from "./TurnsView";
 import { UsageView } from "./UsageView";
 
@@ -102,6 +104,13 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
   // Event sums are the ground truth once loaded; the Server's token columns
   // undercount sessions that predate that migration.
   const totals = stream.events.length > 0 ? sessionTotals(stream.events) : null;
+  // v3 decision 32: per-turn token burn — the founding question ("where did
+  // it go?") rendered as one stacked column per turn.
+  const waterfall = useMemo(
+    () => waterfallBars(timeline.turns, timeline.orphans.requests),
+    [timeline],
+  );
+  const waterfallSum = waterfallTotal(waterfall);
 
   const sessionComments = review.comments.filter((c) => c.turn_id === null);
   const run = useAsyncAction(setActionError);
@@ -244,6 +253,18 @@ export const SessionDetail = ({ summary }: { summary: SessionSummary }) => {
             reading aid, never evidence; review the event stream.
           </p>
         </section>
+      )}
+      {waterfallSum > 0 && (
+        <div className="panel-card">
+          <div className="card-head">
+            <h3 className="card-title">Token waterfall</h3>
+            <span className="dim" style={{ fontSize: "12px" }}>
+              {fmtTokens(waterfallSum)} total · per-turn burn in
+              first-appearance order · hover a column for the breakdown
+            </span>
+          </div>
+          <TokenWaterfall bars={waterfall} />
+        </div>
       )}
       {totals && totals.requests > 0 && (
         <div className="panel-card">
