@@ -13,6 +13,7 @@ COPY apps/web/package.json apps/web/
 COPY listeners/zcode/package.json listeners/zcode/
 COPY listeners/claude-code/package.json listeners/claude-code/
 COPY listeners/codebuddy/package.json listeners/codebuddy/
+COPY listeners/codex/package.json listeners/codex/
 COPY packages/cli/package.json packages/cli/
 COPY packages/config/package.json packages/config/
 COPY packages/events/package.json packages/events/
@@ -38,6 +39,7 @@ COPY apps/web/package.json apps/web/
 COPY listeners/zcode/package.json listeners/zcode/
 COPY listeners/claude-code/package.json listeners/claude-code/
 COPY listeners/codebuddy/package.json listeners/codebuddy/
+COPY listeners/codex/package.json listeners/codex/
 COPY packages/cli/package.json packages/cli/
 COPY packages/config/package.json packages/config/
 COPY packages/events/package.json packages/events/
