@@ -15,8 +15,27 @@ export const utcDay = (occurredAt: string): string =>
 export const utcHour = (occurredAt: string): string =>
   new Date(occurredAt).toISOString().slice(0, 13);
 
-/** Model-independent counters (turn starts, tool calls) per UTC day. */
-export type FlatDelta = { turns: number; toolCalls: number };
+/**
+ * Model-independent counters (turn starts, tool calls) per UTC day.
+ *
+ * The waste counters (v3 decision 31) ride the same shape: `failedToolCalls`
+ * is computable purely from the batch's result events; `repeatedCalls` is
+ * filled in by the ingest transaction after its prior-occurrence lookups —
+ * the pure reducer leaves it at zero.
+ */
+export type FlatDelta = {
+  turns: number;
+  toolCalls: number;
+  failedToolCalls: number;
+  repeatedCalls: number;
+};
+
+export const emptyFlatDelta = (): FlatDelta => ({
+  turns: 0,
+  toolCalls: 0,
+  failedToolCalls: 0,
+  repeatedCalls: 0,
+});
 
 /** Request and token counters for one model inside one bucket. */
 export type ModelDelta = {
@@ -43,7 +62,7 @@ const bumpFlat = (
   bucket: string,
   key: keyof FlatDelta,
 ): void => {
-  const row = byBucket.get(bucket) ?? { turns: 0, toolCalls: 0 };
+  const row = byBucket.get(bucket) ?? emptyFlatDelta();
   row[key] += 1;
   byBucket.set(bucket, row);
 };
@@ -95,6 +114,14 @@ export const rollupDeltas = (events: NormalEvent[]): RollupDeltas => {
     } else if (event.kind === "tool" && event.event === "call") {
       bumpFlat(deltas.daily, utcDay(event.occurred_at), "toolCalls");
       bumpFlat(deltas.hourly, utcHour(event.occurred_at), "toolCalls");
+    } else if (event.kind === "tool" && event.event === "result") {
+      // v3 decision 31: a failed result is a pure fact of the batch; the
+      // repeated-identical-call counter needs prior-occurrence state and is
+      // folded in by the ingest transaction instead.
+      if (event.ok === false) {
+        bumpFlat(deltas.daily, utcDay(event.occurred_at), "failedToolCalls");
+        bumpFlat(deltas.hourly, utcHour(event.occurred_at), "failedToolCalls");
+      }
     } else if (event.kind === "model_request") {
       bumpModel(
         deltas.modelDaily,

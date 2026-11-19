@@ -51,6 +51,8 @@ const session = (
   total_output_tokens: 1,
   total_cache_read_tokens: 0,
   total_cache_write_tokens: 0,
+  failed_tool_calls: 0,
+  repeated_calls: 0,
   parent_session_id: parentSessionId,
 });
 

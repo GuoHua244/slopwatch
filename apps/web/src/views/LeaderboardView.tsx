@@ -23,10 +23,11 @@ type SortKey =
   | "costUsd"
   | "sessions"
   | "turns"
+  | "wasteRate"
   | "inputTokens";
 
 type Column = {
-  key: SortKey | "developer" | "tokens" | "trend" | "lastSeen";
+  key: SortKey | "developer" | "tokens" | "trend" | "lastSeen" | "waste";
   label: string;
   title?: string;
   /** Numeric cells right-align; sortable columns get a click-to-sort header. */
@@ -50,6 +51,15 @@ const COLUMNS: Column[] = [
   },
   { key: "sessions", label: "Sessions", num: true, sortable: true },
   { key: "turns", label: "Turns", num: true, sortable: true },
+  {
+    key: "waste",
+    label: "Waste",
+    title:
+      "Failed + repeated-identical tool calls over all tool calls, all time (v3 decision 31)",
+    num: true,
+    sortable: true,
+    sortKey: "wasteRate",
+  },
   {
     key: "tokens",
     label: "Tokens in / out",
@@ -136,6 +146,20 @@ const CELL_RENDERERS: Record<
   ),
   sessions: (row) => <td className="num">{row.sessions}</td>,
   turns: (row) => <td className="num">{row.turns}</td>,
+  /* sort-only key — the Waste column renders the rate with its tooltip */
+  wasteRate: (row) => (
+    <td>
+      {row.wasteRate === null ? "—" : `${(row.wasteRate * 100).toFixed(1)}%`}
+    </td>
+  ),
+  waste: (row) => (
+    <td
+      className="num"
+      title={`${row.failedToolCalls} failed + ${row.repeatedCalls} repeated of ${row.toolCalls} tool calls`}
+    >
+      {CELL_RENDERERS.wasteRate(row, 0)}
+    </td>
+  ),
   /* sort-only key — the merged tokens column renders the in/out pair */
   inputTokens: (row) => <td className="num">{fmtTokens(row.inputTokens)}</td>,
   tokens: (row) => (

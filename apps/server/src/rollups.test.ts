@@ -83,10 +83,45 @@ describe("rollupDeltas", () => {
       { ...sessionStart("s", CROSS_TZ), event: "end", reason: "normal" },
     ]);
     expect([...deltas.daily]).toEqual([
-      ["2026-09-11", { turns: 1, toolCalls: 1 }],
+      [
+        "2026-09-11",
+        {
+          turns: 1,
+          toolCalls: 1,
+          failedToolCalls: 0,
+          repeatedCalls: 0,
+        },
+      ],
     ]);
     expect(deltas.modelDaily.size).toBe(0);
     expect(deltas.modelHourly.size).toBe(0);
+  });
+
+  test("a failed tool result counts toward failedToolCalls; ok results do not", () => {
+    const deltas = rollupDeltas([
+      toolCall("s", CROSS_TZ),
+      { ...toolCall("s", CROSS_TZ), event: "result", ok: true },
+      { ...toolCall("s", CROSS_TZ), event: "result", ok: false, error: "boom" },
+      {
+        ...toolCall("s", "2026-09-11T19:30:00Z"),
+        event: "result",
+        ok: false,
+        error: "boom",
+      },
+    ]);
+    expect(deltas.daily.get("2026-09-11")).toEqual({
+      turns: 0,
+      toolCalls: 1,
+      failedToolCalls: 2,
+      repeatedCalls: 0,
+    });
+    // The 17z and 19z failures are distinct hourly buckets.
+    expect(deltas.hourly.get("2026-09-11T17")).toMatchObject({
+      failedToolCalls: 1,
+    });
+    expect(deltas.hourly.get("2026-09-11T19")).toMatchObject({
+      failedToolCalls: 1,
+    });
   });
 
   test("groups model requests by model with token sums, daily and hourly", () => {
@@ -180,7 +215,14 @@ describe.skipIf(!dbTests())("rollup persistence", () => {
 
     let snap = await store!.listRollups("2000-01-01", "2000-01-01T00");
     expect(snap.daily.filter((r) => r.user_id === user)).toEqual([
-      { user_id: user, day: "2026-09-11", turns: 1, tool_calls: 1 },
+      {
+        user_id: user,
+        day: "2026-09-11",
+        turns: 1,
+        tool_calls: 1,
+        failed_tool_calls: 0,
+        repeated_calls: 0,
+      },
     ]);
     expect(
       snap.model_daily.find((r) => r.user_id === user && r.model === "m1"),

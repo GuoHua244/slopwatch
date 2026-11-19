@@ -42,6 +42,8 @@ const session = (
   total_output_tokens: outputTokens,
   total_cache_read_tokens: 0,
   total_cache_write_tokens: 0,
+  failed_tool_calls: 0,
+  repeated_calls: 0,
   parent_session_id: null,
 });
 
@@ -88,7 +90,15 @@ describe("aggregateLeaderboard", () => {
         session("s3", "bob", "zcode", "2026-09-09T09:00:00Z"),
       ],
       snapshot({
-        totals: [{ user_id: "alice", turns: 4, tool_calls: 7 }],
+        totals: [
+          {
+            user_id: "alice",
+            turns: 4,
+            tool_calls: 7,
+            failed_tool_calls: 1,
+            repeated_calls: 2,
+          },
+        ],
         model_totals: [
           modelRow("alice", "", PRICED, 6, 300, 110),
           modelRow("bob", "", PRICED, 1, 5, 1),
@@ -100,6 +110,9 @@ describe("aggregateLeaderboard", () => {
     const alice = rows[0]!;
     expect(alice.sessions).toBe(2);
     expect(alice.turns).toBe(4);
+    // v3 decision 31: (1 failed + 2 repeated) / 7 tool calls.
+    expect(alice.wasteRate).toBe(3 / 7);
+    expect(alice.toolCalls).toBe(7);
     expect(alice.requests).toBe(6);
     expect(alice.inputTokens).toBe(300);
     expect(alice.outputTokens).toBe(110);

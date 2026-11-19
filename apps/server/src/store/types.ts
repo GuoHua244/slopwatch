@@ -17,6 +17,9 @@ export type SessionRow = {
   total_output_tokens: number;
   total_cache_read_tokens: number;
   total_cache_write_tokens: number;
+  /** v3 decision 31: waste counters, ingest-accumulated, recompute-rebuilt. */
+  failed_tool_calls: number;
+  repeated_calls: number;
   /** Parent session for subagent sessions; null for top-level sessions. */
   parent_session_id: string | null;
 };
@@ -187,22 +190,26 @@ export type AuditRow = {
   detail: Record<string, unknown>;
 };
 
-/** Per-day turn/tool counts for one user (decision 18). */
+/** Per-day turn/tool/waste counts for one user (decision 18, v3 decision 31). */
 export type DailyRollupRow = {
   user_id: string;
   /** UTC day, "YYYY-MM-DD". */
   day: string;
   turns: number;
   tool_calls: number;
+  failed_tool_calls: number;
+  repeated_calls: number;
 };
 
-/** Per-hour turn/tool counts for one user (v2 decision 27). */
+/** Per-hour turn/tool/waste counts for one user (v2 decision 27, v3 decision 31). */
 export type UserHourlyRollupRow = {
   user_id: string;
   /** UTC hour, "YYYY-MM-DDTHH". */
   hour: string;
   turns: number;
   tool_calls: number;
+  failed_tool_calls: number;
+  repeated_calls: number;
 };
 
 /**
@@ -287,7 +294,13 @@ export type ModelRollupRow = {
  * which is why model-grain rows come back verbatim instead of pre-priced.
  */
 export type RollupsSnapshot = {
-  totals: { user_id: string; turns: number; tool_calls: number }[];
+  totals: {
+    user_id: string;
+    turns: number;
+    tool_calls: number;
+    failed_tool_calls: number;
+    repeated_calls: number;
+  }[];
   model_totals: ModelRollupRow[];
   daily: DailyRollupRow[];
   user_hourly: UserHourlyRollupRow[];

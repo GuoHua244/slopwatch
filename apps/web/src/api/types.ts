@@ -15,6 +15,9 @@ export type SessionSummary = {
   total_output_tokens: number;
   total_cache_read_tokens: number;
   total_cache_write_tokens: number;
+  /** v3 decision 31: waste counters mirrored from the Server's SessionRow. */
+  failed_tool_calls: number;
+  repeated_calls: number;
   /** Parent session for subagent sessions; null for top-level sessions. */
   parent_session_id: string | null;
 };
@@ -116,22 +119,26 @@ export type RetroEstimate = {
   raw_enriched_turns: number;
 };
 
-/** Row of GET /rollups — per-day turn/tool counts for one user. */
+/** Row of GET /rollups — per-day turn/tool/waste counts for one user. */
 export type DailyRollupRow = {
   user_id: string;
   /** UTC day, "YYYY-MM-DD". */
   day: string;
   turns: number;
   tool_calls: number;
+  failed_tool_calls: number;
+  repeated_calls: number;
 };
 
-/** Row of GET /rollups — per-hour turn/tool counts for one user. */
+/** Row of GET /rollups — per-hour turn/tool/waste counts for one user. */
 export type UserHourlyRollupRow = {
   user_id: string;
   /** UTC hour, "YYYY-MM-DDTHH". */
   hour: string;
   turns: number;
   tool_calls: number;
+  failed_tool_calls: number;
+  repeated_calls: number;
 };
 
 /**
@@ -152,7 +159,13 @@ export type ModelRollupRow = {
 
 /** One GET /rollups answer: all-time totals plus the requested windows. */
 export type RollupsSnapshot = {
-  totals: { user_id: string; turns: number; tool_calls: number }[];
+  totals: {
+    user_id: string;
+    turns: number;
+    tool_calls: number;
+    failed_tool_calls: number;
+    repeated_calls: number;
+  }[];
   model_totals: ModelRollupRow[];
   daily: DailyRollupRow[];
   user_hourly: UserHourlyRollupRow[];

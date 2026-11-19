@@ -45,7 +45,7 @@ export const mintSessionValue = (): {
 
 /** The full session-row SELECT list, shared by listSessions and getSession. */
 export const SESSION_COLUMNS =
-  "session_id, agent, user_id, team_id, first_seen_at, last_event_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens, parent_session_id";
+  "session_id, agent, user_id, team_id, first_seen_at, last_event_at, last_seq, title, task_preview, total_input_tokens, total_output_tokens, total_cache_read_tokens, total_cache_write_tokens, failed_tool_calls, repeated_calls, parent_session_id";
 
 export const asRole = (value: unknown): Role =>
   value === "admin" ? "admin" : "member";
@@ -136,6 +136,8 @@ export const pgSessionRow = (r: Record<string, unknown>): SessionRow => ({
   total_output_tokens: Number(r.total_output_tokens),
   total_cache_read_tokens: Number(r.total_cache_read_tokens),
   total_cache_write_tokens: Number(r.total_cache_write_tokens),
+  failed_tool_calls: Number(r.failed_tool_calls),
+  repeated_calls: Number(r.repeated_calls),
   parent_session_id: (r.parent_session_id as string | null) ?? null,
 });
 

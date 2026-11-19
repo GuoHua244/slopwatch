@@ -28,6 +28,8 @@ const session = (): SessionSummary => ({
   total_output_tokens: 50,
   total_cache_read_tokens: 10,
   total_cache_write_tokens: 0,
+  failed_tool_calls: 0,
+  repeated_calls: 0,
   parent_session_id: null,
 });
 

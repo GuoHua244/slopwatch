@@ -348,6 +348,8 @@ describe("audit trail (in memory)", () => {
       total_output_tokens: 50,
       total_cache_read_tokens: 10,
       total_cache_write_tokens: 5,
+      failed_tool_calls: 0,
+      repeated_calls: 0,
       parent_session_id: null,
     };
     const store = auditStore({

@@ -1,8 +1,19 @@
-import type { NormalEvent, QuarantineEvent } from "@slopwatch/events";
+import type {
+  NormalEvent,
+  QuarantineEvent,
+  ToolCallEvent,
+} from "@slopwatch/events";
 import { verifyAttachment, type AttachmentEvent } from "@slopwatch/events";
-import { rollupDeltas, type FlatDelta, type ModelDelta } from "../rollups";
+import {
+  emptyFlatDelta,
+  rollupDeltas,
+  utcDay,
+  utcHour,
+  type FlatDelta,
+  type ModelDelta,
+} from "../rollups";
 import { withTransaction, type PgCtx } from "./db";
-import { recomputeRollups } from "./rollups";
+import { recomputeRollups, recomputeSessionWaste } from "./rollups";
 import { SESSION_COLUMNS, pgSessionRow } from "./rows";
 import type { Store } from "./types";
 
@@ -21,6 +32,26 @@ const PRUNE_RAW_BATCH = 200;
 const stripNul = (value: string): string => value.replaceAll("\u0000", "");
 const jsonWithoutNul = (value: unknown): string =>
   JSON.stringify(value, (_key, v) => (typeof v === "string" ? stripNul(v) : v));
+
+/**
+ * Key-order-insensitive JSON string, the JS-side grouping key for tool-call
+ * args (v3 decision 31). The SQL side compares jsonb — semantic equality,
+ * key order irrelevant — so the grouping must be too, or one batch carrying
+ * the same call with differently-ordered args objects would split into two
+ * groups and under-count the repeats.
+ */
+const stableStringify = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(
+      ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0),
+    );
+    return `{${entries
+      .map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+};
 
 export const sessionMethods = (
   ctx: PgCtx,
@@ -98,6 +129,11 @@ export const sessionMethods = (
           );
           ingestTeamId = (owned.rows[0]?.team_id as string | null) ?? null;
         }
+        // Decision 18: the batch reduces to rollup deltas before the session
+        // loop; the waste block below folds repeated-call counts in as it
+        // walks each session (they need prior-occurrence state), so the
+        // upserts after the loop carry the complete deltas.
+        const deltas = rollupDeltas(logged);
         for (const [sessionId, group] of bySession) {
           const agent =
             group[0]?.agent ?? attachmentsBySession.get(sessionId)![0]!.agent;
@@ -164,6 +200,71 @@ export const sessionMethods = (
               [sessionId, dIn, dOut, dCacheRead, dCacheWrite],
             );
           }
+          // v3 decision 31: waste counters. Failures are batch-local facts.
+          // A repeated call is an occurrence beyond the session's first of an
+          // identical (tool, args) pair: one prior-occurrence COUNT per
+          // distinct pair, run after this batch's inserts so it sees them,
+          // under the session-row lock taken above — concurrent writers to
+          // one session serialize before counting, so nothing double-counts.
+          const failedInBatch = group.filter(
+            (e) => e.kind === "tool" && e.event === "result" && e.ok === false,
+          ).length;
+          const pairs = new Map<
+            string,
+            { tool: string; args: unknown; calls: ToolCallEvent[] }
+          >();
+          for (const e of group) {
+            if (e.kind === "tool" && e.event === "call") {
+              const args = e.args ?? null;
+              const key = `${e.tool}\u0000${stableStringify(args)}`;
+              const pair = pairs.get(key) ?? { tool: e.tool, args, calls: [] };
+              pair.calls.push(e);
+              pairs.set(key, pair);
+            }
+          }
+          let repeatedInBatch = 0;
+          for (const pair of pairs.values()) {
+            // Args compare as jsonb on the SQL side. The no-args variant
+            // must treat a missing key and an explicit jsonb null alike —
+            // `->>'args'` renders both via COALESCE, while `IS NOT DISTINCT
+            // FROM` would never equate SQL NULL with the jsonb null value.
+            const noArgs = pair.args === null;
+            const { rows: prior } = await client.query(
+              noArgs
+                ? `SELECT COUNT(*)::int AS total FROM events
+                   WHERE session_id = $1 AND kind = 'tool' AND payload->>'event' = 'call'
+                     AND payload->>'tool' = $2 AND COALESCE(payload->>'args', 'null') = 'null'`
+                : `SELECT COUNT(*)::int AS total FROM events
+                   WHERE session_id = $1 AND kind = 'tool' AND payload->>'event' = 'call'
+                     AND payload->>'tool' = $2 AND payload->'args' IS NOT DISTINCT FROM $3::jsonb`,
+              noArgs
+                ? [sessionId, pair.tool]
+                : [sessionId, pair.tool, JSON.stringify(pair.args)],
+            );
+            const historical = Number(prior[0]!.total) - pair.calls.length;
+            // The pair's first-ever occurrence is not waste; every later one
+            // is, and each repeat buckets to its own occurred_at.
+            for (
+              let i = historical > 0 ? 0 : 1;
+              i < pair.calls.length;
+              i += 1
+            ) {
+              repeatedInBatch += 1;
+              const at = pair.calls[i]!.occurred_at;
+              const day = deltas.daily.get(utcDay(at)) ?? emptyFlatDelta();
+              day.repeatedCalls += 1;
+              deltas.daily.set(utcDay(at), day);
+              const hour = deltas.hourly.get(utcHour(at)) ?? emptyFlatDelta();
+              hour.repeatedCalls += 1;
+              deltas.hourly.set(utcHour(at), hour);
+            }
+          }
+          if (failedInBatch > 0 || repeatedInBatch > 0) {
+            await client.query(
+              "UPDATE sessions SET failed_tool_calls = failed_tool_calls + $2, repeated_calls = repeated_calls + $3 WHERE session_id = $1",
+              [sessionId, failedInBatch, repeatedInBatch],
+            );
+          }
           // Captured images, content-addressed per session. Content
           // addressing is earned, not claimed: a payload that does not decode
           // to its declared size and hash is corruption — skip it and the
@@ -189,21 +290,35 @@ export const sessionMethods = (
         // transaction, so the aggregates can never drift from the events.
         if (userId !== null && logged.length > 0) {
           const rollupUser: string = userId;
-          const deltas = rollupDeltas(logged);
           const bumpFlatRollup = async (
             table: "user_daily_rollup" | "user_hourly_rollup",
             column: "day" | "hour",
             byBucket: Map<string, FlatDelta>,
           ) => {
             for (const [bucket, d] of byBucket) {
-              if (d.turns === 0 && d.toolCalls === 0) continue;
+              if (
+                d.turns === 0 &&
+                d.toolCalls === 0 &&
+                d.failedToolCalls === 0 &&
+                d.repeatedCalls === 0
+              )
+                continue;
               await client.query(
-                `INSERT INTO ${table} (user_id, ${column}, turns, tool_calls)
-                 VALUES ($1, $2, $3, $4)
+                `INSERT INTO ${table} (user_id, ${column}, turns, tool_calls, failed_tool_calls, repeated_calls)
+                 VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT (user_id, ${column}) DO UPDATE SET
                    turns = ${table}.turns + EXCLUDED.turns,
-                   tool_calls = ${table}.tool_calls + EXCLUDED.tool_calls`,
-                [rollupUser, bucket, d.turns, d.toolCalls],
+                   tool_calls = ${table}.tool_calls + EXCLUDED.tool_calls,
+                   failed_tool_calls = ${table}.failed_tool_calls + EXCLUDED.failed_tool_calls,
+                   repeated_calls = ${table}.repeated_calls + EXCLUDED.repeated_calls`,
+                [
+                  rollupUser,
+                  bucket,
+                  d.turns,
+                  d.toolCalls,
+                  d.failedToolCalls,
+                  d.repeatedCalls,
+                ],
               );
             }
           };
@@ -405,10 +520,13 @@ export const sessionMethods = (
           [sessionId],
         );
         if ((session.rowCount ?? 0) > 0) {
-          // Rollups keep summing the sessions that remain.
+          // Rollups keep summing the sessions that remain; the session-grain
+          // waste counters (v3 decision 31) rebuild from the same events.
           const userId = owner.rows[0]?.user_id;
-          if (typeof userId === "string")
+          if (typeof userId === "string") {
             await recomputeRollups(client, userId);
+            await recomputeSessionWaste(client, userId);
+          }
         }
         return (session.rowCount ?? 0) > 0;
       });

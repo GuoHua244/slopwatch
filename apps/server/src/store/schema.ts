@@ -45,6 +45,10 @@ ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_output_tokens BIGINT NOT NUL
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_cache_read_tokens BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS total_cache_write_tokens BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_event_at TIMESTAMPTZ;
+-- v3 decision 31: deterministic waste counters, computed at ingest and
+-- rebuilt from the events table by the recompute path.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS failed_tool_calls BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS repeated_calls BIGINT NOT NULL DEFAULT 0;
 -- Backfill once: a session's last activity is its newest event, falling back
 -- to first_seen_at for rows that never carried events. Idempotent — the WHERE
 -- keeps it off every row the ingest path already keeps fresh.
@@ -104,6 +108,12 @@ CREATE TABLE IF NOT EXISTS user_hourly_rollup (
   tool_calls BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, hour)
 );
+-- v3 decision 31: the flat rollups carry the waste counters so the
+-- leaderboard's rate can be windowed like every other column.
+ALTER TABLE user_daily_rollup ADD COLUMN IF NOT EXISTS failed_tool_calls BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE user_daily_rollup ADD COLUMN IF NOT EXISTS repeated_calls BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE user_hourly_rollup ADD COLUMN IF NOT EXISTS failed_tool_calls BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE user_hourly_rollup ADD COLUMN IF NOT EXISTS repeated_calls BIGINT NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS model_daily_rollup (
   user_id            TEXT NOT NULL,
   day                TEXT NOT NULL,

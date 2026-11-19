@@ -6,6 +6,12 @@ export type LeaderboardRow = {
   userId: string;
   sessions: number;
   turns: number;
+  /** All-time tool calls — the waste rate's denominator (v3 decision 31). */
+  toolCalls: number;
+  failedToolCalls: number;
+  repeatedCalls: number;
+  /** (failed + repeated) / tool calls; null while there is nothing to divide. */
+  wasteRate: number | null;
   requests: number;
   inputTokens: number;
   outputTokens: number;
@@ -249,10 +255,19 @@ export const aggregateLeaderboard = (
         else trailingSum += dayEntry.cost;
       }
       const trailingMean = trailingSum / 7;
+      const totals = totalsByUser.get(userId);
       return {
         userId,
         sessions: facts.get(userId)?.sessions ?? 0,
-        turns: totalsByUser.get(userId)?.turns ?? 0,
+        turns: totals?.turns ?? 0,
+        toolCalls: totals?.tool_calls ?? 0,
+        failedToolCalls: totals?.failed_tool_calls ?? 0,
+        repeatedCalls: totals?.repeated_calls ?? 0,
+        wasteRate:
+          totals !== undefined && totals.tool_calls > 0
+            ? (totals.failed_tool_calls + totals.repeated_calls) /
+              totals.tool_calls
+            : null,
         requests: modelTotals.reduce((sum, r) => sum + r.model_requests, 0),
         inputTokens: modelTotals.reduce((sum, r) => sum + r.input_tokens, 0),
         outputTokens: modelTotals.reduce((sum, r) => sum + r.output_tokens, 0),

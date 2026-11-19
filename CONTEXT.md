@@ -76,6 +76,10 @@ _Avoid_: activity log, operation log, history (collides with captured Events), c
 A note a **User** files about Slopwatch itself from the dashboard — a defect noticed while reviewing **Sessions** (content that went missing, data that looks wrong, agent **Events** the Server failed to handle) or a feature suggestion. Each Feedback carries one kind — Missing content / Wrong data / Compatibility / Feature suggestion / Other — and may reference the **Session** it was noticed on (feature suggestions carry none) and carry optional attached files. It is an observation recorded for the maintainers: the admin plane lists submitted Feedback and an admin may delete one (audited), but there is no status, assignee, reply, or tracking workflow.
 _Avoid_: bug report (it also carries feature suggestions), issue (implies a tracker workflow), report (collides with **Review**), 问题反馈→use Feedback in code.
 
+**Waste**:
+The deterministic measure of how much of a Session's tool work went nowhere — **Failed tool calls** (results with `ok: false`) plus **Repeated calls** (occurrences beyond the Session's first of an identical (tool, args) pair), counted at ingest on the Server, rebuilt from Events by the recompute path, and surfaced as the leaderboard's waste rate: (failed + repeated) / tool calls. A numeric signal, never a verdict — legitimate repeats exist, and the Retrospective remains the qualitative plane (v3 decision 31).
+_Avoid_: slop score (there is none), inefficiency (that is the Retrospective's judgement), rework.
+
 ## Relationships
 
 - A **User**'s **Role** decides what they may see: admins get the admin plane and the org-wide read; members get their own **Sessions** only.
